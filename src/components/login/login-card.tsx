@@ -20,6 +20,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
+import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { PulseLogo } from "@/components/login/pulse-logo";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
@@ -112,6 +113,7 @@ function PortalToggle({
 
 export function LoginCard() {
   const { toast } = useToast();
+  const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -202,6 +204,8 @@ export function LoginCard() {
             ? "Signing you in to the Pharmacy portal…"
             : "Signing you in to Pulse…",
       });
+      // Hand the fresh session to the Pulse console.
+      window.setTimeout(() => router.push("/dashboard"), 900);
     } catch (err) {
       setStatus("idle");
       void trackEvent("login_failure", { method: "password", portal, reason: authErrorCode(err) });
@@ -243,6 +247,8 @@ export function LoginCard() {
         title: "Signed in with Google",
         description: [user.displayName, user.email].filter(Boolean).join(" · ") || "Welcome to Pulse",
       });
+      // Hand the fresh session to the Pulse console.
+      window.setTimeout(() => router.push("/dashboard"), 900);
     } catch (err) {
       const code = authErrorCode(err);
       void trackEvent("login_failure", { method: "google", portal, reason: code });
