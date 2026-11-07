@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 const DEMO_USER = {
-  email: "demo@duniyahealthcare.com",
+  email: "demo@pulse.care",
   password: "Pulse@1234",
   name: "Amina Otieno",
 };

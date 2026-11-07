@@ -3,7 +3,7 @@ import { LoginCard } from "@/components/login/login-card";
 
 export default function LoginPage() {
   return (
-    <main className="duniya-space relative min-h-svh w-full overflow-hidden">
+    <main className="pulse-space relative min-h-svh w-full overflow-hidden">
       <PulseBackground className="pointer-events-none fixed inset-0 z-0 h-full w-full" />
       {/* vignette to focus the card */}
       <div

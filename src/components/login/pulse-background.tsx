@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 
 /**
- * PulseBackground — the living Duniya universe.
+ * PulseBackground — the living Pulse universe.
  *
  * Layers (bottom → top), all on one transparent canvas above a CSS gradient:
  *   1. Deep-space starfield with slow twinkle.

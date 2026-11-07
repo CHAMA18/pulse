@@ -11,27 +11,26 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "Duniya — Pharmacy Intelligence, Delivered.",
+  title: "Pulse — Pharmacy Intelligence, Delivered.",
   description:
-    "Sign in to Pulse, Duniya Healthcare's pharmacy intelligence platform. Track stock, demand and delivery in real time.",
+    "Sign in to Pulse, the pharmacy intelligence platform. Track stock, demand and delivery in real time.",
   keywords: [
-    "Duniya Healthcare",
     "Pulse",
     "Pharmacy Intelligence",
     "Healthcare logistics",
     "Sign in",
   ],
-  authors: [{ name: "Duniya Healthcare" }],
+  authors: [{ name: "Pulse" }],
   openGraph: {
-    title: "Duniya — Pharmacy Intelligence, Delivered.",
-    description: "Sign in to Pulse — Duniya Healthcare's pharmacy intelligence platform.",
-    siteName: "Duniya Healthcare",
+    title: "Pulse — Pharmacy Intelligence, Delivered.",
+    description: "Sign in to Pulse — the pharmacy intelligence platform.",
+    siteName: "Pulse",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Duniya — Pharmacy Intelligence, Delivered.",
-    description: "Sign in to Pulse — Duniya Healthcare's pharmacy intelligence platform.",
+    title: "Pulse — Pharmacy Intelligence, Delivered.",
+    description: "Sign in to Pulse — the pharmacy intelligence platform.",
   },
 };
 

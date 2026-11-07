@@ -150,7 +150,7 @@ export function PhoneDialog({
         if (!v) reset();
       }}
     >
-      <DialogContent className="duniya-scroll sm:max-w-[400px]">
+      <DialogContent className="pulse-scroll sm:max-w-[400px]">
         {step === "phone" ? (
           <>
             <DialogHeader>

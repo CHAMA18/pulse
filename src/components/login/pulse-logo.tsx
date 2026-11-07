@@ -1,10 +1,10 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Duniya brand mark — a constellation ring carrying a heartbeat pulse,
- * recreated as pure SVG so it stays crisp at any size.
+ * Pulse brand mark — a constellation ring carrying a heartbeat trace,
+ * pure SVG so it stays crisp at any size.
  */
-export function DuniyaMark({
+export function PulseMark({
   className,
   glow = true,
 }: {
@@ -15,18 +15,18 @@ export function DuniyaMark({
     <svg
       viewBox="0 0 64 64"
       role="img"
-      aria-label="Duniya logo"
+      aria-label="Pulse logo"
       className={cn("h-14 w-14", glow && "drop-shadow-[0_0_14px_rgba(176,38,255,0.45)]", className)}
     >
       <defs>
-        <linearGradient id="duniya-g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+        <linearGradient id="pulse-g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#d946ef" />
           <stop offset="0.5" stopColor="#b026ff" />
           <stop offset="1" stopColor="#8b2fe8" />
         </linearGradient>
       </defs>
       {/* constellation ring links */}
-      <g stroke="url(#duniya-g)" strokeWidth="2" opacity="0.5" fill="none">
+      <g stroke="url(#pulse-g)" strokeWidth="2" opacity="0.5" fill="none">
         <line x1="32" y1="7" x2="50" y2="16" />
         <line x1="50" y1="16" x2="57" y2="32" />
         <line x1="57" y1="32" x2="50" y2="48" />
@@ -37,7 +37,7 @@ export function DuniyaMark({
         <line x1="14" y1="16" x2="32" y2="7" />
       </g>
       {/* constellation nodes */}
-      <g fill="url(#duniya-g)">
+      <g fill="url(#pulse-g)">
         <circle cx="32" cy="7" r="4.4" />
         <circle cx="50" cy="16" r="4.4" />
         <circle cx="57" cy="32" r="4.4" />
@@ -51,7 +51,7 @@ export function DuniyaMark({
       <polyline
         points="6,32 22,32 27,23 32,41 36,16 41,34 44,32 58,32"
         fill="none"
-        stroke="url(#duniya-g)"
+        stroke="url(#pulse-g)"
         strokeWidth="4"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -61,17 +61,17 @@ export function DuniyaMark({
 }
 
 /** Full lockup: mark + gradient wordmark. */
-export function DuniyaLogo({ className }: { className?: string }) {
+export function PulseLogo({ className }: { className?: string }) {
   return (
     <span className={cn("inline-flex items-center justify-center gap-3", className)}>
-      <DuniyaMark className="h-12 w-12 sm:h-14 sm:w-14" />
+      <PulseMark className="h-12 w-12 sm:h-14 sm:w-14" />
       <span
         aria-hidden="true"
         className="text-brand-gradient select-none text-[40px] font-bold leading-none tracking-tight sm:text-[44px]"
       >
-        Duniya
+        Pulse
       </span>
-      <span className="sr-only">Duniya Healthcare</span>
+      <span className="sr-only">Pulse — Pharmacy Intelligence, Delivered</span>
     </span>
   );
 }

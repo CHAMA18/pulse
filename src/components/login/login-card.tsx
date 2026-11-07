@@ -13,7 +13,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
-import { DuniyaLogo } from "@/components/login/duniya-logo";
+import { PulseLogo } from "@/components/login/pulse-logo";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
 import { PhoneDialog } from "@/components/login/phone-dialog";
@@ -21,7 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const DEMO = {
-  email: "demo@duniyahealthcare.com",
+  email: "demo@pulse.care",
   password: "Pulse@1234",
   name: "Amina Otieno",
 };
@@ -181,7 +181,7 @@ export function LoginCard() {
         <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
           {/* Brand */}
           <motion.div variants={item} className="flex justify-center">
-            <DuniyaLogo className="animate-float" />
+            <PulseLogo className="animate-float" />
           </motion.div>
 
           {/* Heading */}
@@ -202,7 +202,7 @@ export function LoginCard() {
             <button
               type="button"
               onClick={() => setPillPing((n) => n + 1)}
-              aria-label="Signing in to Pulse — Duniya's pharmacy intelligence workspace"
+              aria-label="Signing in to Pulse — Pharmacy Intelligence, Delivered"
               className="btn-brand group relative inline-flex h-[52px] items-center gap-2.5 overflow-hidden rounded-full px-2.5 pr-6 text-white shadow-[0_12px_30px_-8px_rgba(168,85,247,0.65)] transition-transform duration-150 active:scale-[0.97]"
             >
               <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 -skew-x-12 bg-white/25 blur-md transition-transform duration-700 ease-out group-hover:translate-x-[430%]" />
