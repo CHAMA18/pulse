@@ -36,6 +36,7 @@ import { PulseMark } from "@/components/login/pulse-logo";
 import { SupplierManagement } from "@/components/dashboard/supplier-management";
 import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
 import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-visibility";
+import { UserManagement } from "@/components/dashboard/user-management";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -110,7 +111,7 @@ const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy 
 
 type NavItem = { label: string; icon: LucideIcon };
 
-type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock";
+type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users";
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
   { section: "Main", items: [{ label: "Home", icon: Home }] },
@@ -136,6 +137,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
 /** Which sidebar entries are live pages vs. "coming soon" stubs. */
 const LIVE_PAGES: Record<string, DashboardPage> = {
   Home: "home",
+  "User Management": "users",
   "Pulse Pharmacies": "pharmacies",
   "Stock Balance Visibility": "stock",
   "Supplier Management": "suppliers",
@@ -657,6 +659,8 @@ export function DashboardApp() {
               <PulsePharmacies />
             ) : page === "stock" ? (
               <StockBalanceVisibility />
+            ) : page === "users" ? (
+              <UserManagement />
             ) : (
               <>
             {/* Stat cards */}
