@@ -77,7 +77,7 @@ function PortalToggle({
     <div
       role="group"
       aria-label="Authentication portal"
-      className="relative grid grid-cols-2 gap-1 rounded-full border border-slate-200 bg-slate-100/80 p-1"
+      className="relative grid grid-cols-2 gap-1 rounded-md border border-slate-200 bg-slate-100/80 p-1"
     >
       {PORTALS.map(({ id, label, icon: Icon }) => {
         const active = value === id;
@@ -89,7 +89,7 @@ function PortalToggle({
             disabled={disabled}
             onClick={() => onChange(id)}
             className={cn(
-              "relative flex h-10 items-center justify-center gap-1.5 rounded-full text-[13.5px] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-60",
+              "relative flex h-10 items-center justify-center gap-1.5 rounded-[4px] text-[13.5px] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-60",
               active ? "text-white" : "text-slate-500 hover:text-slate-700"
             )}
           >
@@ -97,7 +97,7 @@ function PortalToggle({
               <motion.span
                 layoutId="portal-thumb"
                 transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                className="btn-brand absolute inset-0 rounded-full shadow-[0_6px_16px_-6px_rgba(168,85,247,0.7)]"
+                className="btn-brand absolute inset-0 rounded-[4px] shadow-[0_4px_12px_-4px_rgba(168,85,247,0.7)]"
                 aria-hidden="true"
               />
             )}
@@ -259,7 +259,7 @@ export function LoginCard() {
   };
 
   const inputBase =
-    "h-12 w-full rounded-xl border bg-white px-4 text-[15px] text-slate-900 outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-slate-400";
+    "h-12 w-full rounded-md border bg-white px-4 text-[15px] text-slate-900 outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-slate-400";
 
   const inputState = (hasError?: string) =>
     hasError
@@ -272,7 +272,7 @@ export function LoginCard() {
         initial={{ opacity: 0, y: 30, scale: 0.965 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: "spring", stiffness: 120, damping: 18, mass: 0.9 }}
-        className="relative w-full max-w-[440px] rounded-[28px] bg-white px-6 py-9 shadow-[0_36px_100px_-16px_rgba(88,28,135,0.6)] ring-1 ring-white/50 sm:px-10 sm:py-10"
+        className="relative w-full max-w-[440px] rounded-[20px] bg-white px-6 py-9 shadow-[0_36px_100px_-16px_rgba(88,28,135,0.6)] ring-1 ring-white/50 sm:px-10 sm:py-10"
         aria-labelledby="login-heading"
       >
         <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
@@ -376,7 +376,7 @@ export function LoginCard() {
                   onClick={() => setShowPassword((v) => !v)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   aria-pressed={showPassword}
-                  className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
+                  className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600 active:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
                 >
                   {showPassword ? <EyeOff className="h-[18px] w-[18px]" /> : <Eye className="h-[18px] w-[18px]" />}
                 </button>
@@ -404,7 +404,7 @@ export function LoginCard() {
               >
                 <span
                   className={cn(
-                    "flex h-[18px] w-[18px] items-center justify-center rounded-[5px] border-2 transition-all duration-200",
+                    "flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border-2 transition-all duration-200",
                     remember
                       ? "border-transparent bg-gradient-to-br from-fuchsia-500 to-purple-600 shadow-sm shadow-purple-500/40"
                       : "border-slate-300 bg-white group-hover:border-fuchsia-400"
@@ -438,7 +438,7 @@ export function LoginCard() {
             {formError && (
               <div
                 role="alert"
-                className="animate-shake flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] leading-snug text-rose-700"
+                className="animate-shake flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] leading-snug text-rose-700"
               >
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>{formError}</span>
@@ -451,7 +451,7 @@ export function LoginCard() {
               type="submit"
               disabled={status !== "idle"}
               className={cn(
-                "btn-brand relative mt-1 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold text-white shadow-[0_14px_34px_-10px_rgba(168,85,247,0.65)] hover:shadow-[0_18px_44px_-10px_rgba(168,85,247,0.8)] disabled:cursor-not-allowed",
+                "btn-brand relative mt-1 inline-flex h-12 w-full items-center justify-center gap-2 rounded-md text-[15px] font-semibold text-white shadow-[0_14px_34px_-10px_rgba(168,85,247,0.65)] hover:shadow-[0_18px_44px_-10px_rgba(168,85,247,0.8)] disabled:cursor-not-allowed",
                 status === "success" && "!bg-none bg-emerald-500 shadow-emerald-500/40"
               )}
             >
@@ -485,7 +485,7 @@ export function LoginCard() {
               type="button"
               onClick={onGoogle}
               disabled={googleLoading}
-              className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white text-[15px] font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500 disabled:opacity-70"
+              className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-md border border-slate-200 bg-white text-[15px] font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500 disabled:opacity-70"
             >
               {googleLoading ? (
                 <Loader2 className="h-[18px] w-[18px] animate-spin text-slate-500" aria-hidden="true" />

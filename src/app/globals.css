@@ -44,7 +44,9 @@
 }
 
 :root {
-  --radius: 0.75rem;
+  /* Radius scale — controls sit at 8px (rounded-md), containers above it.
+     sm 6 · md 8 · lg 10 · xl 14 */
+  --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

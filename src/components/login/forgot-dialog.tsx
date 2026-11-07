@@ -115,7 +115,7 @@ export function ForgotDialog({
           <Button
             type="submit"
             disabled={sending}
-            className="btn-brand h-11 w-full rounded-xl border-0 text-[15px] font-semibold text-white shadow-[0_12px_28px_-10px_rgba(168,85,247,0.65)] hover:shadow-[0_16px_36px_-10px_rgba(168,85,247,0.8)]"
+            className="btn-brand h-11 w-full border-0 text-[15px] font-semibold text-white shadow-[0_12px_28px_-10px_rgba(168,85,247,0.65)] hover:shadow-[0_16px_36px_-10px_rgba(168,85,247,0.8)]"
           >
             {sending ? (
               <>
