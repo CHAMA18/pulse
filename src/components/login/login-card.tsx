@@ -10,7 +10,6 @@ import {
   MessageSquareText,
   Sparkles,
   TriangleAlert,
-  UserRound,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { PulseLogo } from "@/components/login/pulse-logo";
@@ -60,7 +59,6 @@ export function LoginCard() {
 
   const [forgotOpen, setForgotOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
-  const [pillPing, setPillPing] = useState(0);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -197,31 +195,8 @@ export function LoginCard() {
             </p>
           </motion.div>
 
-          {/* Module pill */}
-          <motion.div variants={item} className="mt-5 flex justify-center">
-            <button
-              type="button"
-              onClick={() => setPillPing((n) => n + 1)}
-              aria-label="Signing in to Pulse — Pharmacy Intelligence, Delivered"
-              className="btn-brand group relative inline-flex h-[52px] items-center gap-2.5 overflow-hidden rounded-full px-2.5 pr-6 text-white shadow-[0_12px_30px_-8px_rgba(168,85,247,0.65)] transition-transform duration-150 active:scale-[0.97]"
-            >
-              <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 -skew-x-12 bg-white/25 blur-md transition-transform duration-700 ease-out group-hover:translate-x-[430%]" />
-              <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/20">
-                <UserRound className="h-5 w-5" strokeWidth={2.2} />
-                {pillPing > 0 && (
-                  <span
-                    key={pillPing}
-                    className="animate-ping-soft absolute inset-0 rounded-xl bg-white/40"
-                    aria-hidden="true"
-                  />
-                )}
-              </span>
-              <span className="text-[17px] font-semibold tracking-wide">Pulse</span>
-            </button>
-          </motion.div>
-
           {/* Form */}
-          <motion.form variants={item} onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
+          <motion.form variants={item} onSubmit={onSubmit} noValidate className="mt-7 flex flex-col gap-4">
             {/* Email */}
             <div>
               <label htmlFor="email" className="sr-only">
