@@ -177,6 +177,10 @@
 .animate-float {
   animation: pulse-float 5s ease-in-out infinite;
 }
+/* Same drift, offset phase — used for companion floating chips. */
+.animate-float-delayed {
+  animation: pulse-float 5.5s ease-in-out 1.1s infinite;
+}
 
 @keyframes pulse-sheen {
   0% { transform: translateX(-130%) skewX(-18deg); }
@@ -198,9 +202,17 @@
   .animate-shake,
   .animate-ping-soft,
   .animate-float,
+  .animate-float-delayed,
   .animate-sheen,
   .animate-breathe {
     animation: none !important;
+  }
+}
+
+/* In-page anchors (e.g. "back to the console" from the desktop section). */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
   }
 }
 
@@ -368,6 +380,7 @@
   .animate-shake,
   .animate-ping-soft,
   .animate-float,
+  .animate-float-delayed,
   .animate-sheen,
   .animate-breathe,
   .animate-ping,

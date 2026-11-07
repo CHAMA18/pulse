@@ -1,11 +1,13 @@
 import { PulseBackground } from "@/components/login/pulse-background";
 import { LoginCard } from "@/components/login/login-card";
 import { PulseHero } from "@/components/login/pulse-hero";
+import { DesktopSection } from "@/components/login/desktop-section";
 import { PulseMark } from "@/components/login/pulse-logo";
+import { RELEASES_URL } from "@/components/login/download-buttons";
 
 export default function LoginPage() {
   return (
-    <main className="pulse-space relative flex min-h-svh w-full flex-col overflow-hidden">
+    <main id="top" className="pulse-space relative flex min-h-svh w-full flex-col overflow-hidden">
       {/* — atmosphere: aurora fields, living canvas, grain, vignette — */}
       <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <div className="aurora-blob aurora-a" />
@@ -38,14 +40,37 @@ export default function LoginPage() {
             <LoginCard />
           </div>
         </div>
+
+        {/* desktop apps — Mac & Windows showcase (below the fold) */}
+        <DesktopSection />
       </div>
 
       {/* — footer (sticks to the bottom, never floats) — */}
-      <footer className="relative z-10 mt-auto">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-x-6 gap-y-1.5 px-5 pb-6 sm:px-8 lg:px-12">
+      <footer className="relative z-10 mt-16 border-t border-white/8 py-7">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 sm:px-8 lg:px-12">
           <p className="text-[12px] text-white/35">
             © {new Date().getFullYear()} Duniya Healthcare · Pulse
           </p>
+          <nav aria-label="Downloads" className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            <a
+              href={RELEASES_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded text-[12px] font-medium text-white/50 transition-colors hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400"
+            >
+              <span aria-hidden="true"></span>
+              Download for Mac
+            </a>
+            <a
+              href={RELEASES_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded text-[12px] font-medium text-white/50 transition-colors hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400"
+            >
+              <span aria-hidden="true"></span>
+              Download for Windows
+            </a>
+          </nav>
           <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-white/30">
             Privacy-first · Secured sessions
           </p>

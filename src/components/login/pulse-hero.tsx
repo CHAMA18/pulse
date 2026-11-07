@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Activity, ShieldCheck, Truck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { DownloadButtons } from "@/components/login/download-buttons";
 import { PulseMark } from "@/components/login/pulse-logo";
 
 /**
@@ -127,10 +128,13 @@ export function PulseHero({ className }: { className?: string }) {
         </span>
       </motion.div>
 
+      {/* Desktop app downloads — Mac & Windows */}
+      <DownloadButtons className="mt-8" />
+
       {/* Feature ticks */}
       <motion.ul
         {...fadeUp(0.33)}
-        className="mt-12 grid max-w-xl grid-cols-1 gap-x-8 gap-y-4 border-t border-white/10 pt-7 sm:grid-cols-3"
+        className="mt-10 grid max-w-xl grid-cols-1 gap-x-8 gap-y-4 border-t border-white/10 pt-7 sm:grid-cols-3"
       >
         {FEATURES.map(({ icon: Icon, title, desc }) => (
           <li key={title} className="flex items-start gap-3">

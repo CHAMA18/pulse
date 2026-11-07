@@ -21,6 +21,7 @@ import {
   PackageCheck,
   Search,
   ShoppingBasket,
+  Store,
   TrendingUp,
   TriangleAlert,
   Truck,
@@ -32,6 +33,7 @@ import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
+import { SupplierManagement } from "@/components/dashboard/supplier-management";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -104,10 +106,12 @@ const MOVEMENT_FEED = [
 
 const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy staff"];
 
-type NavItem = { label: string; icon: LucideIcon; active?: boolean };
+type NavItem = { label: string; icon: LucideIcon };
+
+type DashboardPage = "home" | "suppliers";
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
-  { section: "Main", items: [{ label: "Home", icon: Home, active: true }] },
+  { section: "Main", items: [{ label: "Home", icon: Home }] },
   {
     section: "Admin",
     items: [
@@ -122,10 +126,16 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
       { label: "Stock Balance Visibility", icon: Eye },
       { label: "Onboarding Requests", icon: ClipboardList },
       { label: "Network Analytics", icon: BarChart3 },
-      { label: "Supplier Management", icon: Truck },
+      { label: "Supplier Management", icon: Store },
     ],
   },
 ];
+
+/** Which sidebar entries are live pages vs. "coming soon" stubs. */
+const LIVE_PAGES: Record<string, DashboardPage> = {
+  Home: "home",
+  "Supplier Management": "suppliers",
+};
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
@@ -208,15 +218,17 @@ function SidebarContent({
   onQuickAction,
   onClose,
   user,
+  page,
 }: {
   collapsed: boolean;
   dark: boolean;
   onDarkChange: (on: boolean) => void;
   onCollapsedChange?: (collapsed: boolean) => void;
-  onNavClick: (label: string, active?: boolean) => void;
+  onNavClick: (label: string) => void;
   onQuickAction: (action?: string) => void;
   onClose?: () => void;
   user: { name: string; email: string; initial: string };
+  page: DashboardPage;
 }) {
   const [quickOpen, setQuickOpen] = useState(false);
 
@@ -284,34 +296,37 @@ function SidebarContent({
               <div className="mx-auto my-3 h-px w-8 bg-slate-100 dark:bg-white/10" />
             )}
             <div className="flex flex-col gap-0.5">
-              {items.map(({ label, icon: Icon, active }) => (
-                <button
-                  key={label}
-                  type="button"
-                  title={collapsed ? label : undefined}
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => onNavClick(label, active)}
-                  className={cn(
-                    "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
-                    collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
-                    active
-                      ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
-                  )}
-                >
-                  <Icon
+              {items.map(({ label, icon: Icon }) => {
+                const active = LIVE_PAGES[label] === page;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    title={collapsed ? label : undefined}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => onNavClick(label)}
                     className={cn(
-                      "h-[18px] w-[18px] shrink-0 transition-colors",
+                      "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
+                      collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
                       active
-                        ? "text-purple-600 dark:text-purple-400"
-                        : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+                        ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
                     )}
-                    strokeWidth={2.1}
-                    aria-hidden="true"
-                  />
-                  {!collapsed && <span className="truncate">{label}</span>}
-                </button>
-              ))}
+                  >
+                    <Icon
+                      className={cn(
+                        "h-[18px] w-[18px] shrink-0 transition-colors",
+                        active
+                          ? "text-purple-600 dark:text-purple-400"
+                          : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+                      )}
+                      strokeWidth={2.1}
+                      aria-hidden="true"
+                    />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </button>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -436,6 +451,7 @@ export function DashboardApp() {
   const [dark, setDark] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [page, setPage] = useState<DashboardPage>("home");
   const [user, setUser] = useState({ name: "Pulse User", email: "", initial: "P" });
 
   // Restore the signed-in identity + theme preference (async so we never
@@ -484,9 +500,15 @@ export function DashboardApp() {
     window.localStorage.setItem("pulse-theme", on ? "dark" : "light");
   };
 
-  const onNavClick = (label: string, active?: boolean) => {
+  const onNavClick = (label: string) => {
     setMobileOpen(false);
-    if (active) return;
+    const target = LIVE_PAGES[label];
+    if (target && target !== page) {
+      setPage(target);
+      void trackEvent("nav_click", { page: target });
+      return;
+    }
+    if (target) return; // already on that page
     toast({
       title: `${label} is coming soon`,
       description: "This area of the Pulse console is on its way.",
@@ -524,6 +546,7 @@ export function DashboardApp() {
       onQuickAction={onQuickAction}
       onClose={extra.onClose}
       user={user}
+      page={page}
     />
   );
 
@@ -618,11 +641,16 @@ export function DashboardApp() {
           </header>
 
           <motion.main
+            key={page}
             variants={container}
             initial="hidden"
             animate="show"
             className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
           >
+            {page === "suppliers" ? (
+              <SupplierManagement />
+            ) : (
+              <>
             {/* Stat cards */}
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
               {STAT_CARDS.map(({ id, value, label, desc, icon: Icon, tile }) => (
@@ -708,6 +736,8 @@ export function DashboardApp() {
                 <EmptyState>No SKUs are approaching reorder or expiry thresholds.</EmptyState>
               </div>
             </motion.section>
+              </>
+            )}
           </motion.main>
         </div>
       </div>
