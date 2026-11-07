@@ -678,8 +678,8 @@ export function DashboardApp() {
               ))}
             </div>
 
-            {/* Inventory Health + Movement Pulse */}
-            <div className="mt-9 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-[1.5fr_1fr]">
+            {/* Inventory Health + Movement Pulse — stacked, not side by side */}
+            <div className="mt-9 grid grid-cols-1 gap-y-6">
               <motion.section variants={item} aria-labelledby="inventory-health">
                 <SectionHeader
                   icon={PackageCheck}
