@@ -7,7 +7,6 @@ import {
   Eye,
   EyeOff,
   Loader2,
-  MessageSquareText,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
@@ -15,7 +14,6 @@ import { useCallback, useRef, useState } from "react";
 import { PulseLogo } from "@/components/login/pulse-logo";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
-import { PhoneDialog } from "@/components/login/phone-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -58,7 +56,6 @@ export function LoginCard() {
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [phoneOpen, setPhoneOpen] = useState(false);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -381,16 +378,6 @@ export function LoginCard() {
               )}
               Sign in with Google
             </motion.button>
-
-            <motion.button
-              whileTap={{ scale: 0.985 }}
-              type="button"
-              onClick={() => setPhoneOpen(true)}
-              className="inline-flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border border-slate-200 bg-white text-[15px] font-medium text-fuchsia-700 transition-colors hover:border-fuchsia-200 hover:bg-fuchsia-50/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
-            >
-              <MessageSquareText className="h-[18px] w-[18px] text-fuchsia-600" aria-hidden="true" />
-              Sign in with phone
-            </motion.button>
           </motion.div>
 
           {/* Register */}
@@ -424,7 +411,6 @@ export function LoginCard() {
       </motion.section>
 
       <ForgotDialog open={forgotOpen} onOpenChange={setForgotOpen} />
-      <PhoneDialog open={phoneOpen} onOpenChange={setPhoneOpen} />
     </MotionConfig>
   );
 }

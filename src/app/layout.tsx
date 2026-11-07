@@ -1,12 +1,17 @@
 import type { Metadata, Viewport } from "next";
-import { Poppins } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
-const poppins = Poppins({
-  variable: "--font-poppins",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
+/**
+ * Satoshi — the app-wide brand typeface (via Fontshare).
+ * Self-hosted variable font: one file covers weights 300–900.
+ */
+const satoshi = localFont({
+  src: "./fonts/Satoshi-Variable.woff2",
+  variable: "--font-satoshi",
+  weight: "300 900",
+  style: "normal",
   display: "swap",
 });
 
@@ -47,7 +52,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${poppins.variable} antialiased`}>
+      <body className={`${satoshi.variable} font-sans antialiased`}>
         {children}
         <Toaster />
       </body>
