@@ -34,6 +34,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
 import { SupplierManagement } from "@/components/dashboard/supplier-management";
+import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -108,7 +109,7 @@ const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy 
 
 type NavItem = { label: string; icon: LucideIcon };
 
-type DashboardPage = "home" | "suppliers";
+type DashboardPage = "home" | "suppliers" | "pharmacies";
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
   { section: "Main", items: [{ label: "Home", icon: Home }] },
@@ -134,6 +135,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
 /** Which sidebar entries are live pages vs. "coming soon" stubs. */
 const LIVE_PAGES: Record<string, DashboardPage> = {
   Home: "home",
+  "Pulse Pharmacies": "pharmacies",
   "Supplier Management": "suppliers",
 };
 
@@ -649,6 +651,8 @@ export function DashboardApp() {
           >
             {page === "suppliers" ? (
               <SupplierManagement />
+            ) : page === "pharmacies" ? (
+              <PulsePharmacies />
             ) : (
               <>
             {/* Stat cards */}
