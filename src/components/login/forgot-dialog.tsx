@@ -1,8 +1,15 @@
 "use client";
 
 import { Loader2, KeyRound } from "lucide-react";
+import { sendPasswordResetEmail } from "firebase/auth";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  authErrorCode,
+  describeAuthError,
+  getFirebaseAuth,
+  trackEvent,
+} from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,22 +41,30 @@ export function ForgotDialog({
       setError("Enter a valid email address.");
       return;
     }
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      setError("Authentication isn't available right now. Please refresh and try again.");
+      return;
+    }
     setError(null);
     setSending(true);
+    void trackEvent("password_reset_request");
     try {
-      await fetch("/api/auth/forgot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
-      });
+      await sendPasswordResetEmail(auth, email.trim());
       onOpenChange(false);
+      void trackEvent("password_reset_sent");
       toast({
         title: "Reset link sent",
-        description: `If an account exists for ${email.trim()}, a reset link is on its way. (demo)`,
+        description: `If an account exists for ${email.trim()}, a reset link is on its way. Check your inbox (and spam).`,
       });
       setEmail("");
-    } catch {
-      setError("We couldn't reach the server. Please try again.");
+    } catch (err) {
+      void trackEvent("password_reset_failure", { reason: authErrorCode(err) });
+      setError(
+        authErrorCode(err) === "auth/user-not-found"
+          ? "We couldn't find an account with that email."
+          : describeAuthError(err)
+      );
     } finally {
       setSending(false);
     }

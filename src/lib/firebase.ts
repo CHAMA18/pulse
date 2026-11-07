@@ -1,10 +1,11 @@
-import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
+import { getApp, getApps, initializeApp, FirebaseError, type FirebaseApp } from "firebase/app";
 import {
   getAnalytics,
   isSupported,
   logEvent,
   type Analytics,
 } from "firebase/analytics";
+import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
 
 /**
  * Firebase web app configuration — "pharmacy-system-2fb27".
@@ -75,4 +76,56 @@ export async function trackEvent(
   } catch {
     /* swallow — telemetry failures are never user-facing */
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Authentication                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Returns the shared Firebase Auth instance (browser only).
+ * Persistence defaults to local; use setPersistence() to vary per sign-in.
+ */
+export function getFirebaseAuth(): Auth | null {
+  const application = getFirebaseApp();
+  if (!application) return null;
+  return getAuth(application);
+}
+
+/** Google sign-in provider (used with signInWithPopup). */
+export const googleProvider = new GoogleAuthProvider();
+
+const AUTH_ERROR_COPY: Record<string, string> = {
+  "auth/invalid-email": "That email address doesn't look right.",
+  "auth/missing-password": "Enter your password.",
+  "auth/invalid-credential": "Incorrect email or password.",
+  "auth/user-not-found": "Incorrect email or password.",
+  "auth/wrong-password": "Incorrect email or password.",
+  "auth/user-disabled": "This account has been disabled. Contact your administrator.",
+  "auth/too-many-requests": "Too many attempts. Please wait a moment and try again.",
+  "auth/network-request-failed": "We couldn't reach the authentication service. Check your connection.",
+  "auth/popup-blocked": "Your browser blocked the sign-in window. Allow popups for this site and try again.",
+  "auth/popup-closed-by-user": "Google sign-in was cancelled before it finished.",
+  "auth/cancelled-popup-request": "Google sign-in was cancelled.",
+  "auth/operation-not-allowed":
+    "This sign-in method isn't enabled yet. Turn it on in Firebase Console → Authentication → Sign-in method.",
+  "auth/configuration-not-found":
+    "Email/password sign-in isn't configured yet. Enable it in Firebase Console → Authentication → Sign-in method.",
+  "auth/unauthorized-domain":
+    "This domain isn't authorized for sign-in. Add it in Firebase Console → Authentication → Settings → Authorized domains.",
+  "auth/user-token-expired": "Your session expired. Please sign in again.",
+};
+
+/** Maps a Firebase auth failure to friendly, actionable copy. */
+export function describeAuthError(err: unknown): string {
+  if (err instanceof FirebaseError) {
+    return AUTH_ERROR_COPY[err.code] ?? "Sign-in failed. Please try again.";
+  }
+  return "We couldn't reach the authentication service. Please try again.";
+}
+
+/** Firebase error code (or a generic tag) — handy for analytics params. */
+export function authErrorCode(err: unknown): string {
+  if (err instanceof FirebaseError) return err.code;
+  return "unknown";
 }
