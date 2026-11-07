@@ -6,6 +6,7 @@ import {
   type Analytics,
 } from "firebase/analytics";
 import { getAuth, GoogleAuthProvider, type Auth, type User } from "firebase/auth";
+import { recordAudit } from "@/lib/audit-log";
 
 /**
  * Firebase web app configuration — "pharmacy-system-2fb27".
@@ -64,17 +65,52 @@ export function initAnalytics(): Promise<Analytics | null> {
 /**
  * Fires a custom Analytics event (no-op on the server or when Analytics
  * is unavailable). Use it for product funnels, e.g. login flows.
+ * Notable product events are mirrored into the local audit trail.
  */
 export async function trackEvent(
   name: string,
   params?: Record<string, unknown>
 ): Promise<void> {
+  mirrorTrackEventToAudit(name);
   const analytics = await initAnalytics();
   if (!analytics) return;
   try {
     logEvent(analytics, name, params);
   } catch {
     /* swallow — telemetry failures are never user-facing */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Audit trail mirroring                                               */
+/* ------------------------------------------------------------------ */
+
+/** Product events worth surfacing in the console's audit log. */
+const AUDIT_MIRROR: Record<string, { title: string; action: "View" | "Update" | "Activity" }> = {
+  user_added: { title: "User Added", action: "Update" },
+  user_role_changed: { title: "User Role Changed", action: "Update" },
+  user_status_changed: { title: "User Status Changed", action: "Update" },
+  user_removed: { title: "User Removed", action: "Update" },
+  pharmacy_status_changed: { title: "Pharmacy Status Changed", action: "Update" },
+  pharmacies_imported: { title: "Pharmacies Imported", action: "Update" },
+  pharmacies_template_downloaded: { title: "Registry Template Downloaded", action: "View" },
+};
+
+function mirrorTrackEventToAudit(name: string): void {
+  const entry = AUDIT_MIRROR[name];
+  if (!entry) return;
+  try {
+    const current = getFirebaseAuth()?.currentUser;
+    const email = current?.email ?? "";
+    if (!email) return; // can't attribute the event — skip
+    recordAudit({
+      title: entry.title,
+      action: entry.action,
+      actor: current?.displayName ?? email.split("@")[0],
+      email,
+    });
+  } catch {
+    /* audit mirroring is best-effort */
   }
 }
 

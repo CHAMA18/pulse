@@ -37,6 +37,8 @@ import { SupplierManagement } from "@/components/dashboard/supplier-management";
 import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
 import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-visibility";
 import { UserManagement } from "@/components/dashboard/user-management";
+import { AuditLogs } from "@/components/dashboard/audit-logs";
+import { recordAudit, WORKSPACE_NAME } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -111,7 +113,17 @@ const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy 
 
 type NavItem = { label: string; icon: LucideIcon };
 
-type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users";
+type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users" | "audit";
+
+/** Compact page titles used in the audit trail ("Viewed PulsePharmacies"). */
+const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
+  home: "Dashboard",
+  audit: "AuditLogs",
+  users: "UserManagement",
+  pharmacies: "PulsePharmacies",
+  stock: "StockBalance",
+  suppliers: "SupplierManagement",
+};
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
   { section: "Main", items: [{ label: "Home", icon: Home }] },
@@ -137,6 +149,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
 /** Which sidebar entries are live pages vs. "coming soon" stubs. */
 const LIVE_PAGES: Record<string, DashboardPage> = {
   Home: "home",
+  "Audit Logs": "audit",
   "User Management": "users",
   "Pulse Pharmacies": "pharmacies",
   "Stock Balance Visibility": "stock",
@@ -500,6 +513,18 @@ export function DashboardApp() {
     void trackEvent("dashboard_view");
   }, []);
 
+  // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
+  useEffect(() => {
+    if (!user.email) return;
+    recordAudit({
+      title: `Viewed ${PAGE_AUDIT_TITLES[page]}`,
+      action: "View",
+      detail: WORKSPACE_NAME,
+      actor: user.name,
+      email: user.email,
+    });
+  }, [page, user.email, user.name]);
+
   const toggleDark = (on: boolean) => {
     setDark(on);
     document.documentElement.classList.toggle("dark", on);
@@ -511,6 +536,15 @@ export function DashboardApp() {
     const target = LIVE_PAGES[label];
     if (target && target !== page) {
       setPage(target);
+      if (user.email) {
+        recordAudit({
+          title: "SidebarLink Navigate To",
+          action: "View",
+          detail: WORKSPACE_NAME,
+          actor: user.name,
+          email: user.email,
+        });
+      }
       void trackEvent("nav_click", { page: target });
       return;
     }
@@ -661,6 +695,8 @@ export function DashboardApp() {
               <StockBalanceVisibility />
             ) : page === "users" ? (
               <UserManagement />
+            ) : page === "audit" ? (
+              <AuditLogs />
             ) : (
               <>
             {/* Stat cards */}
