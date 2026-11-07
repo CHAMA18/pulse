@@ -96,7 +96,8 @@ export function getFirebaseAuth(): Auth | null {
 export const googleProvider = new GoogleAuthProvider();
 
 /**
- * Admin eligibility check, applied when signing in through the Admin portal.
+ * Elevated-access eligibility check, applied when signing in through the
+ * Pharmacy portal (pharmacy administrators/staff with elevated rights).
  * Two mechanisms, in order of strength:
  *  1. A custom claim `admin: true` (set via the Firebase Admin SDK — recommended)
  *  2. The NEXT_PUBLIC_ADMIN_EMAILS allowlist (comma-separated emails), a

@@ -7,7 +7,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
-  ShieldCheck,
+  Pill,
   TriangleAlert,
   UserRound,
   type LucideIcon,
@@ -53,11 +53,11 @@ const item = {
 };
 
 type Status = "idle" | "loading" | "success";
-type Portal = "pulse" | "admin";
+type Portal = "pulse" | "pharmacy";
 
 const PORTALS: { id: Portal; label: string; icon: LucideIcon }[] = [
   { id: "pulse", label: "Pulse", icon: UserRound },
-  { id: "admin", label: "Admin", icon: ShieldCheck },
+  { id: "pharmacy", label: "Pharmacy", icon: Pill },
 ];
 
 /**
@@ -183,12 +183,12 @@ export function LoginCard() {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const user = credential.user;
 
-      // Admin portal: refuse sessions without administrator rights.
-      if (portal === "admin" && !(await isAdminUser(user))) {
+      // Pharmacy portal: refuse sessions without elevated (admin) rights.
+      if (portal === "pharmacy" && !(await isAdminUser(user))) {
         await signOut(auth);
         setStatus("idle");
-        void trackEvent("login_failure", { method: "password", portal, reason: "not_admin" });
-        setFormError("This account doesn't have admin access. Use the Pulse portal instead.");
+        void trackEvent("login_failure", { method: "password", portal, reason: "not_pharmacy_admin" });
+        setFormError("This account doesn't have Pharmacy portal access. Use the Pulse portal instead.");
         return;
       }
 
@@ -198,7 +198,9 @@ export function LoginCard() {
       toast({
         title: `Welcome back, ${firstName} 👋`,
         description:
-          portal === "admin" ? "Signing you in to the admin console…" : "Signing you in to Pulse…",
+          portal === "pharmacy"
+            ? "Signing you in to the Pharmacy portal…"
+            : "Signing you in to Pulse…",
       });
     } catch (err) {
       setStatus("idle");
@@ -224,13 +226,13 @@ export function LoginCard() {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
-      // Admin portal: refuse sessions without administrator rights.
-      if (portal === "admin" && !(await isAdminUser(user))) {
+      // Pharmacy portal: refuse sessions without elevated (admin) rights.
+      if (portal === "pharmacy" && !(await isAdminUser(user))) {
         await signOut(auth);
-        void trackEvent("login_failure", { method: "google", portal, reason: "not_admin" });
+        void trackEvent("login_failure", { method: "google", portal, reason: "not_pharmacy_admin" });
         toast({
-          title: "Admin access required",
-          description: "This account doesn't have admin access. Use the Pulse portal instead.",
+          title: "Pharmacy access required",
+          description: "This account doesn't have Pharmacy portal access. Use the Pulse portal instead.",
           variant: "destructive",
         });
         return;
@@ -287,11 +289,11 @@ export function LoginCard() {
               id="login-heading"
               className="text-[26px] font-semibold tracking-tight text-slate-900 sm:text-[30px]"
             >
-              {portal === "admin" ? "Admin Console" : "Welcome Back"}
+              {portal === "pharmacy" ? "Pharmacy Portal" : "Welcome Back"}
             </h1>
             <p className="mt-1.5 text-[13.5px] text-slate-500">
-              {portal === "admin"
-                ? "Sign in with your administrator account to manage Pulse."
+              {portal === "pharmacy"
+                ? "Sign in with your pharmacy account to manage Pulse."
                 : "Let\u2019s get started by filling out the form below."}
             </p>
           </motion.div>
