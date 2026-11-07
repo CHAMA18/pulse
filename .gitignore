@@ -52,3 +52,10 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# local data & sandbox artifacts
+/db/
+/upload/
+/download/
+/tool-results/
+*.pid
