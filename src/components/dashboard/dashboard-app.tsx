@@ -35,6 +35,7 @@ import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
 import { SupplierManagement } from "@/components/dashboard/supplier-management";
 import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
+import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-visibility";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -109,7 +110,7 @@ const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy 
 
 type NavItem = { label: string; icon: LucideIcon };
 
-type DashboardPage = "home" | "suppliers" | "pharmacies";
+type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock";
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
   { section: "Main", items: [{ label: "Home", icon: Home }] },
@@ -136,6 +137,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
 const LIVE_PAGES: Record<string, DashboardPage> = {
   Home: "home",
   "Pulse Pharmacies": "pharmacies",
+  "Stock Balance Visibility": "stock",
   "Supplier Management": "suppliers",
 };
 
@@ -653,6 +655,8 @@ export function DashboardApp() {
               <SupplierManagement />
             ) : page === "pharmacies" ? (
               <PulsePharmacies />
+            ) : page === "stock" ? (
+              <StockBalanceVisibility />
             ) : (
               <>
             {/* Stat cards */}
