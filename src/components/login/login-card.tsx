@@ -7,7 +7,10 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  ShieldCheck,
   TriangleAlert,
+  UserRound,
+  type LucideIcon,
 } from "lucide-react";
 import {
   browserLocalPersistence,
@@ -15,6 +18,7 @@ import {
   setPersistence,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signOut,
 } from "firebase/auth";
 import { useCallback, useRef, useState } from "react";
 import { PulseLogo } from "@/components/login/pulse-logo";
@@ -27,6 +31,7 @@ import {
   describeAuthError,
   getFirebaseAuth,
   googleProvider,
+  isAdminUser,
   trackEvent,
 } from "@/lib/firebase";
 
@@ -48,6 +53,62 @@ const item = {
 };
 
 type Status = "idle" | "loading" | "success";
+type Portal = "pulse" | "admin";
+
+const PORTALS: { id: Portal; label: string; icon: LucideIcon }[] = [
+  { id: "pulse", label: "Pulse", icon: UserRound },
+  { id: "admin", label: "Admin", icon: ShieldCheck },
+];
+
+/**
+ * Segmented control for choosing the authentication portal.
+ * The active thumb slides between segments (shared layout animation).
+ */
+function PortalToggle({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: Portal;
+  onChange: (portal: Portal) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Authentication portal"
+      className="relative grid grid-cols-2 gap-1 rounded-full border border-slate-200 bg-slate-100/80 p-1"
+    >
+      {PORTALS.map(({ id, label, icon: Icon }) => {
+        const active = value === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={active}
+            disabled={disabled}
+            onClick={() => onChange(id)}
+            className={cn(
+              "relative flex h-10 items-center justify-center gap-1.5 rounded-full text-[13.5px] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-60",
+              active ? "text-white" : "text-slate-500 hover:text-slate-700"
+            )}
+          >
+            {active && (
+              <motion.span
+                layoutId="portal-thumb"
+                transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                className="btn-brand absolute inset-0 rounded-full shadow-[0_6px_16px_-6px_rgba(168,85,247,0.7)]"
+                aria-hidden="true"
+              />
+            )}
+            <Icon className="relative z-10 h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+            <span className="relative z-10">{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function LoginCard() {
   const { toast } = useToast();
@@ -60,6 +121,7 @@ export function LoginCard() {
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  const [portal, setPortal] = useState<Portal>("pulse");
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -110,7 +172,7 @@ export function LoginCard() {
 
     setFormError(null);
     setStatus("loading");
-    void trackEvent("login_attempt", { method: "password" });
+    void trackEvent("login_attempt", { method: "password", portal });
     try {
       // "Remember me" → keep the session across browser restarts (local),
       // otherwise end it when the tab closes (session).
@@ -120,16 +182,27 @@ export function LoginCard() {
       );
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const user = credential.user;
+
+      // Admin portal: refuse sessions without administrator rights.
+      if (portal === "admin" && !(await isAdminUser(user))) {
+        await signOut(auth);
+        setStatus("idle");
+        void trackEvent("login_failure", { method: "password", portal, reason: "not_admin" });
+        setFormError("This account doesn't have admin access. Use the Pulse portal instead.");
+        return;
+      }
+
       setStatus("success");
-      void trackEvent("login", { method: "password", status: "success" });
+      void trackEvent("login", { method: "password", status: "success", portal });
       const firstName = (user.displayName ?? user.email?.split("@")[0] ?? "there").split(" ")[0];
       toast({
         title: `Welcome back, ${firstName} 👋`,
-        description: "Signing you in to Pulse…",
+        description:
+          portal === "admin" ? "Signing you in to the admin console…" : "Signing you in to Pulse…",
       });
     } catch (err) {
       setStatus("idle");
-      void trackEvent("login_failure", { method: "password", reason: authErrorCode(err) });
+      void trackEvent("login_failure", { method: "password", portal, reason: authErrorCode(err) });
       setFormError(describeAuthError(err));
     }
   };
@@ -146,18 +219,31 @@ export function LoginCard() {
       return;
     }
     setGoogleLoading(true);
-    void trackEvent("login_attempt", { method: "google" });
+    void trackEvent("login_attempt", { method: "google", portal });
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
-      void trackEvent("login", { method: "google", status: "success" });
+
+      // Admin portal: refuse sessions without administrator rights.
+      if (portal === "admin" && !(await isAdminUser(user))) {
+        await signOut(auth);
+        void trackEvent("login_failure", { method: "google", portal, reason: "not_admin" });
+        toast({
+          title: "Admin access required",
+          description: "This account doesn't have admin access. Use the Pulse portal instead.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      void trackEvent("login", { method: "google", status: "success", portal });
       toast({
         title: "Signed in with Google",
         description: [user.displayName, user.email].filter(Boolean).join(" · ") || "Welcome to Pulse",
       });
     } catch (err) {
       const code = authErrorCode(err);
-      void trackEvent("login_failure", { method: "google", reason: code });
+      void trackEvent("login_failure", { method: "google", portal, reason: code });
       if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
         toast({ title: "Google sign-in cancelled" });
       } else {
@@ -201,15 +287,29 @@ export function LoginCard() {
               id="login-heading"
               className="text-[26px] font-semibold tracking-tight text-slate-900 sm:text-[30px]"
             >
-              Welcome Back
+              {portal === "admin" ? "Admin Console" : "Welcome Back"}
             </h1>
             <p className="mt-1.5 text-[13.5px] text-slate-500">
-              Let&rsquo;s get started by filling out the form below.
+              {portal === "admin"
+                ? "Sign in with your administrator account to manage Pulse."
+                : "Let\u2019s get started by filling out the form below."}
             </p>
           </motion.div>
 
+          {/* Portal toggle */}
+          <motion.div variants={item} className="mt-5">
+            <PortalToggle
+              value={portal}
+              onChange={(next) => {
+                setPortal(next);
+                setFormError(null);
+              }}
+              disabled={status === "loading"}
+            />
+          </motion.div>
+
           {/* Form */}
-          <motion.form variants={item} onSubmit={onSubmit} noValidate className="mt-7 flex flex-col gap-4">
+          <motion.form variants={item} onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
             {/* Email */}
             <div>
               <label htmlFor="email" className="sr-only">
@@ -397,21 +497,23 @@ export function LoginCard() {
           </motion.div>
 
           {/* Register */}
-          <motion.p variants={item} className="mt-5 text-center text-[13.5px] text-slate-500">
-            Don&rsquo;t have an account?{" "}
-            <button
-              type="button"
-              onClick={() =>
-                toast({
-                  title: "Registration is invite-only",
-                  description: "Ask your facility administrator for a Pulse invitation.",
-                })
-              }
-              className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
-            >
-              Register
-            </button>
-          </motion.p>
+          {portal === "pulse" && (
+            <motion.p variants={item} className="mt-5 text-center text-[13.5px] text-slate-500">
+              Don&rsquo;t have an account?{" "}
+              <button
+                type="button"
+                onClick={() =>
+                  toast({
+                    title: "Registration is invite-only",
+                    description: "Ask your facility administrator for a Pulse invitation.",
+                  })
+                }
+                className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
+              >
+                Register
+              </button>
+            </motion.p>
+          )}
 
         </motion.div>
       </motion.section>

@@ -5,7 +5,7 @@ import {
   logEvent,
   type Analytics,
 } from "firebase/analytics";
-import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, type Auth, type User } from "firebase/auth";
 
 /**
  * Firebase web app configuration — "pharmacy-system-2fb27".
@@ -94,6 +94,28 @@ export function getFirebaseAuth(): Auth | null {
 
 /** Google sign-in provider (used with signInWithPopup). */
 export const googleProvider = new GoogleAuthProvider();
+
+/**
+ * Admin eligibility check, applied when signing in through the Admin portal.
+ * Two mechanisms, in order of strength:
+ *  1. A custom claim `admin: true` (set via the Firebase Admin SDK — recommended)
+ *  2. The NEXT_PUBLIC_ADMIN_EMAILS allowlist (comma-separated emails), a
+ *     pragmatic fallback while claims aren't set up yet
+ * Returns false when neither matches so the caller can refuse the session.
+ */
+export async function isAdminUser(user: User): Promise<boolean> {
+  try {
+    const token = await user.getIdTokenResult();
+    if (token.claims.admin === true) return true;
+  } catch {
+    /* fall through to the allowlist */
+  }
+  const allowlist = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  return !!user.email && allowlist.includes(user.email.toLowerCase());
+}
 
 const AUTH_ERROR_COPY: Record<string, string> = {
   "auth/invalid-email": "That email address doesn't look right.",
