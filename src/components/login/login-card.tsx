@@ -16,6 +16,7 @@ import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { trackEvent } from "@/lib/firebase";
 
 const DEMO = {
   email: "demo@pulse.care",
@@ -97,6 +98,7 @@ export function LoginCard() {
 
     setFormError(null);
     setStatus("loading");
+    void trackEvent("login_attempt", { method: "password" });
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -110,16 +112,19 @@ export function LoginCard() {
       };
       if (res.ok && data.ok && data.user) {
         setStatus("success");
+        void trackEvent("login", { method: "password", status: "success" });
         toast({
           title: `Welcome back, ${data.user.name.split(" ")[0]} 👋`,
           description: "Signing you in to Pulse…",
         });
       } else {
         setStatus("idle");
+        void trackEvent("login_failure", { method: "password", reason: "invalid_credentials" });
         setFormError(data.message ?? "Incorrect email or password.");
       }
     } catch {
       setStatus("idle");
+      void trackEvent("login_failure", { method: "password", reason: "network" });
       setFormError("We couldn't reach the server. Please try again.");
     }
   };
@@ -127,15 +132,18 @@ export function LoginCard() {
   const onGoogle = async () => {
     if (googleLoading) return;
     setGoogleLoading(true);
+    void trackEvent("login_attempt", { method: "google" });
     try {
       const res = await fetch("/api/auth/google", { method: "POST" });
       const data = (await res.json()) as { ok: boolean; user?: { name: string; email: string } };
       if (res.ok && data.ok && data.user) {
+        void trackEvent("login", { method: "google", status: "success" });
         toast({
           title: `Signed in with Google`,
           description: `${data.user.name} · ${data.user.email} (demo)`,
         });
       } else {
+        void trackEvent("login_failure", { method: "google", reason: "api_error" });
         toast({ title: "Google sign-in failed", variant: "destructive" });
       }
     } catch {
@@ -150,6 +158,7 @@ export function LoginCard() {
     setPassword(DEMO.password);
     setErrors({});
     setFormError(null);
+    void trackEvent("demo_autofill");
     toast({
       title: "Demo credentials filled",
       description: "Press “Sign In” to continue.",

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { FirebaseAnalytics } from "@/components/firebase-analytics";
 
 /**
  * Satoshi — the app-wide brand typeface (via Fontshare).
@@ -54,6 +55,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${satoshi.variable} font-sans antialiased`}>
         {children}
+        <FirebaseAnalytics />
         <Toaster />
       </body>
     </html>
