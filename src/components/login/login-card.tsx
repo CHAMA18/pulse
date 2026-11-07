@@ -1,12 +1,14 @@
 "use client";
 
-import { motion, MotionConfig } from "framer-motion";
+import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import {
   AlertCircle,
   CheckCircle2,
   Eye,
   EyeOff,
   Loader2,
+  Lock,
+  Mail,
   Pill,
   TriangleAlert,
   UserRound,
@@ -22,7 +24,6 @@ import {
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
-import { PulseLogo } from "@/components/login/pulse-logo";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
 import { useToast } from "@/hooks/use-toast";
@@ -130,6 +131,16 @@ export function LoginCard() {
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
+
+  /** Pointer-tracked spotlight — writes CSS vars, zero re-renders. */
+  const onCardMove = (e: React.MouseEvent<HTMLElement>) => {
+    const el = cardRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+    el.style.setProperty("--my", `${e.clientY - r.top}px`);
+  };
 
   const validate = useCallback(
     (field: "email" | "password") => {
@@ -277,26 +288,30 @@ export function LoginCard() {
   return (
     <MotionConfig reducedMotion="user">
       <motion.section
-        initial={{ opacity: 0, y: 30, scale: 0.965 }}
+        ref={cardRef}
+        onMouseMove={onCardMove}
+        initial={{ opacity: 0, y: 34, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ type: "spring", stiffness: 120, damping: 18, mass: 0.9 }}
-        className="relative w-full max-w-[440px] rounded-[20px] bg-white px-6 py-9 shadow-[0_36px_100px_-16px_rgba(88,28,135,0.6)] ring-1 ring-white/50 sm:px-10 sm:py-10"
+        transition={{ type: "spring", stiffness: 110, damping: 17, mass: 0.9 }}
+        className="card-spotlight relative w-full max-w-[440px] rounded-[20px] bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] px-6 py-9 shadow-[0_50px_140px_-24px_rgba(139,47,232,0.65),0_16px_48px_-16px_rgba(10,4,20,0.55)] sm:px-10 sm:py-10"
         aria-labelledby="login-heading"
       >
-        <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
-          {/* Brand */}
-          <motion.div variants={item} className="flex justify-center">
-            <PulseLogo className="animate-float" />
-          </motion.div>
+        {/* gradient hairline border */}
+        <span aria-hidden="true" className="card-hairline" />
+        {/* one-time sheen sweep on mount */}
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[20px]">
+          <span className="animate-sheen absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent" />
+        </span>
 
+        <motion.div variants={container} initial="hidden" animate="show" className="relative flex flex-col">
           {/* Heading */}
-          <motion.div variants={item} className="mt-5 text-center">
-            <h1
+          <motion.div variants={item} className="text-center">
+            <h2
               id="login-heading"
               className="text-[26px] font-semibold tracking-tight text-slate-900 sm:text-[30px]"
             >
               {portal === "pharmacy" ? "Pharmacy Portal" : "Welcome Back"}
-            </h1>
+            </h2>
             <p className="mt-1.5 text-[13.5px] text-slate-500">
               {portal === "pharmacy"
                 ? "Sign in with your pharmacy account to manage Pulse."
@@ -314,15 +329,33 @@ export function LoginCard() {
               }}
               disabled={status === "loading"}
             />
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.p
+                key={portal}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                className="mt-2 text-center text-[12px] text-slate-400"
+              >
+                {portal === "pharmacy"
+                  ? "For pharmacy administrators"
+                  : "For patients & care teams"}
+              </motion.p>
+            </AnimatePresence>
           </motion.div>
 
           {/* Form */}
           <motion.form variants={item} onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
             {/* Email */}
-            <div>
+            <div className="relative">
               <label htmlFor="email" className="sr-only">
                 Email address
               </label>
+              <Mail
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3.5 top-6 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
+              />
               <input
                 ref={emailRef}
                 id="email"
@@ -340,7 +373,7 @@ export function LoginCard() {
                 onBlur={() => validate("email")}
                 aria-invalid={!!errors.email}
                 aria-describedby={errors.email ? "email-error" : undefined}
-                className={cn(inputBase, inputState(errors.email))}
+                className={cn(inputBase, inputState(errors.email), "pl-11")}
               />
               {errors.email && (
                 <p id="email-error" role="alert" className="mt-1.5 flex items-center gap-1 text-xs text-rose-600">
@@ -355,6 +388,10 @@ export function LoginCard() {
                 Password
               </label>
               <div className="relative">
+                <Lock
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
+                />
                 <input
                   ref={passwordRef}
                   id="password"
@@ -377,7 +414,7 @@ export function LoginCard() {
                       .filter(Boolean)
                       .join(" ") || undefined
                   }
-                  className={cn(inputBase, inputState(errors.password), "pr-12")}
+                  className={cn(inputBase, inputState(errors.password), "pl-11 pr-12")}
                 />
                 <button
                   type="button"
