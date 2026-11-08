@@ -72,7 +72,7 @@ const ROLE_META: Record<UserRole, { label: string; pill: string }> = {
   },
   admin: {
     label: "Admin",
-    pill: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+    pill: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300",
   },
   staff: {
     label: "Staff",
@@ -694,7 +694,7 @@ export function UserManagement() {
           value={String(stats.owners)}
           label="Owners"
           icon={ShieldCheck}
-          tile="bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400"
+          tile="bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400"
         />
         <StatCard
           value={String(stats.active)}

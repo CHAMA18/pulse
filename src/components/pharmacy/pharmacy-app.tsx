@@ -117,23 +117,23 @@ type PharmacyPage =
   | "settings"
   | "walkthrough";
 
-/** Compact page titles used in the audit trail ("Viewed PharmacyInventory"). */
+/** Human page titles used in the audit trail ("Viewed Product Catalogue"). */
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
-  home: "PharmacyDashboard",
-  pos: "PointOfSale",
-  balance: "PharmacyStockBalance",
-  inventory: "PharmacyInventory",
-  movement: "StockMovement",
-  catalogue: "ProductCatalogue",
-  orders: "PurchaseOrders",
-  requests: "StockRequests",
+  home: "Dashboard",
+  pos: "Point of Sale",
+  balance: "Stock Balance",
+  inventory: "Inventory",
+  movement: "Stock Movement",
+  catalogue: "Product Catalogue",
+  orders: "Purchase Orders",
+  requests: "Stock Requests",
   deliveries: "Deliveries",
-  suppliers: "SupplierDirectory",
-  stores: "PharmacyStores",
-  users: "PharmacyUserManagement",
-  profile: "MyPharmacy",
-  settings: "PharmacySettings",
-  walkthrough: "PharmacyWalkthrough",
+  suppliers: "Supplier Directory",
+  stores: "Stores",
+  users: "User Management",
+  profile: "My Pharmacy",
+  settings: "Settings",
+  walkthrough: "Walkthrough",
 };
 
 const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon }[] }[] = [
@@ -609,7 +609,7 @@ function PharmacyHome({
       label: "Items Sold",
       desc: `From ${scopedSales.length} counter sale${scopedSales.length === 1 ? "" : "s"} at the POS`,
       icon: Package,
-      tile: "bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400",
+      tile: "bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400",
     },
     {
       id: "pending-requests",
@@ -888,6 +888,11 @@ export function PharmacyApp() {
         // This session belongs to the Pulse console.
         if (active) {
           setBouncing(true);
+          toast({
+            title: "This is the Pharmacy portal",
+            description:
+              "Your session opened in the Pulse console, which doesn't have Pharmacy access. Sign in through the Pharmacy tab with an elevated account.",
+          });
           router.replace("/dashboard");
         }
         return;
@@ -977,7 +982,7 @@ export function PharmacyApp() {
       goTo(target);
       if (user.email) {
         recordAudit({
-          title: "SidebarLink Navigate To",
+          title: "Sidebar navigation",
           action: "View",
           detail: PHARMACY_WORKSPACE,
           actor: user.name,

@@ -182,7 +182,7 @@ export function PharmacyProfile({
                       Pending network review
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 px-2.5 py-1 text-[11.5px] font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-1 text-[11.5px] font-semibold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
                       <ShieldQuestion className="h-3.5 w-3.5" aria-hidden="true" />
                       On file
                     </span>

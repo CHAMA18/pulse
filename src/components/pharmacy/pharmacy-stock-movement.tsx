@@ -74,7 +74,7 @@ const TYPE_ICON: Record<MovementType, LucideIcon> = {
 const TYPE_PILL: Record<MovementType, string> = {
   receipt: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
   issue: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-  transfer: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+  transfer: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
   adjustment: "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
   return: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300",
 };
@@ -103,7 +103,7 @@ function TypePill({ type }: { type: MovementType }) {
   );
 }
 
-/** Signed quantity cell — green in, amber out, sky moves. */
+/** Signed quantity cell — green in, amber out, violet moves. */
 function QtyCell({ qty, type }: { qty: number; type: MovementType }) {
   const positive = qty > 0;
   return (
@@ -111,7 +111,7 @@ function QtyCell({ qty, type }: { qty: number; type: MovementType }) {
       className={cn(
         "inline-flex items-center gap-1 whitespace-nowrap font-bold tabular-nums",
         type === "transfer"
-          ? "text-sky-600 dark:text-sky-400"
+          ? "text-violet-600 dark:text-violet-400"
           : positive
             ? "text-emerald-600 dark:text-emerald-400"
             : "text-amber-600 dark:text-amber-400"

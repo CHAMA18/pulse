@@ -889,7 +889,7 @@ export function SupplierManagement() {
       <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           value={String(stats.count)}
-          label="Suppliers"
+          label={stats.count === 1 ? "Supplier" : "Suppliers"}
           icon={Store}
           tile="bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
         />
@@ -897,7 +897,7 @@ export function SupplierManagement() {
           value={String(stats.products)}
           label="Products Linked"
           icon={Boxes}
-          tile="bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400"
+          tile="bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400"
         />
         <StatCard
           value={formatZmw(stats.value)}

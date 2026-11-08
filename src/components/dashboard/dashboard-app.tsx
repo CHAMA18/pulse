@@ -3,14 +3,12 @@
 import { motion, MotionConfig } from "framer-motion";
 import {
   ArrowDownLeft,
-  BarChart3,
   Bell,
   Calculator,
   CheckCircle2,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
-  ClipboardList,
   Compass,
   Eye,
   History,
@@ -122,15 +120,15 @@ type NavItem = { label: string; icon: LucideIcon };
 
 type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users" | "audit" | "walkthrough";
 
-/** Compact page titles used in the audit trail ("Viewed PulsePharmacies"). */
+/** Human page titles used in the audit trail ("Viewed Pulse Pharmacies"). */
 const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   home: "Dashboard",
-  audit: "AuditLogs",
-  users: "UserManagement",
-  pharmacies: "PulsePharmacies",
-  stock: "StockBalance",
-  suppliers: "SupplierManagement",
-  walkthrough: "PulseWalkthrough",
+  audit: "Audit Logs",
+  users: "User Management",
+  pharmacies: "Pulse Pharmacies",
+  stock: "Stock Balance",
+  suppliers: "Supplier Management",
+  walkthrough: "Walkthrough",
 };
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
@@ -147,8 +145,6 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
     items: [
       { label: "Pulse Pharmacies", icon: LayoutGrid },
       { label: "Stock Balance Visibility", icon: Eye },
-      { label: "Onboarding Requests", icon: ClipboardList },
-      { label: "Network Analytics", icon: BarChart3 },
       { label: "Supplier Management", icon: Store },
     ],
   },
@@ -561,7 +557,7 @@ export function DashboardApp() {
       setPage(target);
       if (user.email) {
         recordAudit({
-          title: "SidebarLink Navigate To",
+          title: "Sidebar navigation",
           action: "View",
           detail: WORKSPACE_NAME,
           actor: user.name,

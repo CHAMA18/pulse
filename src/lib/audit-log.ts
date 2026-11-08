@@ -35,12 +35,11 @@ const SEED_ACTORS: { name: string; email: string }[] = [
 ];
 
 const VIEWED_PAGES = [
-  "AuditLogs", "PulsePharmacies", "UserManagement", "StockBalance",
-  "SupplierManagement", "Dashboard", "OnboardingRequests", "NetworkAnalytics",
-  "Home", "Reports",
+  "Audit Logs", "Pulse Pharmacies", "User Management", "Stock Balance",
+  "Supplier Management", "Dashboard", "Home",
 ] as const;
 
-const TAP_TARGETS = ["Home", "PulsePharmacies", "AuditLogs", "UserManagement"] as const;
+const TAP_TARGETS = ["Home", "Pulse Pharmacies", "Audit Logs", "User Management"] as const;
 
 type SeedEvent = {
   title: string;
@@ -52,15 +51,15 @@ function seedEventFor(i: number): SeedEvent {
   // The first five mirror the live console exactly; the rest are generated.
   switch (i) {
     case 0:
-      return { title: "Viewed AuditLogs", action: "View", detail: WORKSPACE_NAME };
+      return { title: "Viewed Audit Logs", action: "View", detail: WORKSPACE_NAME };
     case 1:
-      return { title: "Viewed PulsePharmacies", action: "View", detail: WORKSPACE_NAME };
+      return { title: "Viewed Pulse Pharmacies", action: "View", detail: WORKSPACE_NAME };
     case 2:
-      return { title: "SidebarLink Navigate To", action: "View", detail: WORKSPACE_USER_REF };
+      return { title: "Sidebar navigation", action: "View", detail: WORKSPACE_USER_REF };
     case 3:
-      return { title: "SidebarLink Update App State", action: "Update", detail: WORKSPACE_USER_REF };
+      return { title: "Sidebar selection", action: "Update", detail: WORKSPACE_USER_REF };
     case 4:
-      return { title: "SIDE NAV COMP Home ON TAP", action: "Activity", detail: WORKSPACE_USER_REF };
+      return { title: "Tapped Home in the sidebar", action: "Activity", detail: WORKSPACE_USER_REF };
     default: {
       const kind = i % 5;
       if (kind === 0 || kind === 1) {
@@ -68,13 +67,13 @@ function seedEventFor(i: number): SeedEvent {
         return { title: `Viewed ${page}`, action: "View", detail: WORKSPACE_NAME };
       }
       if (kind === 2) {
-        return { title: "SidebarLink Navigate To", action: "View", detail: WORKSPACE_USER_REF };
+        return { title: "Sidebar navigation", action: "View", detail: WORKSPACE_USER_REF };
       }
       if (kind === 3) {
-        return { title: "SidebarLink Update App State", action: "Update", detail: WORKSPACE_USER_REF };
+        return { title: "Sidebar selection", action: "Update", detail: WORKSPACE_USER_REF };
       }
       const target = TAP_TARGETS[(i * 3) % TAP_TARGETS.length];
-      return { title: `SIDE NAV COMP ${target} ON TAP`, action: "Activity", detail: WORKSPACE_USER_REF };
+      return { title: `Tapped ${target} in the sidebar`, action: "Activity", detail: WORKSPACE_USER_REF };
     }
   }
 }
@@ -119,6 +118,27 @@ function isValidEvent(e: unknown): e is AuditEvent {
   );
 }
 
+/** Split camelCase page names ("AuditLogs" → "Audit Logs"). */
+function spaced(value: string): string {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+/**
+ * Older builds wrote machine-flavoured titles ("Viewed AuditLogs",
+ * "SidebarLink Navigate To", "SIDE NAV COMP Home ON TAP"). Rewrite any
+ * that are still in a visitor's localStorage so the feed reads cleanly.
+ */
+function humanizeLegacyTitle(title: string): string {
+  if (title.startsWith("SIDE NAV COMP ") && title.endsWith(" ON TAP")) {
+    const target = spaced(title.slice("SIDE NAV COMP ".length, -" ON TAP".length));
+    return `Tapped ${target} in the sidebar`;
+  }
+  if (title === "SidebarLink Navigate To") return "Sidebar navigation";
+  if (title === "SidebarLink Update App State") return "Sidebar selection";
+  if (title.startsWith("Viewed ")) return `Viewed ${spaced(title.slice("Viewed ".length))}`;
+  return title;
+}
+
 export function loadAuditEvents(): AuditEvent[] {
   if (typeof window === "undefined") return [];
   try {
@@ -126,7 +146,22 @@ export function loadAuditEvents(): AuditEvent[] {
     if (!raw) return seedAuditEvents(Date.now());
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) return seedAuditEvents(Date.now());
-    return parsed.filter(isValidEvent);
+    let migrated = false;
+    const events = parsed
+      .filter(isValidEvent)
+      .map((e) => {
+        const title = humanizeLegacyTitle(e.title);
+        if (title !== e.title) migrated = true;
+        return title === e.title ? e : { ...e, title };
+      });
+    if (migrated) {
+      try {
+        window.localStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(events));
+      } catch {
+        /* best-effort — the in-memory copy is already clean */
+      }
+    }
+    return events;
   } catch {
     return seedAuditEvents(Date.now());
   }

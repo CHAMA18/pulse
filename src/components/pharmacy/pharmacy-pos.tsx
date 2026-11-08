@@ -381,8 +381,9 @@ export function PharmacyPOS({
             />
           </div>
 
-          {/* Category chips */}
-          <div className="pulse-scroll mt-3 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product categories">
+          {/* Category chips — right fade hints that the row scrolls */}
+          <div className="relative mt-3">
+            <div className="pulse-scroll flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product categories">
             {categories.map((cat) => {
               const active = category === cat;
               return (
@@ -403,6 +404,11 @@ export function PharmacyPOS({
                 </button>
               );
             })}
+            </div>
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[#f6f5fb] to-transparent dark:from-[#0a0413]"
+            />
           </div>
 
           {/* Product tiles */}

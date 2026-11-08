@@ -90,7 +90,7 @@ const ROLE_META: Record<PharmacyRole, { label: string; pill: string; blurb: stri
   },
   manager: {
     label: "Pharmacy Manager",
-    pill: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+    pill: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300",
     blurb: "Runs day-to-day operations across stores and manages the team.",
   },
   pharmacist: {

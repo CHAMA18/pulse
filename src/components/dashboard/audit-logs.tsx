@@ -46,8 +46,8 @@ const ACTION_META: Record<
 > = {
   View: {
     icon: Eye,
-    tile: "bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400",
-    badge: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300",
+    tile: "bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400",
+    badge: "bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300",
   },
   Update: {
     icon: NotebookPen,

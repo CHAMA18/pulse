@@ -361,7 +361,7 @@ export function LoginCard() {
               >
                 {portal === "pharmacy"
                   ? "For pharmacy administrators"
-                  : "For patients & care teams"}
+                  : "For the Pulse network team"}
               </motion.p>
             </AnimatePresence>
           </motion.div>
