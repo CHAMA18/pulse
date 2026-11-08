@@ -430,6 +430,44 @@
   animation: beat-halo 1.2s ease-out infinite;
 }
 
+/* ---------- Pulse — landing: marquee + demo hyperframe ---------- */
+
+/* Capability marquee: content is duplicated, so -50% loops seamlessly. */
+@keyframes pulse-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: pulse-marquee 38s linear infinite;
+  will-change: transform;
+}
+.marquee-pause:hover .animate-marquee {
+  animation-play-state: paused;
+}
+
+/* DemoTheater hyperframe — mouse-driven 3D tilt via --tilt-x/--tilt-y. */
+.demo-frame {
+  transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transform-style: preserve-3d;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee {
+    animation: none;
+    width: 100% !important;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .marquee-pause .animate-marquee {
+    gap: 2rem;
+  }
+  .demo-frame {
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-shake,
   .animate-ping-soft,
