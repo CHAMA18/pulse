@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { setStoredPortal } from "@/lib/portal";
 import {
   authErrorCode,
   describeAuthError,
@@ -95,7 +96,9 @@ export function RegisterDialog({
     if (!open || status !== "success") return;
     const timer = window.setTimeout(() => {
       onOpenChange(false);
-      router.push("/dashboard");
+      // New pharmacies open their own portal console, not the Pulse admin one.
+      setStoredPortal("pharmacy");
+      router.push("/pharmacy");
     }, 1100);
     return () => window.clearTimeout(timer);
   }, [open, status, onOpenChange, router]);
@@ -203,7 +206,7 @@ export function RegisterDialog({
                 </DialogTitle>
                 <DialogDescription className="text-[14px] leading-relaxed text-slate-500">
                   <span className="font-medium text-slate-700">{registeredName}</span> now has a
-                  Pulse account. Taking you to your console…
+                  Pulse account. Taking you to your pharmacy console…
                 </DialogDescription>
               </DialogHeader>
               <span className="mt-4 flex items-center gap-2 text-[12px] text-slate-400">

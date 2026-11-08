@@ -237,6 +237,15 @@ function recordPharmacyRegistration(entry: PharmacyRegistration): void {
   }
 }
 
+/**
+ * The pharmacy registrations made on this browser, keyed by uid.
+ * The Pharmacy portal console reads this to show the signed-in owner's
+ * own pharmacy profile (name, owner, when it registered).
+ */
+export function getPharmacyRegistrations(): PharmacyRegistration[] {
+  return readPharmacyRegistry();
+}
+
 export type PharmacyRegistrationInput = {
   pharmacyName: string;
   ownerName: string;

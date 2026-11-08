@@ -41,6 +41,7 @@ import { AuditLogs } from "@/components/dashboard/audit-logs";
 import { recordAudit, WORKSPACE_NAME } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { clearStoredPortal, getStoredPortal } from "@/lib/portal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -472,6 +473,7 @@ export function DashboardApp() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [page, setPage] = useState<DashboardPage>("home");
   const [user, setUser] = useState({ name: "Pulse User", email: "", initial: "P" });
+  const [bouncing, setBouncing] = useState(false);
 
   // Restore the signed-in identity + theme preference (async so we never
   // setState synchronously inside the effect body).
@@ -479,6 +481,16 @@ export function DashboardApp() {
     let active = true;
 
     void (async () => {
+      // Sessions that signed in through the Pharmacy portal live in their own
+      // console — the Pulse admin interface is never shown to them.
+      if (getStoredPortal() === "pharmacy") {
+        if (active) {
+          setBouncing(true);
+          router.replace("/pharmacy");
+        }
+        return;
+      }
+
       const auth = getFirebaseAuth();
       try {
         await auth?.authStateReady();
@@ -507,7 +519,7 @@ export function DashboardApp() {
       cancelAnimationFrame(raf);
       document.documentElement.classList.remove("dark");
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     void trackEvent("dashboard_view");
@@ -515,7 +527,7 @@ export function DashboardApp() {
 
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
-    if (!user.email) return;
+    if (bouncing || !user.email) return;
     recordAudit({
       title: `Viewed ${PAGE_AUDIT_TITLES[page]}`,
       action: "View",
@@ -571,7 +583,8 @@ export function DashboardApp() {
         /* signing out locally regardless */
       }
     }
-    void trackEvent("logout");
+    clearStoredPortal();
+    void trackEvent("logout", { portal: "pulse" });
     toast({ title: "Signed out", description: "See you soon!" });
     router.replace("/");
   };
@@ -589,6 +602,24 @@ export function DashboardApp() {
       page={page}
     />
   );
+
+  // While a pharmacy-portal session is being redirected to its own console,
+  // hold the branded splash — never flash the admin interface.
+  if (bouncing) {
+    return (
+      <div
+        className="pulse-space flex min-h-dvh flex-col items-center justify-center gap-5"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <PulseMark className="h-14 w-14 animate-float" />
+        <p className="flex items-center gap-2.5 text-sm text-white/70">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-fuchsia-400" aria-hidden="true" />
+          Taking you to the Pharmacy portal…
+        </p>
+      </div>
+    );
+  }
 
   return (
     <MotionConfig reducedMotion="user">

@@ -29,6 +29,7 @@ import { GoogleIcon } from "@/components/login/google-icon";
 import { RegisterDialog } from "@/components/login/register-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { routeForPortal, setStoredPortal } from "@/lib/portal";
 import {
   authErrorCode,
   describeAuthError,
@@ -208,6 +209,8 @@ export function LoginCard() {
       }
 
       setStatus("success");
+      // The portal chosen at sign-in decides which console the session opens.
+      setStoredPortal(portal);
       void trackEvent("login", { method: "password", status: "success", portal });
       const firstName = (user.displayName ?? user.email?.split("@")[0] ?? "there").split(" ")[0];
       toast({
@@ -217,8 +220,8 @@ export function LoginCard() {
             ? "Signing you in to the Pharmacy portal…"
             : "Signing you in to Pulse…",
       });
-      // Hand the fresh session to the Pulse console.
-      window.setTimeout(() => router.push("/dashboard"), 900);
+      // Hand the fresh session to the console for this portal.
+      window.setTimeout(() => router.push(routeForPortal(portal)), 900);
     } catch (err) {
       setStatus("idle");
       void trackEvent("login_failure", { method: "password", portal, reason: authErrorCode(err) });
@@ -256,12 +259,13 @@ export function LoginCard() {
       }
 
       void trackEvent("login", { method: "google", status: "success", portal });
+      setStoredPortal(portal);
       toast({
         title: "Signed in with Google",
         description: [user.displayName, user.email].filter(Boolean).join(" · ") || "Welcome to Pulse",
       });
-      // Hand the fresh session to the Pulse console.
-      window.setTimeout(() => router.push("/dashboard"), 900);
+      // Hand the fresh session to the console for this portal.
+      window.setTimeout(() => router.push(routeForPortal(portal)), 900);
     } catch (err) {
       const code = authErrorCode(err);
       void trackEvent("login_failure", { method: "google", portal, reason: code });
