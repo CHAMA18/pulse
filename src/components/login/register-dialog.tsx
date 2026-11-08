@@ -86,22 +86,31 @@ export function RegisterDialog({
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const addTeamEmail = (raw: string) => {
-    const value = raw.trim().toLowerCase().replace(/,+$/, "");
-    if (!value) return;
-    if (!EMAIL_RE.test(value)) {
-      setTeamError("That email doesn't look right.");
-      return;
-    }
-    if (teamEmails.includes(value)) {
-      setTeamError("That address is already on the list.");
-      return;
-    }
-    if (teamEmails.length >= TEAM_EMAIL_LIMIT) {
-      setTeamError(`Up to ${TEAM_EMAIL_LIMIT} invitations at registration — add more later in User Management.`);
-      return;
+    // Paste-friendly: "a@x.co, b@y.co; c@z.co" lands as three chips in one go.
+    const candidates = raw
+      .split(/[,;\s]+/)
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean);
+    if (candidates.length === 0) return;
+
+    const next = [...teamEmails];
+    for (const value of candidates) {
+      if (!EMAIL_RE.test(value)) {
+        setTeamError("That email doesn't look right.");
+        return;
+      }
+      if (next.includes(value)) {
+        setTeamError("That address is already on the list.");
+        return;
+      }
+      if (next.length >= TEAM_EMAIL_LIMIT) {
+        setTeamError(`Up to ${TEAM_EMAIL_LIMIT} invitations at registration — add more later in User Management.`);
+        return;
+      }
+      next.push(value);
     }
     setTeamError(null);
-    setTeamEmails((prev) => [...prev, value]);
+    setTeamEmails(next);
     setTeamInput("");
   };
 
