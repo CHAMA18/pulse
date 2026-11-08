@@ -12,6 +12,7 @@ import { loadPharmacyList, savePharmacyList } from "@/components/pharmacy/pharma
 export const PHARMACY_INVENTORY_KEY = "pulse.pharmacy-inventory.v1";
 export const PHARMACY_REQUESTS_KEY = "pulse.pharmacy-requests.v1";
 export const PHARMACY_DELIVERIES_KEY = "pulse.pharmacy-deliveries.v1";
+export const PHARMACY_SETTINGS_KEY = "pulse.pharmacy-settings.v1";
 
 export type InventoryItem = {
   id: string;
@@ -47,6 +48,56 @@ export type Delivery = {
   condition: "verified";
 };
 
+/** A network supplier shown in the Pharmacy portal's Supplier Directory. */
+export type Supplier = {
+  id: string;
+  name: string;
+  categories: string[];
+  /** Typical fulfilment window, e.g. "1–2 days". */
+  leadTime: string;
+  /** Minimum order value in ZMW. */
+  minOrder: number;
+  /** Network rating out of 5. */
+  rating: number;
+  contact: string;
+  verified: boolean;
+};
+
+/** Portal preferences persisted per device. */
+export type PharmacySettings = {
+  lowStockAlerts: boolean;
+  deliveryUpdates: boolean;
+  requestStatus: boolean;
+  weeklyDigest: boolean;
+};
+
+export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
+  lowStockAlerts: true,
+  deliveryUpdates: true,
+  requestStatus: true,
+  weeklyDigest: false,
+};
+
+export function loadPharmacySettings(): PharmacySettings {
+  if (typeof window === "undefined") return DEFAULT_PHARMACY_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(PHARMACY_SETTINGS_KEY);
+    if (!raw) return DEFAULT_PHARMACY_SETTINGS;
+    return { ...DEFAULT_PHARMACY_SETTINGS, ...(JSON.parse(raw) as Partial<PharmacySettings>) };
+  } catch {
+    return DEFAULT_PHARMACY_SETTINGS;
+  }
+}
+
+export function savePharmacySettings(settings: PharmacySettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PHARMACY_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    /* best-effort */
+  }
+}
+
 const DAY = 24 * 60 * 60 * 1000;
 
 /** The shelves every fresh pharmacy console opens with. */
@@ -79,6 +130,74 @@ const SEED_DELIVERIES: Delivery[] = [
   { id: "DLV-2038", supplier: "MedTech Wholesalers", items: "Face masks × 20 · Gloves × 10", units: 30, receivedAt: Date.now() - 12 * DAY, condition: "verified" },
   { id: "DLV-2035", supplier: "Pulse Central Hub", items: "Paracetamol 500mg × 100", units: 100, receivedAt: Date.now() - 20 * DAY, condition: "verified" },
 ];
+
+/** The supplier network every fresh console opens with. */
+const SEED_SUPPLIERS: Supplier[] = [
+  {
+    id: "sup-001",
+    name: "Pulse Central Hub",
+    categories: ["Pharmaceuticals", "Supplements"],
+    leadTime: "1–2 days",
+    minOrder: 500,
+    rating: 4.9,
+    contact: "hub@pulse.network · +260 97 000 1000",
+    verified: true,
+  },
+  {
+    id: "sup-002",
+    name: "MedTech Wholesalers",
+    categories: ["Consumables", "Equipment"],
+    leadTime: "2–4 days",
+    minOrder: 800,
+    rating: 4.6,
+    contact: "orders@medtech.zm · +260 96 555 2100",
+    verified: true,
+  },
+  {
+    id: "sup-003",
+    name: "Zambia Pharma Distributors",
+    categories: ["Pharmaceuticals"],
+    leadTime: "3–5 days",
+    minOrder: 1200,
+    rating: 4.4,
+    contact: "sales@zpharma.zm · +260 95 414 7788",
+    verified: true,
+  },
+  {
+    id: "sup-004",
+    name: "CarePlus Medical Supplies",
+    categories: ["Consumables", "Pharmaceuticals"],
+    leadTime: "2–3 days",
+    minOrder: 650,
+    rating: 4.7,
+    contact: "hello@careplus.zm · +260 97 233 9090",
+    verified: true,
+  },
+  {
+    id: "sup-005",
+    name: "VitaWell Supplements Ltd",
+    categories: ["Supplements"],
+    leadTime: "4–6 days",
+    minOrder: 400,
+    rating: 4.2,
+    contact: "trade@vitawell.zm · +260 96 880 4411",
+    verified: false,
+  },
+  {
+    id: "sup-006",
+    name: "Lusaka Cold-Chain Logistics",
+    categories: ["Equipment", "Consumables"],
+    leadTime: "1–3 days",
+    minOrder: 950,
+    rating: 4.5,
+    contact: "dispatch@lcc.zm · +260 95 700 6262",
+    verified: true,
+  },
+];
+
+export function loadSuppliers(): Supplier[] {
+  return loadPharmacyList("pulse.pharmacy-suppliers.v1", SEED_SUPPLIERS);
+}
 
 export function loadInventory(): InventoryItem[] {
   return loadPharmacyList(PHARMACY_INVENTORY_KEY, SEED_INVENTORY);

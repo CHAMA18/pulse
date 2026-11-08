@@ -3,9 +3,11 @@
 import { motion, MotionConfig } from "framer-motion";
 import {
   Bell,
+  Boxes,
   Building2,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   ClipboardList,
@@ -30,7 +32,10 @@ import { useEffect, useState } from "react";
 import { PharmacyDeliveries } from "@/components/pharmacy/pharmacy-deliveries";
 import { PharmacyInventory } from "@/components/pharmacy/pharmacy-inventory";
 import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
+import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
+import { PharmacyStockBalance } from "@/components/pharmacy/pharmacy-stock-balance";
 import { PharmacyStockRequests } from "@/components/pharmacy/pharmacy-stock-requests";
+import { PharmacySuppliers } from "@/components/pharmacy/pharmacy-suppliers";
 import {
   formatDay,
   formatZMW,
@@ -70,15 +75,26 @@ import {
 /* Navigation model                                                    */
 /* ------------------------------------------------------------------ */
 
-type PharmacyPage = "home" | "inventory" | "requests" | "deliveries" | "profile";
+type PharmacyPage =
+  | "home"
+  | "balance"
+  | "inventory"
+  | "requests"
+  | "deliveries"
+  | "suppliers"
+  | "profile"
+  | "settings";
 
 /** Compact page titles used in the audit trail ("Viewed PharmacyInventory"). */
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   home: "PharmacyDashboard",
+  balance: "PharmacyStockBalance",
   inventory: "PharmacyInventory",
   requests: "StockRequests",
   deliveries: "Deliveries",
+  suppliers: "SupplierDirectory",
   profile: "MyPharmacy",
+  settings: "PharmacySettings",
 };
 
 const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon }[] }[] = [
@@ -86,6 +102,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
   {
     section: "Operations",
     items: [
+      { label: "Stock Balance", icon: Boxes },
       { label: "Inventory", icon: Package },
       { label: "Stock Requests", icon: ClipboardList },
       { label: "Deliveries", icon: Truck },
@@ -104,10 +121,13 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
 /** Which sidebar entries are live pages vs. "coming soon" stubs. */
 const LIVE_PAGES: Record<string, PharmacyPage> = {
   Dashboard: "home",
+  "Stock Balance": "balance",
   Inventory: "inventory",
   "Stock Requests": "requests",
   Deliveries: "deliveries",
+  "Supplier Directory": "suppliers",
   "My Pharmacy": "profile",
+  Settings: "settings",
 };
 
 const QUICK_ACTIONS = ["Request stock", "Adjust stock", "Record delivery"];
@@ -576,6 +596,14 @@ function PharmacyHome({
               Items at or below their reorder level
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => onGoTo("balance")}
+            className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-emerald-200 bg-white px-3.5 text-[13px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/25 dark:bg-transparent dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+          >
+            Full stock balance
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
         <div className={cn(pharmacyCardCls, "mt-4 divide-y divide-slate-100 dark:divide-white/5")}>
           {attentionItems.length === 0 ? (
@@ -951,12 +979,23 @@ export function PharmacyApp() {
           >
             {page === "inventory" ? (
               <PharmacyInventory />
+            ) : page === "balance" ? (
+              <PharmacyStockBalance />
             ) : page === "requests" ? (
               <PharmacyStockRequests />
             ) : page === "deliveries" ? (
               <PharmacyDeliveries />
+            ) : page === "suppliers" ? (
+              <PharmacySuppliers onGoToRequests={() => goTo("requests")} />
             ) : page === "profile" ? (
               <PharmacyProfile user={user} />
+            ) : page === "settings" ? (
+              <PharmacySettings
+                user={user}
+                dark={dark}
+                onDarkChange={toggleDark}
+                onSignOut={onSignOut}
+              />
             ) : (
               <PharmacyHome
                 user={user}
