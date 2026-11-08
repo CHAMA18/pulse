@@ -129,6 +129,144 @@ export type POSSale = {
 
 export type PurchaseOrderStatus = "draft" | "sent" | "received" | "cancelled";
 
+/* ------------------------------------------------------------------ */
+/* Stock movement — the single ledger every quantity change flows      */
+/* through. The Inventory page is read-only; adjustments, receipts,    */
+/* issues, transfers and returns are recorded here.                    */
+/* ------------------------------------------------------------------ */
+
+export const PHARMACY_MOVEMENTS_KEY = "pulse.pharmacy-movements.v1";
+
+const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+
+export type MovementType = "receipt" | "issue" | "transfer" | "adjustment" | "return";
+
+export const MOVEMENT_TYPE_META: Record<
+  MovementType,
+  { label: string; hint: string; delta: "in" | "out" | "move" }
+> = {
+  receipt: { label: "Receipt", hint: "Goods arriving from a supplier or the central hub", delta: "in" },
+  issue: { label: "Issue", hint: "Stock leaving for dispensing, damage or expiry", delta: "out" },
+  transfer: { label: "Transfer", hint: "Stock moving between your stores", delta: "move" },
+  adjustment: { label: "Adjustment", hint: "Corrections found during a stock count", delta: "in" },
+  return: { label: "Return", hint: "Goods returned by a customer or to a supplier", delta: "in" },
+};
+
+/** Why a movement happened — keeps the ledger auditable. */
+export const MOVEMENT_REASONS: Record<MovementType, string[]> = {
+  receipt: ["Supplier delivery", "Central hub restock", "Inter-branch receipt", "Other"],
+  issue: ["Dispensed to patient", "Damaged / broken", "Expired — write-off", "Other"],
+  transfer: ["Store request fulfilment", "Rebalancing stock", "Other"],
+  adjustment: ["Stock count correction", "Damaged — write-off", "Expired — write-off", "Theft / loss", "Other"],
+  return: ["Customer return — restock", "Supplier return", "Other"],
+};
+
+/**
+ * One line in the stock movement ledger. `qty` is always the change to the
+ * source shelf in whole sellable units (positive = more on the shelf).
+ */
+export type StockMovement = {
+  id: string;
+  at: number;
+  type: MovementType;
+  /** Inventory item the movement is against. */
+  itemId: string;
+  productName: string;
+  batch: string;
+  /** Signed change applied to the `fromStoreId` shelf (transfer out is negative there). */
+  qty: number;
+  /** Store the stock left (or is adjusted in). */
+  fromStoreId?: string;
+  /** Destination store for transfers. */
+  toStoreId?: string;
+  reason: string;
+  note?: string;
+  actor: { name: string; email: string };
+};
+
+/** The ledger every fresh console opens with — mirrors the seed shelves. */
+const SEED_MOVEMENTS: StockMovement[] = [
+  {
+    id: "MOV-5018",
+    at: Date.now() - 26 * HOUR,
+    type: "receipt",
+    itemId: "inv-004",
+    productName: "Ibuprofen 400mg (pack)",
+    batch: "IBU-2602-09",
+    qty: 24,
+    reason: "Supplier delivery",
+    note: "CarePlus invoice #8817",
+    actor: { name: "Chungu Chipimo", email: "chungu500@pulse.zm" },
+  },
+  {
+    id: "MOV-5017",
+    at: Date.now() - 2 * DAY,
+    type: "adjustment",
+    itemId: "inv-003",
+    productName: "Amoxicillin 250mg (caps)",
+    batch: "AMX-2603-22",
+    qty: -2,
+    reason: "Stock count correction",
+    note: "Monthly count — two caps damaged",
+    actor: { name: "Chungu Chipimo", email: "chungu500@pulse.zm" },
+  },
+  {
+    id: "MOV-5016",
+    at: Date.now() - 3 * DAY,
+    type: "transfer",
+    itemId: "inv-006",
+    productName: "ORS Sachet (20 ml)",
+    batch: "ORS-2605-03",
+    qty: -40,
+    fromStoreId: "st-main",
+    toStoreId: "st-makeni",
+    reason: "Store request fulfilment",
+    note: "Fills REQ-1040 for the clinic point",
+    actor: { name: "Chungu Chipimo", email: "chungu500@pulse.zm" },
+  },
+  {
+    id: "MOV-5015",
+    at: Date.now() - 5 * DAY,
+    type: "issue",
+    itemId: "inv-007",
+    productName: "Zinc Sulphate 20mg (pack)",
+    batch: "ZNS-2606-17",
+    qty: -6,
+    reason: "Expired — write-off",
+    actor: { name: "Front counter", email: "counter@pulse.zm" },
+  },
+  {
+    id: "MOV-5014",
+    at: Date.now() - 8 * DAY,
+    type: "return",
+    itemId: "inv-009",
+    productName: "Loratadine 10mg (pack)",
+    batch: "LRT-2607-05",
+    qty: 3,
+    reason: "Customer return — restock",
+    note: "Unopened, sealed packs",
+    actor: { name: "Front counter", email: "counter@pulse.zm" },
+  },
+];
+
+export function loadMovements(): StockMovement[] {
+  return loadPharmacyList(PHARMACY_MOVEMENTS_KEY, SEED_MOVEMENTS);
+}
+
+export function saveMovements(movements: StockMovement[]): void {
+  savePharmacyList(PHARMACY_MOVEMENTS_KEY, movements);
+}
+
+/** Next sequential movement id ("MOV-5019"). */
+export function nextMovementId(movements: StockMovement[]): string {
+  const max = movements.reduce((acc, entry) => {
+    const n = Number.parseInt(entry.id.replace("MOV-", ""), 10);
+    return Number.isFinite(n) ? Math.max(acc, n) : acc;
+  }, 5000);
+  return `MOV-${max + 1}`;
+}
+
 /** One line on a purchase order. */
 export type PurchaseOrderLine = {
   id: string;
@@ -180,8 +318,6 @@ export function savePharmacySettings(settings: PharmacySettings): void {
     /* best-effort */
   }
 }
-
-const DAY = 24 * 60 * 60 * 1000;
 
 /* ------------------------------------------------------------------ */
 /* Stores — the account can run several, with one declared main        */
@@ -476,8 +612,6 @@ export function nextCatalogueId(products: CatalogueProduct[]): string {
 /* ------------------------------------------------------------------ */
 /* Point of Sale — completed counter sales                             */
 /* ------------------------------------------------------------------ */
-
-const HOUR = 60 * 60 * 1000;
 
 const SEED_SALES: POSSale[] = [
   {

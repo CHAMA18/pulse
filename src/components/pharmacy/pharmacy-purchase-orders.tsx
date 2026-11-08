@@ -304,6 +304,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
         icon={ClipboardCheck}
         title="Purchase Orders"
         subtitle="Order from network suppliers — send, track and receive in one place"
+        tourId="ph-orders"
         actions={
           <button
             type="button"

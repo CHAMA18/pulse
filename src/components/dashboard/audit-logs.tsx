@@ -161,7 +161,7 @@ export function AuditLogs() {
   const shown = filtered.slice(0, visible);
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
+    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col" data-tour="pulse-audit">
       {/* — Page header — */}
       <motion.section
         variants={item}

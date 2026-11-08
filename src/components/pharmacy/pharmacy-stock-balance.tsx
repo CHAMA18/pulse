@@ -236,6 +236,7 @@ export function PharmacyStockBalance({ storeId = "all" }: { storeId?: string }) 
         icon={Boxes}
         title="Stock Balance"
         subtitle="What's on the shelves, what it's worth, and what needs attention"
+        tourId="ph-balance"
         actions={
           <button
             type="button"

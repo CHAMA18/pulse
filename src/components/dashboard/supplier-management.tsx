@@ -836,7 +836,7 @@ export function SupplierManagement() {
   };
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
+    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col" data-tour="pulse-suppliers">
       {/* — Hero banner — */}
       <motion.section
         variants={item}

@@ -9,8 +9,10 @@ import {
   Loader2,
   Lock,
   Mail,
+  MailPlus,
   Store,
   UserRound,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -21,6 +23,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
+import {
+  callCloudFunction,
+  type InvitationMessage,
+} from "@/lib/cloud/invitations";
 import { setStoredPortal } from "@/lib/portal";
 import {
   authErrorCode,
@@ -40,6 +47,8 @@ type Errors = {
   password?: string;
   confirm?: string;
 };
+
+const TEAM_EMAIL_LIMIT = 8;
 
 /**
  * "Register your pharmacy" — the self-serve onboarding dialog shown from the
@@ -67,6 +76,40 @@ export function RegisterDialog({
   const [status, setStatus] = useState<Status>("idle");
   const [registeredName, setRegisteredName] = useState<string | null>(null);
 
+  // Team invitations — addresses listed here receive a branded Pulse
+  // invitation the moment the pharmacy is created.
+  const [teamEmails, setTeamEmails] = useState<string[]>([]);
+  const [teamInput, setTeamInput] = useState("");
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const [inviteMessages, setInviteMessages] = useState<InvitationMessage[]>([]);
+  const [invitesPending, setInvitesPending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  const addTeamEmail = (raw: string) => {
+    const value = raw.trim().toLowerCase().replace(/,+$/, "");
+    if (!value) return;
+    if (!EMAIL_RE.test(value)) {
+      setTeamError("That email doesn't look right.");
+      return;
+    }
+    if (teamEmails.includes(value)) {
+      setTeamError("That address is already on the list.");
+      return;
+    }
+    if (teamEmails.length >= TEAM_EMAIL_LIMIT) {
+      setTeamError(`Up to ${TEAM_EMAIL_LIMIT} invitations at registration — add more later in User Management.`);
+      return;
+    }
+    setTeamError(null);
+    setTeamEmails((prev) => [...prev, value]);
+    setTeamInput("");
+  };
+
+  const removeTeamEmail = (value: string) => {
+    setTeamEmails((prev) => prev.filter((entry) => entry !== value));
+    setTeamError(null);
+  };
+
   const pharmacyRef = useRef<HTMLInputElement>(null);
 
   // Reopening the dialog starts a fresh form. Reset during render when the
@@ -86,22 +129,28 @@ export function RegisterDialog({
       setFormError(null);
       setStatus("idle");
       setRegisteredName(null);
+      setTeamEmails([]);
+      setTeamInput("");
+      setTeamError(null);
+      setInviteMessages([]);
+      setInvitesPending(false);
+      setPreviewOpen(false);
     }
   }
 
-  // While the success view is counting down to the console hand-off the
-  // dialog must not close — a stray click on the overlay would otherwise
-  // strand the visitor on the login form mid-registration.
+  // While the success view is wrapping up (invitations in flight, or the
+  // email preview open) the dialog must not close — a stray click on the
+  // overlay would otherwise strand the visitor mid-registration.
   useEffect(() => {
-    if (!open || status !== "success") return;
+    if (!open || status !== "success" || invitesPending || previewOpen) return;
     const timer = window.setTimeout(() => {
       onOpenChange(false);
       // New pharmacies open their own portal console, not the Pulse admin one.
       setStoredPortal("pharmacy");
       router.push("/pharmacy");
-    }, 1100);
+    }, 1400);
     return () => window.clearTimeout(timer);
-  }, [open, status, onOpenChange, router]);
+  }, [open, status, invitesPending, previewOpen, onOpenChange, router]);
 
   const validate = (): Errors => {
     const next: Errors = {};
@@ -144,7 +193,26 @@ export function RegisterDialog({
       void trackEvent("pharmacy_registered", {
         portal: "pharmacy",
         profile_saved: result.profileSaved,
+        invites: teamEmails.length,
       });
+
+      // Trigger onPharmacyCreated — the owner's welcome email (always) plus
+      // one branded team invitation per address listed above, straight from
+      // the cloud function.
+      setInvitesPending(true);
+      try {
+        const cloud = await callCloudFunction("onPharmacyCreated", {
+          pharmacyName: result.pharmacyName,
+          ownerName: result.ownerName,
+          ownerEmail: result.email,
+          teamEmails,
+        });
+        setInviteMessages(cloud.messages);
+      } catch {
+        /* invitations are retried from User Management — never block entry */
+      } finally {
+        setInvitesPending(false);
+      }
     } catch (err) {
       setStatus("idle");
       const code = authErrorCode(err);
@@ -209,6 +277,39 @@ export function RegisterDialog({
                   Pulse account. Taking you to your pharmacy console…
                 </DialogDescription>
               </DialogHeader>
+
+              {/* Invitations fired by the onPharmacyCreated cloud function */}
+              {invitesPending ? (
+                <p className="mt-4 flex items-center gap-2 text-[13px] font-medium text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin text-purple-500" aria-hidden="true" />
+                  Sending invitations via Pulse Cloud…
+                </p>
+              ) : inviteMessages.length > 0 ? (
+                <div className="mt-4 w-full max-w-[340px] rounded-xl border border-purple-100 bg-purple-50/60 px-4 py-3.5 text-left dark:border-purple-500/20 dark:bg-purple-500/10">
+                  <p className="flex items-center gap-1.5 text-[12.5px] font-bold text-purple-700 dark:text-purple-300">
+                    <MailPlus className="h-4 w-4" aria-hidden="true" />
+                    {inviteMessages.length} email{inviteMessages.length === 1 ? "" : "s"} sent —
+                    welcome + {Math.max(0, inviteMessages.length - 1)} invitation
+                    {inviteMessages.length - 1 === 1 ? "" : "s"}
+                  </p>
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {inviteMessages.map((msg) => (
+                      <li key={msg.id} className="flex items-center gap-1.5 text-[12.5px] text-slate-600 dark:text-slate-300">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden="true" />
+                        <span className="min-w-0 truncate">{msg.to.join(", ")}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(true)}
+                    className="mt-2.5 text-[12.5px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                  >
+                    Preview the emails
+                  </button>
+                </div>
+              ) : null}
+
               <span className="mt-4 flex items-center gap-2 text-[12px] text-slate-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Signing you in
               </span>
@@ -393,6 +494,71 @@ export function RegisterDialog({
                   </div>
                 )}
 
+                {/* Invite your team — emails outlined here receive the
+                    branded Pulse invitation the moment this pharmacy is
+                    created (triggered by the onPharmacyCreated function). */}
+                <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-4 dark:border-purple-500/20 dark:bg-purple-500/10">
+                  <label
+                    htmlFor="register-team"
+                    className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
+                  >
+                    <MailPlus className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden="true" />
+                    Invite your team
+                    <span className="font-normal text-slate-400">(optional)</span>
+                  </label>
+                  <p className="mt-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+                    Each address below receives a branded Pulse invitation the moment your pharmacy
+                    is created.
+                  </p>
+                  <input
+                    id="register-team"
+                    type="email"
+                    inputMode="email"
+                    value={teamInput}
+                    onChange={(e) => {
+                      setTeamInput(e.target.value);
+                      setTeamError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault();
+                        addTeamEmail(teamInput);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (teamInput.trim()) addTeamEmail(teamInput);
+                    }}
+                    placeholder="Type an email and press Enter"
+                    autoComplete="off"
+                    className="mt-2.5 h-11 w-full rounded-md border border-slate-200 bg-white px-3.5 text-[14px] text-slate-900 outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-fuchsia-400 focus:ring-4 focus:ring-fuchsia-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                  />
+                  {teamError && (
+                    <p role="alert" className="mt-1.5 flex items-center gap-1 text-xs text-rose-600">
+                      <AlertCircle className="h-3.5 w-3.5" /> {teamError}
+                    </p>
+                  )}
+                  {teamEmails.length > 0 && (
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {teamEmails.map((value) => (
+                        <span
+                          key={value}
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white py-1 pl-3 pr-1.5 text-[12.5px] font-semibold text-slate-700 ring-1 ring-purple-200 dark:bg-white/10 dark:text-slate-200 dark:ring-purple-500/30"
+                        >
+                          <span className="min-w-0 truncate">{value}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeTeamEmail(value)}
+                            aria-label={`Remove ${value} from invitations`}
+                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/15"
+                          >
+                            <X className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <motion.button
                   whileTap={{ scale: 0.985 }}
                   type="submit"
@@ -418,6 +584,13 @@ export function RegisterDialog({
           )}
         </AnimatePresence>
       </DialogContent>
+
+      {/* The welcome + team invitation emails, rendered like an inbox */}
+      <EmailPreviewDialog
+        message={previewOpen && inviteMessages[0] ? inviteMessages[0] : null}
+        onOpenChange={setPreviewOpen}
+        headline="Emails sent for your new pharmacy"
+      />
     </Dialog>
   );
 }

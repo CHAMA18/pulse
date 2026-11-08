@@ -2,10 +2,9 @@
 
 import { motion } from "framer-motion";
 import {
-  Minus,
+  ArrowLeftRight,
   Package,
   PackageX,
-  Plus,
   Search,
   SearchX,
   type LucideIcon,
@@ -15,7 +14,6 @@ import {
   formatZMW,
   loadInventory,
   resolveStoreId,
-  saveInventory,
   type InventoryItem,
 } from "@/components/pharmacy/pharmacy-data";
 import {
@@ -24,10 +22,7 @@ import {
   stockStatusOf,
   type StockStatus,
 } from "@/components/pharmacy/pharmacy-shared";
-import { recordAudit } from "@/lib/audit-log";
-import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { trackEvent } from "@/lib/firebase";
 
 /* ------------------------------------------------------------------ */
 /* Filters                                                             */
@@ -56,41 +51,18 @@ function StatChip({ value, label }: { value: string; label: string }) {
 /* ------------------------------------------------------------------ */
 
 export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
-  const { toast } = useToast();
-
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<StockFilter>("all");
-  const [actor, setActor] = useState({ name: "", email: "" });
 
-  // Restore the shelves + the signed-in identity (for the audit trail).
+  // Restore the shelves (read-only view — changes happen under Stock Movement).
   useEffect(() => {
-    let active = true;
-    void (async () => {
-      const { getFirebaseAuth } = await import("@/lib/firebase");
-      const auth = getFirebaseAuth();
-      try {
-        await auth?.authStateReady();
-      } catch {
-        /* fall through */
-      }
-      if (!active) return;
-      const current = auth?.currentUser;
-      setActor({
-        name: current?.displayName ?? current?.email?.split("@")[0] ?? "Pharmacy Owner",
-        email: current?.email ?? "",
-      });
-    })();
-
     const raf = requestAnimationFrame(() => {
       setItems(loadInventory());
       setHydrated(true);
     });
-    return () => {
-      active = false;
-      cancelAnimationFrame(raf);
-    };
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   // The table follows the sidebar's store view; edits persist for every store.
@@ -120,33 +92,6 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
   const value = visible.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
   const lowCount = visible.filter((entry) => stockStatusOf(entry.qty, entry.reorderLevel) !== "healthy").length;
 
-  /** ±1 quantity adjustment, persisted like every console edit. */
-  const adjustQty = (id: string, delta: number) => {
-    if (!hydrated) return;
-    const next = items.map((entry) =>
-      entry.id === id ? { ...entry, qty: Math.max(0, entry.qty + delta) } : entry
-    );
-    const changed = next.find((entry) => entry.id === id);
-    setItems(next);
-    saveInventory(next);
-    if (changed) {
-      toast({
-        title: `${changed.name} ${delta > 0 ? "+1" : "−1"}`,
-        description: `${changed.qty} on the shelf now.`,
-      });
-      if (actor.email) {
-        recordAudit({
-          title: "Stock Adjusted",
-          action: "Update",
-          detail: `${changed.name} → ${changed.qty} units`,
-          actor: actor.name,
-          email: actor.email,
-        });
-      }
-      void trackEvent("pharmacy_stock_adjusted", { item: changed.id, delta });
-    }
-  };
-
   const FilterIcon: LucideIcon = filter === "out" ? PackageX : SearchX;
 
   return (
@@ -154,7 +99,8 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
       <PageHeader
         icon={Package}
         title="Inventory"
-        subtitle="Stock on hand across your shelves"
+        subtitle="Stock on hand across your shelves — read-only; adjust under Stock Movement"
+        tourId="ph-inventory"
       />
       <h2 id="pharmacy-inventory-title" className="sr-only">
         Inventory
@@ -240,7 +186,6 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
                   <th scope="col" className="px-3 py-3 font-semibold">Batch</th>
                   <th scope="col" className="px-3 py-3 font-semibold">Expiry</th>
                   <th scope="col" className="px-3 py-3 font-semibold text-right">Qty</th>
-                  <th scope="col" className="px-3 py-3 font-semibold">Adjust</th>
                   <th scope="col" className="px-3 py-3 font-semibold text-right">Unit price</th>
                   <th scope="col" className="px-5 py-3 font-semibold">Status</th>
                 </tr>
@@ -264,27 +209,6 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
                         })}
                       </td>
                       <td className="px-3 py-3 text-right font-bold tabular-nums">{entry.qty}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            aria-label={`Reduce ${entry.name} by one`}
-                            disabled={entry.qty === 0}
-                            onClick={() => adjustQty(entry.id, -1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/10"
-                          >
-                            <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Increase ${entry.name} by one`}
-                            onClick={() => adjustQty(entry.id, +1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:bg-purple-50 hover:text-purple-600 dark:border-white/10 dark:text-slate-300 dark:hover:bg-purple-500/15"
-                          >
-                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        </div>
-                      </td>
                       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">
                         {formatZMW(entry.unitPrice)}
                       </td>
@@ -312,9 +236,15 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
         )}
       </motion.div>
 
-      <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
-        Showing {filtered.length} of {visible.length} items in this store view · quantities persist on
-        this device
+      <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">
+        <span>
+          Showing {filtered.length} of {visible.length} items in this store view · quantities
+          persist on this device
+        </span>
+        <span className="inline-flex items-center gap-1 font-medium text-purple-600 dark:text-purple-400">
+          <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
+          To change a quantity, record a movement under Stock Movement.
+        </span>
       </p>
     </div>
   );

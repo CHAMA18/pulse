@@ -173,6 +173,7 @@ export function PharmacySuppliers({ onGoToRequests }: { onGoToRequests: () => vo
         icon={Store}
         title="Supplier Directory"
         subtitle="Verified partners stocking your shelves across the network"
+        tourId="ph-suppliers"
       />
       <h2 id="pharmacy-suppliers-title" className="sr-only">
         Supplier Directory

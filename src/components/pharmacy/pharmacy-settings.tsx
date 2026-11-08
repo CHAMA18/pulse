@@ -157,6 +157,7 @@ export function PharmacySettings({
         icon={Settings}
         title="Settings"
         subtitle="Preferences for this device and your pharmacy workspace"
+        tourId="ph-settings"
       />
       <h2 id="pharmacy-settings-title" className="sr-only">
         Settings

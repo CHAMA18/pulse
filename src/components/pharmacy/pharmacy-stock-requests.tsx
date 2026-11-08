@@ -385,6 +385,7 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
         icon={ClipboardList}
         title="Stock Requests"
         subtitle="Replenishment requests to the Pulse hub"
+        tourId="ph-requests"
         actions={
           <button
             type="button"

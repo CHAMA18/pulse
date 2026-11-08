@@ -2,6 +2,7 @@
 
 import { motion, MotionConfig } from "framer-motion";
 import {
+  ArrowLeftRight,
   Bell,
   Boxes,
   Building2,
@@ -13,6 +14,7 @@ import {
   ChevronsRight,
   ClipboardCheck,
   ClipboardList,
+  Compass,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -43,10 +45,16 @@ import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
 import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
 import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
 import { PharmacyStockBalance } from "@/components/pharmacy/pharmacy-stock-balance";
+import { PharmacyStockMovement } from "@/components/pharmacy/pharmacy-stock-movement";
 import { PharmacyStockRequests } from "@/components/pharmacy/pharmacy-stock-requests";
 import { PharmacyStores } from "@/components/pharmacy/pharmacy-stores";
 import { PharmacySuppliers } from "@/components/pharmacy/pharmacy-suppliers";
 import { PharmacyUserManagement } from "@/components/pharmacy/pharmacy-user-management";
+import {
+  PHARMACY_TOUR_STEPS,
+  PharmacyWalkthrough,
+} from "@/components/pharmacy/pharmacy-walkthrough";
+import { WalkthroughTour } from "@/components/walkthrough/walkthrough";
 import {
   formatDay,
   formatZMW,
@@ -97,6 +105,7 @@ type PharmacyPage =
   | "pos"
   | "balance"
   | "inventory"
+  | "movement"
   | "catalogue"
   | "orders"
   | "requests"
@@ -105,7 +114,8 @@ type PharmacyPage =
   | "stores"
   | "users"
   | "profile"
-  | "settings";
+  | "settings"
+  | "walkthrough";
 
 /** Compact page titles used in the audit trail ("Viewed PharmacyInventory"). */
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
@@ -113,6 +123,7 @@ const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   pos: "PointOfSale",
   balance: "PharmacyStockBalance",
   inventory: "PharmacyInventory",
+  movement: "StockMovement",
   catalogue: "ProductCatalogue",
   orders: "PurchaseOrders",
   requests: "StockRequests",
@@ -122,6 +133,7 @@ const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   users: "PharmacyUserManagement",
   profile: "MyPharmacy",
   settings: "PharmacySettings",
+  walkthrough: "PharmacyWalkthrough",
 };
 
 const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon }[] }[] = [
@@ -137,6 +149,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
     items: [
       { label: "Stock Balance", icon: Boxes },
       { label: "Inventory", icon: Package },
+      { label: "Stock Movement", icon: ArrowLeftRight },
       { label: "Product Catalogue", icon: PackageSearch },
       { label: "Purchase Orders", icon: ClipboardCheck },
       { label: "Stock Requests", icon: ClipboardList },
@@ -144,6 +157,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
     ],
   },
   { section: "Network", items: [{ label: "Supplier Directory", icon: Store }] },
+  { section: "Learn", items: [{ label: "Walkthrough", icon: Compass }] },
   {
     section: "Administration",
     items: [
@@ -166,6 +180,7 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   "Point of Sale": "pos",
   "Stock Balance": "balance",
   Inventory: "inventory",
+  "Stock Movement": "movement",
   "Product Catalogue": "catalogue",
   "Purchase Orders": "orders",
   "Stock Requests": "requests",
@@ -175,9 +190,10 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   "User Management": "users",
   "My Pharmacy": "profile",
   Settings: "settings",
+  Walkthrough: "walkthrough",
 };
 
-const QUICK_ACTIONS = ["New sale", "Request stock", "Adjust stock", "Record delivery"];
+const QUICK_ACTIONS = ["New sale", "Request stock", "Record movement", "Record delivery"];
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
@@ -356,7 +372,7 @@ function PharmacySidebar({
       <div className={cn("shrink-0", collapsed ? "px-2 pb-1" : "px-3 pb-1")}>{storeSwitcher}</div>
 
       {/* Navigation */}
-      <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary">
+      <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary" data-tour="ph-nav">
         {NAV_SECTIONS.map(({ section, items }) => (
           <div key={section} className="mt-4 first:mt-1">
             {!collapsed ? (
@@ -630,7 +646,7 @@ function PharmacyHome({
     .slice(0, 4);
 
   return (
-    <>
+    <div data-tour="ph-home">
       {/* Greeting hero — the Pharmacy portal's signature card */}
       <motion.section
         variants={item}
@@ -827,7 +843,7 @@ function PharmacyHome({
           </ul>
         </div>
       </motion.section>
-    </>
+    </div>
   );
 }
 
@@ -850,6 +866,8 @@ export function PharmacyApp() {
   const [bouncing, setBouncing] = useState(false);
   const [stores, setStores] = useState<PharmacyStore[]>([]);
   const [activeStore, setActiveStore] = useState("all");
+  // Interactive walkthrough — lives at shell level so it survives page switches.
+  const [tourOpen, setTourOpen] = useState(false);
 
   // Resolve the session: pharmacy-portal sessions stay; Pulse-portal sessions
   // without elevated rights are bounced back to the Pulse console.
@@ -987,9 +1005,9 @@ export function PharmacyApp() {
       goTo("requests");
       return;
     }
-    if (action === "Adjust stock") {
+    if (action === "Record movement") {
       setMobileOpen(false);
-      goTo("inventory");
+      goTo("movement");
       return;
     }
     if (action === "Record delivery") {
@@ -1158,6 +1176,14 @@ export function PharmacyApp() {
               <PharmacyPurchaseOrders storeId={activeStore} />
             ) : page === "inventory" ? (
               <PharmacyInventory storeId={activeStore} />
+            ) : page === "movement" ? (
+              <PharmacyStockMovement
+                storeId={activeStore}
+                stores={stores}
+                actor={{ name: user.name, email: user.email }}
+              />
+            ) : page === "walkthrough" ? (
+              <PharmacyWalkthrough onGoTo={(target) => goTo(target as PharmacyPage)} onStartTour={() => setTourOpen(true)} />
             ) : page === "balance" ? (
               <PharmacyStockBalance storeId={activeStore} />
             ) : page === "requests" ? (
@@ -1192,6 +1218,33 @@ export function PharmacyApp() {
           </motion.main>
         </div>
       </div>
+
+      {/* Interactive walkthrough — an overlay, so it rides above every page */}
+      {tourOpen && (
+        <WalkthroughTour
+          steps={PHARMACY_TOUR_STEPS}
+          portalLabel="Pharmacy portal"
+          onNavigate={(target) => goTo(target as PharmacyPage)}
+          onFinish={() => {
+            setTourOpen(false);
+            goTo("walkthrough");
+            toast({
+              title: "Walkthrough complete 🎉",
+              description: "Replay it any time from Walkthrough in the sidebar.",
+            });
+            if (user.email) {
+              recordAudit({
+                title: "Walkthrough Completed",
+                action: "View",
+                detail: PHARMACY_WORKSPACE,
+                actor: user.name,
+                email: user.email,
+              });
+            }
+            void trackEvent("pharmacy_walkthrough_completed", { portal: "pharmacy" });
+          }}
+        />
+      )}
     </MotionConfig>
   );
 }

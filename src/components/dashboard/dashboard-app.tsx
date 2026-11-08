@@ -11,6 +11,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ClipboardList,
+  Compass,
   Eye,
   History,
   Home,
@@ -33,11 +34,16 @@ import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
+import {
+  DashboardWalkthrough,
+  PULSE_TOUR_STEPS,
+} from "@/components/dashboard/dashboard-walkthrough";
 import { SupplierManagement } from "@/components/dashboard/supplier-management";
 import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
 import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-visibility";
 import { UserManagement } from "@/components/dashboard/user-management";
 import { AuditLogs } from "@/components/dashboard/audit-logs";
+import { WalkthroughTour } from "@/components/walkthrough/walkthrough";
 import { recordAudit, WORKSPACE_NAME } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -114,7 +120,7 @@ const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy 
 
 type NavItem = { label: string; icon: LucideIcon };
 
-type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users" | "audit";
+type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users" | "audit" | "walkthrough";
 
 /** Compact page titles used in the audit trail ("Viewed PulsePharmacies"). */
 const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
@@ -124,6 +130,7 @@ const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   pharmacies: "PulsePharmacies",
   stock: "StockBalance",
   suppliers: "SupplierManagement",
+  walkthrough: "PulseWalkthrough",
 };
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
@@ -145,6 +152,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
       { label: "Supplier Management", icon: Store },
     ],
   },
+  { section: "Learn", items: [{ label: "Walkthrough", icon: Compass }] },
 ];
 
 /** Which sidebar entries are live pages vs. "coming soon" stubs. */
@@ -155,6 +163,7 @@ const LIVE_PAGES: Record<string, DashboardPage> = {
   "Pulse Pharmacies": "pharmacies",
   "Stock Balance Visibility": "stock",
   "Supplier Management": "suppliers",
+  Walkthrough: "walkthrough",
 };
 
 /* ------------------------------------------------------------------ */
@@ -305,7 +314,7 @@ function SidebarContent({
       </div>
 
       {/* Navigation */}
-      <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary">
+      <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary" data-tour="pulse-nav">
         {NAV_SECTIONS.map(({ section, items }) => (
           <div key={section} className="mt-4 first:mt-1">
             {!collapsed ? (
@@ -474,6 +483,8 @@ export function DashboardApp() {
   const [page, setPage] = useState<DashboardPage>("home");
   const [user, setUser] = useState({ name: "Pulse User", email: "", initial: "P" });
   const [bouncing, setBouncing] = useState(false);
+  // Interactive walkthrough — shell level, so it rides above every page.
+  const [tourOpen, setTourOpen] = useState(false);
 
   // Restore the signed-in identity + theme preference (async so we never
   // setState synchronously inside the effect body).
@@ -728,10 +739,12 @@ export function DashboardApp() {
               <UserManagement />
             ) : page === "audit" ? (
               <AuditLogs />
+            ) : page === "walkthrough" ? (
+              <DashboardWalkthrough onGoTo={(target) => setPage(target as DashboardPage)} onStartTour={() => setTourOpen(true)} />
             ) : (
               <>
             {/* Stat cards */}
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4" data-tour="pulse-home">
               {STAT_CARDS.map(({ id, value, label, desc, icon: Icon, tile }) => (
                 <motion.div key={id} variants={item} className={cn(cardCls, "flex items-center gap-4 p-5")}>
                   <span
@@ -820,6 +833,33 @@ export function DashboardApp() {
           </motion.main>
         </div>
       </div>
+
+      {/* Interactive walkthrough — an overlay above every page */}
+      {tourOpen && (
+        <WalkthroughTour
+          steps={PULSE_TOUR_STEPS}
+          portalLabel="Pulse console"
+          onNavigate={(target) => setPage(target as DashboardPage)}
+          onFinish={() => {
+            setTourOpen(false);
+            setPage("walkthrough");
+            toast({
+              title: "Walkthrough complete 🎉",
+              description: "Replay it any time from Walkthrough in the sidebar.",
+            });
+            if (user.email) {
+              recordAudit({
+                title: "Walkthrough Completed",
+                action: "View",
+                detail: WORKSPACE_NAME,
+                actor: user.name,
+                email: user.email,
+              });
+            }
+            void trackEvent("pulse_walkthrough_completed", { portal: "pulse" });
+          }}
+        />
+      )}
     </MotionConfig>
   );
 }

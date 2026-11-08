@@ -18,6 +18,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
+import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
+import {
+  callCloudFunction,
+  CloudFunctionError,
+  type InvitationMessage,
+} from "@/lib/cloud/invitations";
 import {
   Dialog,
   DialogContent,
@@ -437,6 +443,33 @@ export function UserManagement() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
   const [addOpen, setAddOpen] = useState(false);
+  // The delivered console invitation, rendered in the inbox-style preview.
+  const [preview, setPreview] = useState<InvitationMessage | null>(null);
+  const [inviter, setInviter] = useState("Pulse Network");
+
+  // The signed-in identity signs the invitation email.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const auth = getFirebaseAuth();
+      try {
+        await auth?.authStateReady();
+      } catch {
+        /* fall through */
+      }
+      if (active) {
+        setInviter(
+          auth?.currentUser?.displayName ??
+            auth?.currentUser?.email?.split("@")[0] ??
+            "Pulse Network"
+        );
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Hydrate once on mount, then persist every change. Deferred to a frame
   // so we never setState synchronously inside the effect body.
@@ -527,6 +560,23 @@ export function UserManagement() {
       description: `${name} was granted ${ROLE_META[role].label.toLowerCase()} access to the network.`,
     });
     void trackEvent("user_added", { role });
+
+    // Trigger the sendPulseAdminInvite cloud function — a branded email
+    // lands in their inbox and opens here for a final look.
+    void callCloudFunction("sendPulseAdminInvite", {
+      inviterName: inviter,
+      inviteeName: name,
+      inviteeEmail: email,
+      role: ROLE_META[role].label,
+    })
+      .then(({ messages }) => setPreview(messages[0] ?? null))
+      .catch((err: unknown) => {
+        const code = err instanceof CloudFunctionError ? err.code : "unknown";
+        toast({
+          title: "Email delivery failed",
+          description: `The cloud function rejected the invitation (${code}). The account exists — resend from the row menu.`,
+        });
+      });
   };
 
   /* ---------------- render ---------------- */
@@ -595,7 +645,7 @@ export function UserManagement() {
   );
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
+    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col" data-tour="pulse-users">
       {/* — Page header — */}
       <motion.section
         variants={item}
@@ -837,6 +887,15 @@ export function UserManagement() {
         onOpenChange={setAddOpen}
         existingEmails={new Set(users.map((u) => u.email.trim().toLowerCase()))}
         onAdd={addUser}
+      />
+
+      {/* — the delivered console invitation — */}
+      <EmailPreviewDialog
+        message={preview}
+        onOpenChange={(open) => {
+          if (!open) setPreview(null);
+        }}
+        headline="Pulse console invitation email"
       />
     </motion.div>
   );

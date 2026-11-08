@@ -332,6 +332,7 @@ export function PharmacyPOS({
         icon={ShoppingCart}
         title="Point of Sale"
         subtitle="Search, tap, charge — a complete checkout in under two minutes"
+        tourId="ph-pos"
         actions={
           sellingStore ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-3 py-1.5 text-[12px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">

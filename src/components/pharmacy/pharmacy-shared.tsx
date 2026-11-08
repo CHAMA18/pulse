@@ -25,14 +25,17 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  tourId,
 }: {
   icon: LucideIcon;
   title: string;
   subtitle: string;
   actions?: React.ReactNode;
+  /** Walkthrough spotlight anchor — set to the page's data-tour id. */
+  tourId?: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3">
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3" data-tour={tourId}>
       <span
         className={cn(
           "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",

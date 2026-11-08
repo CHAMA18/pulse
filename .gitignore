@@ -59,3 +59,8 @@ server.log
 /download/
 /tool-results/
 *.pid
+# Cloud functions
+functions/lib/
+functions/node_modules/
+functions/*.log
+firebase-debug.log

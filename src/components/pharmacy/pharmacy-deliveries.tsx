@@ -309,6 +309,7 @@ export function PharmacyDeliveries({ storeId = "all" }: { storeId?: string }) {
         icon={Truck}
         title="Deliveries"
         subtitle="Goods received from the Pulse hub and wholesalers"
+        tourId="ph-deliveries"
         actions={
           <button
             type="button"

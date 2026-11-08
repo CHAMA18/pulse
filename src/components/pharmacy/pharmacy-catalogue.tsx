@@ -257,6 +257,7 @@ export function PharmacyCatalogue({
         icon={PackageSearch}
         title="Product Catalogue"
         subtitle="Every product you sell — prices, packs, prescription rules and live stock"
+        tourId="ph-catalogue"
         actions={
           <button type="button" onClick={() => setAddOpen(true)} className={cn(brandBtnCls, "h-10 px-4 text-[13.5px] font-semibold")}>
             <Plus className="h-4 w-4" aria-hidden="true" />

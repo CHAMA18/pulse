@@ -312,7 +312,7 @@ export function StockBalanceVisibility() {
   ];
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col">
+    <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col" data-tour="pulse-stock">
       {/* — Hero banner — */}
       <motion.section
         variants={item}

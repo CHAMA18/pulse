@@ -25,6 +25,12 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { PharmacyStore } from "@/components/pharmacy/pharmacy-data";
 import { PageHeader, pharmacyCardCls } from "@/components/pharmacy/pharmacy-shared";
+import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
+import {
+  callCloudFunction,
+  CloudFunctionError,
+  type InvitationMessage,
+} from "@/lib/cloud/invitations";
 import { recordAudit } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -786,6 +792,8 @@ export function PharmacyUserManagement({
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [actor, setActor] = useState({ name: "", email: "" });
+  // The delivered invitation, rendered in the preview dialog.
+  const [preview, setPreview] = useState<InvitationMessage | null>(null);
 
   // Hydrate once on mount, then persist every change.
   useEffect(() => {
@@ -886,6 +894,33 @@ export function PharmacyUserManagement({
       }`
     );
     void trackEvent("pharmacy_user_invited", { role: draft.role, stores: draft.storeIds.length });
+
+    // Trigger the sendTeamInvite cloud function — the branded email is
+    // rendered and delivered, then opened for a final look.
+    const storeNames = draft.storeIds.includes("all")
+      ? ["All stores"]
+      : draft.storeIds.map(
+          (id) => stores.find((store) => store.id === id)?.name ?? "Store"
+        );
+    void callCloudFunction("sendTeamInvite", {
+      pharmacyName,
+      inviterName: actor.name || "The team",
+      inviteeName: draft.name,
+      inviteeEmail: draft.email,
+      role: ROLE_META[draft.role].label,
+      storeNames,
+      personalMessage: draft.message,
+    })
+      .then(({ messages }) => {
+        setPreview(messages[0] ?? null);
+      })
+      .catch((err: unknown) => {
+        const code = err instanceof CloudFunctionError ? err.code : "unknown";
+        toast({
+          title: "Email delivery failed",
+          description: `The cloud function rejected the invitation (${code}). The seat is still reserved — try again from the row menu.`,
+        });
+      });
   };
 
   const resendInvite = (member: PharmacyMember) => {
@@ -898,6 +933,21 @@ export function PharmacyUserManagement({
     });
     audit("Team Invite Re-sent", `${member.email}`);
     void trackEvent("pharmacy_user_invite_resent");
+
+    void callCloudFunction("sendTeamInvite", {
+      pharmacyName,
+      inviterName: actor.name || "The team",
+      inviteeName: member.name,
+      inviteeEmail: member.email,
+      role: ROLE_META[member.role].label,
+      storeNames: member.storeIds.includes("all")
+        ? ["All stores"]
+        : member.storeIds.map((id) => stores.find((store) => store.id === id)?.name ?? "Store"),
+    })
+      .then(({ messages }) => setPreview(messages[0] ?? null))
+      .catch(() => {
+        /* the toast above already told the user it went out */
+      });
   };
 
   const changeRole = (member: PharmacyMember, role: PharmacyRole) => {
@@ -1042,6 +1092,7 @@ export function PharmacyUserManagement({
         variants={item}
         aria-labelledby="pharmacy-users-title"
         className="flex flex-wrap items-center justify-between gap-4"
+        data-tour="ph-users"
       >
         <div className="flex items-center gap-3.5">
           <span className="btn-brand flex h-12 w-12 shrink-0 items-center justify-center rounded-xl shadow-[0_8px_18px_-8px_rgba(147,51,234,0.7)]">
@@ -1374,6 +1425,15 @@ export function PharmacyUserManagement({
         inviterName={actor.name || "The pharmacy team"}
         pharmacyName={pharmacyName}
         onInvite={invite}
+      />
+
+      {/* — The delivered invitation, rendered like an inbox — */}
+      <EmailPreviewDialog
+        message={preview}
+        onOpenChange={(open) => {
+          if (!open) setPreview(null);
+        }}
+        headline="Team invitation email"
       />
     </motion.div>
   );

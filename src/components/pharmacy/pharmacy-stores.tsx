@@ -413,6 +413,7 @@ export function PharmacyStores({
         icon={Warehouse}
         title="Stores"
         subtitle="Every storefront on this account — the main store is the application's home"
+        tourId="ph-stores"
         actions={
           <button
             type="button"
