@@ -26,6 +26,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
+import { RegisterDialog } from "@/components/login/register-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -128,6 +129,7 @@ export function LoginCard() {
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(false);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -559,11 +561,24 @@ export function LoginCard() {
               </button>
             </motion.p>
           )}
+          {portal === "pharmacy" && (
+            <motion.p variants={item} className="mt-5 text-center text-[13.5px] text-slate-500">
+              New pharmacy?{" "}
+              <button
+                type="button"
+                onClick={() => setRegisterOpen(true)}
+                className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
+              >
+                Register your pharmacy
+              </button>
+            </motion.p>
+          )}
 
         </motion.div>
       </motion.section>
 
       <ForgotDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+      <RegisterDialog open={registerOpen} onOpenChange={setRegisterOpen} />
     </MotionConfig>
   );
 }

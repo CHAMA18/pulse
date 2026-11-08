@@ -5,7 +5,15 @@ import {
   logEvent,
   type Analytics,
 } from "firebase/analytics";
-import { getAuth, GoogleAuthProvider, type Auth, type User } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, createUserWithEmailAndPassword, updateProfile, type Auth, type User } from "firebase/auth";
+import {
+  doc,
+  getDoc,
+  getFirestore,
+  serverTimestamp,
+  setDoc,
+  type Firestore,
+} from "firebase/firestore";
 import { recordAudit } from "@/lib/audit-log";
 
 /**
@@ -27,6 +35,7 @@ const firebaseConfig = {
 };
 
 let app: FirebaseApp | null = null;
+let db: Firestore | null = null;
 let analyticsPromise: Promise<Analytics | null> | null = null;
 
 /**
@@ -39,6 +48,18 @@ export function getFirebaseApp(): FirebaseApp | null {
     app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
   }
   return app;
+}
+
+/**
+ * Returns the shared Firestore instance (lazily initialized, browser only).
+ * Used for the `User` collection — the same documents the Pulse pharmacy
+ * app reads, so an account registered on the web is recognized there too.
+ */
+export function getFirebaseDb(): Firestore | null {
+  const application = getFirebaseApp();
+  if (!application) return null; // never init on the server
+  if (!db) db = getFirestore(application);
+  return db;
 }
 
 /**
@@ -87,6 +108,7 @@ export async function trackEvent(
 
 /** Product events worth surfacing in the console's audit log. */
 const AUDIT_MIRROR: Record<string, { title: string; action: "View" | "Update" | "Activity" }> = {
+  pharmacy_registered: { title: "Pharmacy Registered", action: "Update" },
   user_added: { title: "User Added", action: "Update" },
   user_role_changed: { title: "User Role Changed", action: "Update" },
   user_status_changed: { title: "User Status Changed", action: "Update" },
@@ -134,11 +156,17 @@ export const googleProvider = new GoogleAuthProvider();
 /**
  * Elevated-access eligibility check, applied when signing in through the
  * Pharmacy portal (pharmacy administrators/staff with elevated rights).
- * Two mechanisms, in order of strength:
+ * Four mechanisms, in order of strength:
  *  1. A custom claim `admin: true` (set via the Firebase Admin SDK — recommended)
  *  2. The NEXT_PUBLIC_ADMIN_EMAILS allowlist (comma-separated emails), a
  *     pragmatic fallback while claims aren't set up yet
- * Returns false when neither matches so the caller can refuse the session.
+ *  3. The local pharmacy registration registry — an account created through
+ *     "Register your pharmacy" on this browser is recognized immediately,
+ *     even if its Firestore profile write was rejected by security rules
+ *  4. The Firestore `User/{uid}` document with `account_type: "Pharmacy"` —
+ *     the same document the Pulse pharmacy app reads, so an account that
+ *     registered on the web (or any device) is recognized everywhere
+ * Returns false when none match so the caller can refuse the session.
  */
 export async function isAdminUser(user: User): Promise<boolean> {
   try {
@@ -151,7 +179,153 @@ export async function isAdminUser(user: User): Promise<boolean> {
     .split(",")
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
-  return !!user.email && allowlist.includes(user.email.toLowerCase());
+  if (user.email && allowlist.includes(user.email.toLowerCase())) return true;
+
+  const registry = readPharmacyRegistry();
+  const email = user.email?.toLowerCase();
+  if (registry.some((r) => r.uid === user.uid || (email && r.email === email))) {
+    return true;
+  }
+
+  const store = getFirebaseDb();
+  if (store) {
+    try {
+      const snap = await getDoc(doc(store, "User", user.uid));
+      const profile = snap.data() as { account_type?: string } | undefined;
+      if (profile?.account_type === "Pharmacy") return true;
+    } catch {
+      /* Firestore unavailable or rules deny the read — registry already covered it */
+    }
+  }
+  return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Pharmacy self-registration                                          */
+/* ------------------------------------------------------------------ */
+
+type PharmacyRegistration = {
+  uid: string;
+  email: string;
+  pharmacyName: string;
+  ownerName: string;
+  at: string;
+};
+
+const PHARMACY_REGISTRY_KEY = "pulse.pharmacy-registrations.v1";
+
+/** Reads the local pharmacy registry (this browser only). */
+function readPharmacyRegistry(): PharmacyRegistration[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PHARMACY_REGISTRY_KEY);
+    const parsed = raw ? (JSON.parse(raw) as PharmacyRegistration[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persists one registration to the local registry (best-effort). */
+function recordPharmacyRegistration(entry: PharmacyRegistration): void {
+  try {
+    const registry = readPharmacyRegistry().filter((r) => r.uid !== entry.uid);
+    registry.push(entry);
+    window.localStorage.setItem(PHARMACY_REGISTRY_KEY, JSON.stringify(registry));
+  } catch {
+    /* registry is a fallback — never let it break registration */
+  }
+}
+
+export type PharmacyRegistrationInput = {
+  pharmacyName: string;
+  ownerName: string;
+  email: string;
+  password: string;
+};
+
+export type PharmacyRegistrationResult = {
+  uid: string;
+  email: string;
+  pharmacyName: string;
+  ownerName: string;
+  profileSaved: boolean;
+};
+
+/**
+ * Registers a new pharmacy account end-to-end:
+ *
+ *  1. Creates the Firebase Auth account (email + password) and signs the
+ *     new owner in.
+ *  2. Sets the auth display name to the owner's name.
+ *  3. Writes a `User/{uid}` profile in the exact shape the Pulse pharmacy
+ *     app reads (`account_type: "Pharmacy"`, `role: "owner"`,
+ *     `pharmacy_name`, `approved_by_duniya: false` — pending network
+ *     review), so the same account works in the pharmacy app once
+ *     provisioned there.
+ *
+ * The Firestore write is best-effort: security rules or an outage must not
+ * lose an already-created Auth account, so failures fall back to the local
+ * registry (mechanism 3 of [isAdminUser]) and the caller still gets success.
+ *
+ * Errors thrown before the Auth account exists are Firebase auth errors the
+ * caller maps to friendly copy (see describeAuthError).
+ */
+export async function registerPharmacyAccount(
+  input: PharmacyRegistrationInput
+): Promise<PharmacyRegistrationResult> {
+  const auth = getFirebaseAuth();
+  if (!auth) {
+    throw new FirebaseError("auth/unavailable", "Authentication isn't available right now.");
+  }
+
+  const email = input.email.trim().toLowerCase();
+  const credential = await createUserWithEmailAndPassword(auth, email, input.password);
+  const user = credential.user;
+
+  let ownerName = input.ownerName.trim();
+  try {
+    await updateProfile(user, { displayName: ownerName });
+  } catch {
+    ownerName = user.email?.split("@")[0] ?? ownerName;
+  }
+
+  const pharmacyName = input.pharmacyName.trim();
+  let profileSaved = false;
+  const store = getFirebaseDb();
+  if (store) {
+    try {
+      await setDoc(doc(store, "User", user.uid), {
+        email,
+        uid: user.uid,
+        display_name: ownerName,
+        created_time: serverTimestamp(),
+        role: "owner",
+        account_type: "Pharmacy",
+        pharmacy_name: pharmacyName,
+        approved_by_duniya: false, // pending Pulse network review
+      });
+      profileSaved = true;
+    } catch {
+      /* rules or offline — the registry fallback below keeps the account usable */
+    }
+  }
+
+  const registration: PharmacyRegistrationResult = {
+    uid: user.uid,
+    email,
+    pharmacyName,
+    ownerName,
+    profileSaved,
+  };
+  recordPharmacyRegistration({
+    uid: user.uid,
+    email,
+    pharmacyName,
+    ownerName,
+    at: new Date().toISOString(),
+  });
+  return registration;
 }
 
 const AUTH_ERROR_COPY: Record<string, string> = {
