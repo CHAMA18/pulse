@@ -26,6 +26,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
+import { PulseBeatMark } from "@/components/login/pulse-logo";
 import { RegisterDialog } from "@/components/login/register-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -319,8 +320,13 @@ export function LoginCard() {
         </span>
 
         <motion.div variants={container} initial="hidden" animate="show" className="relative flex flex-col">
+          {/* Beating brand mark — the logo's own heartbeat crowns the card */}
+          <motion.div variants={item} className="flex justify-center">
+            <PulseBeatMark className="h-[74px] w-[74px] sm:h-[82px] sm:w-[82px]" />
+          </motion.div>
+
           {/* Heading */}
-          <motion.div variants={item} className="text-center">
+          <motion.div variants={item} className="mt-6 text-center">
             <h2
               id="login-heading"
               className="text-[26px] font-semibold tracking-tight text-slate-900 sm:text-[30px]"

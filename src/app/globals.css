@@ -354,6 +354,11 @@
 .animate-beat-ring {
   animation: beat-ring 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
+/* Second ripple ring, launched half a beat later — a continuous double wave. */
+.animate-beat-ring-late {
+  animation: beat-ring 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: -0.6s;
+}
 @keyframes beat-thump {
   0% { transform: scale(1); }
   10% { transform: scale(1.05); }
@@ -379,6 +384,52 @@
   96%, 100% { stroke-dashoffset: 0; opacity: 0; }
 }
 
+/* ——— Beating brand mark (sign-in card) — all layers locked to the shared
+   1.2s beat clock (72 BPM), purely CSS so it loops without JS. ——— */
+
+/* The live EKG sweep: draws left-to-right over the trace (pathLength=1),
+ * holds fully lit, then erases left-to-right like a monitor sweep. */
+@keyframes beat-ekg {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  7% { opacity: 1; }
+  48% { stroke-dashoffset: 0; opacity: 1; }
+  70% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: -1; opacity: 0; }
+}
+.pulse-beat-sweep {
+  stroke-dasharray: 1 1;
+  animation: beat-ekg 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+/* Apex spark: flashes just after the second thump, as the sweep crosses
+ * the R-wave peak (~75% along the path, reached at ~38% of the cycle). */
+@keyframes beat-spark {
+  0%, 32% { opacity: 0; }
+  42% { opacity: 1; }
+  66%, 100% { opacity: 0; }
+}
+.pulse-beat-spark {
+  animation: beat-spark 1.2s ease-out infinite;
+}
+/* Constellation glow: brightens at each contraction, settles between. */
+@keyframes beat-nodes {
+  0%, 100% { opacity: 0.8; }
+  12% { opacity: 1; }
+  46% { opacity: 0.9; }
+}
+.pulse-beat-nodes {
+  animation: beat-nodes 1.2s ease-out infinite;
+}
+/* Halo swell: the violet aura behind the mark, breathing with the beat. */
+@keyframes beat-halo {
+  0% { transform: scale(0.82); opacity: 0.55; }
+  20% { transform: scale(1.04); opacity: 0.95; }
+  46% { transform: scale(1.12); opacity: 0.7; }
+  75%, 100% { transform: scale(0.82); opacity: 0.55; }
+}
+.animate-beat-halo {
+  animation: beat-halo 1.2s ease-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-shake,
   .animate-ping-soft,
@@ -388,16 +439,34 @@
   .animate-breathe,
   .animate-ping,
   .animate-beat-ring,
+  .animate-beat-ring-late,
   .animate-beat-thump,
+  .animate-beat-halo,
   .animate-gradient,
   .ekg-underline,
   .aurora-a,
   .aurora-b,
-  .aurora-c {
+  .aurora-c,
+  .pulse-beat-sweep,
+  .pulse-beat-spark,
+  .pulse-beat-nodes {
     animation: none !important;
   }
   .ekg-underline {
     stroke-dashoffset: 0 !important;
     opacity: 1 !important;
+  }
+  /* Static fallback: hide the transient sweep layers and let the brand
+   * gradient trace underneath carry the mark at full strength. */
+  .pulse-beat-sweep,
+  .pulse-beat-spark {
+    opacity: 0 !important;
+  }
+  .pulse-beat-nodes {
+    opacity: 1 !important;
+  }
+  .animate-beat-halo {
+    opacity: 0.6 !important;
+    transform: none !important;
   }
 }
