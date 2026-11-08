@@ -32,7 +32,7 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3.5">
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3">
       <span
         className={cn(
           "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
@@ -41,13 +41,17 @@ export function PageHeader({
       >
         <Icon className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[min(100%,220px)] flex-1">
         <h2 className="text-[21px] font-bold leading-tight tracking-tight text-slate-900 dark:text-white">
           {title}
         </h2>
         <p className="text-[13.5px] text-slate-500 dark:text-slate-400">{subtitle}</p>
       </div>
-      {actions && <div className="flex items-center gap-2.5">{actions}</div>}
+      {actions && (
+        <div className="flex w-full flex-wrap items-center gap-2.5 sm:ml-auto sm:w-auto sm:shrink-0">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

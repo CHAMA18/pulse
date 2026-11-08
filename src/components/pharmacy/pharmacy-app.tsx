@@ -11,16 +11,18 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ClipboardCheck,
   ClipboardList,
   LayoutDashboard,
   LogOut,
   Menu,
   Moon,
   Package,
-  Pill,
+  PackageSearch,
   Search,
   Settings,
   ShoppingBag,
+  ShoppingCart,
   Store,
   TriangleAlert,
   Truck,
@@ -32,9 +34,13 @@ import {
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { PulseMark } from "@/components/login/pulse-logo";
+import { PharmacyCatalogue } from "@/components/pharmacy/pharmacy-catalogue";
 import { PharmacyDeliveries } from "@/components/pharmacy/pharmacy-deliveries";
 import { PharmacyInventory } from "@/components/pharmacy/pharmacy-inventory";
+import { PharmacyPOS } from "@/components/pharmacy/pharmacy-pos";
 import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
+import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
 import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
 import { PharmacyStockBalance } from "@/components/pharmacy/pharmacy-stock-balance";
 import { PharmacyStockRequests } from "@/components/pharmacy/pharmacy-stock-requests";
@@ -46,6 +52,7 @@ import {
   formatZMW,
   loadDeliveries,
   loadInventory,
+  loadSales,
   loadStockRequests,
   loadStores,
   resolveStoreId,
@@ -53,6 +60,7 @@ import {
   type Delivery,
   type InventoryItem,
   type PharmacyStore,
+  type POSSale,
   type StockRequest,
 } from "@/components/pharmacy/pharmacy-data";
 import {
@@ -86,8 +94,11 @@ import {
 
 type PharmacyPage =
   | "home"
+  | "pos"
   | "balance"
   | "inventory"
+  | "catalogue"
+  | "orders"
   | "requests"
   | "deliveries"
   | "suppliers"
@@ -99,8 +110,11 @@ type PharmacyPage =
 /** Compact page titles used in the audit trail ("Viewed PharmacyInventory"). */
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   home: "PharmacyDashboard",
+  pos: "PointOfSale",
   balance: "PharmacyStockBalance",
   inventory: "PharmacyInventory",
+  catalogue: "ProductCatalogue",
+  orders: "PurchaseOrders",
   requests: "StockRequests",
   deliveries: "Deliveries",
   suppliers: "SupplierDirectory",
@@ -111,12 +125,20 @@ const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
 };
 
 const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon }[] }[] = [
-  { section: "Main", items: [{ label: "Dashboard", icon: LayoutDashboard }] },
+  {
+    section: "Main",
+    items: [
+      { label: "Dashboard", icon: LayoutDashboard },
+      { label: "Point of Sale", icon: ShoppingCart },
+    ],
+  },
   {
     section: "Operations",
     items: [
       { label: "Stock Balance", icon: Boxes },
       { label: "Inventory", icon: Package },
+      { label: "Product Catalogue", icon: PackageSearch },
+      { label: "Purchase Orders", icon: ClipboardCheck },
       { label: "Stock Requests", icon: ClipboardList },
       { label: "Deliveries", icon: Truck },
     ],
@@ -141,8 +163,11 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
 /** Which sidebar entries are live pages vs. "coming soon" stubs. */
 const LIVE_PAGES: Record<string, PharmacyPage> = {
   Dashboard: "home",
+  "Point of Sale": "pos",
   "Stock Balance": "balance",
   Inventory: "inventory",
+  "Product Catalogue": "catalogue",
+  "Purchase Orders": "orders",
   "Stock Requests": "requests",
   Deliveries: "deliveries",
   "Supplier Directory": "suppliers",
@@ -152,7 +177,7 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   Settings: "settings",
 };
 
-const QUICK_ACTIONS = ["Request stock", "Adjust stock", "Record delivery"];
+const QUICK_ACTIONS = ["New sale", "Request stock", "Adjust stock", "Record delivery"];
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
@@ -272,23 +297,22 @@ function PharmacySidebar({
 
   return (
     <div className="flex h-full flex-col bg-white dark:bg-[#100823]">
-      {/* Brand — the Pharmacy portal wears its own mark, not the Pulse logo */}
+      {/* Brand — the Pulse logo crowns the sidebar */}
       <div
         className={cn(
           "flex h-16 shrink-0 items-center border-b border-slate-100 dark:border-white/5",
-          collapsed ? "justify-center px-0" : "gap-2.5 px-5"
+          collapsed ? "justify-center px-0" : "gap-3 px-5"
         )}
       >
-        <span
-          className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-fuchsia-600 shadow-[0_6px_16px_-6px_rgba(168,85,247,0.8)]"
-          )}
-        >
-          <Pill className="h-5 w-5 text-white" strokeWidth={2.2} aria-hidden="true" />
-        </span>
+        <PulseMark className="h-9 w-9 shrink-0" />
         {!collapsed && (
-          <span className="select-none text-[16.5px] font-bold tracking-tight text-slate-900 dark:text-white">
-            Pharmacy Portal
+          <span className="min-w-0 leading-tight">
+            <span className="text-brand-gradient block select-none text-[19px] font-bold leading-none tracking-tight">
+              Pulse
+            </span>
+            <span className="mt-1 block select-none text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
+              Pharmacy Portal
+            </span>
           </span>
         )}
         {onClose && (
@@ -511,6 +535,7 @@ function PharmacyHome({
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [sales, setSales] = useState<POSSale[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -518,6 +543,7 @@ function PharmacyHome({
       setItems(loadInventory());
       setRequests(loadStockRequests());
       setDeliveries(loadDeliveries());
+      setSales(loadSales());
       setHydrated(true);
     });
     return () => cancelAnimationFrame(raf);
@@ -533,6 +559,7 @@ function PharmacyHome({
   const scopedItems = inScope(items);
   const scopedRequests = inScope(requests);
   const scopedDeliveries = inScope(deliveries);
+  const scopedSales = inScope(sales);
 
   const skuCount = scopedItems.length;
   const units = scopedItems.reduce((acc, entry) => acc + entry.qty, 0);
@@ -558,9 +585,13 @@ function PharmacyHome({
     },
     {
       id: "items-sold",
-      value: "128",
+      value: String(
+        hydrated
+          ? scopedSales.reduce((acc, sale) => acc + sale.lines.reduce((a, line) => a + line.qty, 0), 0)
+          : "—"
+      ),
       label: "Items Sold",
-      desc: "Sell-through captured from POS",
+      desc: `From ${scopedSales.length} counter sale${scopedSales.length === 1 ? "" : "s"} at the POS`,
       icon: Package,
       tile: "bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400",
     },
@@ -946,6 +977,11 @@ export function PharmacyApp() {
   };
 
   const onQuickAction = (action?: string) => {
+    if (action === "New sale") {
+      setMobileOpen(false);
+      goTo("pos");
+      return;
+    }
     if (action === "Request stock") {
       setMobileOpen(false);
       goTo("requests");
@@ -1008,9 +1044,7 @@ export function PharmacyApp() {
         aria-live="polite"
         aria-busy="true"
       >
-        <span className="flex h-14 w-14 animate-float items-center justify-center rounded-2xl bg-gradient-to-br from-purple-600 to-fuchsia-600 shadow-[0_0_24px_rgba(168,85,247,0.5)]">
-          <Pill className="h-7 w-7 text-white" aria-hidden="true" />
-        </span>
+        <PulseMark className="h-16 w-16 animate-float" />
         <p className="flex items-center gap-2.5 text-sm text-white/70">
           <span className="h-2 w-2 animate-pulse rounded-full bg-fuchsia-400" aria-hidden="true" />
           {bouncing ? "Taking you to the Pulse console…" : "Preparing your pharmacy workspace…"}
@@ -1116,7 +1150,13 @@ export function PharmacyApp() {
             animate="show"
             className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
           >
-            {page === "inventory" ? (
+            {page === "pos" ? (
+              <PharmacyPOS storeId={activeStore} stores={stores} />
+            ) : page === "catalogue" ? (
+              <PharmacyCatalogue stores={stores} onSell={() => goTo("pos")} />
+            ) : page === "orders" ? (
+              <PharmacyPurchaseOrders storeId={activeStore} />
+            ) : page === "inventory" ? (
               <PharmacyInventory storeId={activeStore} />
             ) : page === "balance" ? (
               <PharmacyStockBalance storeId={activeStore} />
