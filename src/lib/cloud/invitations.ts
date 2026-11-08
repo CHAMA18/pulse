@@ -1,5 +1,7 @@
 "use client";
 
+import { httpsCallable } from "firebase/functions";
+import { getFirebaseFunctions } from "@/lib/firebase";
 import {
   PULSE_FROM,
   PULSE_REPLY_TO,
@@ -15,9 +17,8 @@ import {
 /* The deployable implementations live in /functions (Firebase Cloud   */
 /* Functions + Nodemailer). The browser talks to them through this     */
 /* module's callable surface — `callCloudFunction(name, payload)` —    */
-/* which today executes the same email builders locally and files the  */
-/* messages into a delivery outbox. Swapping in the deployed backend    */
-/* is a one-line change inside this file, nothing else moves.          */
+/* which invokes the deployed callable in europe-west1, then renders   */
+/* the identical templates locally for the preview and delivery outbox. */
 
 export type CloudFnName = "sendTeamInvite" | "sendPulseAdminInvite" | "onPharmacyCreated";
 
@@ -85,6 +86,20 @@ export type PharmacyCreatedPayload = {
   teamEmails: string[];
 };
 
+/** The invitation record the server stores when a message is sent. */
+export type InvitationRecord = {
+  id: string;
+  kind: "team" | "console";
+  portal: "pharmacy" | "pulse";
+  email: string;
+  name: string;
+  role: string;
+  pharmacyName: string | null;
+  storeNames: string[];
+  inviterName: string;
+  expiresAt: string;
+};
+
 /* ------------------------------------------------------------------ */
 /* Outbox                                                              */
 /* ------------------------------------------------------------------ */
@@ -126,7 +141,9 @@ function assertEmail(value: string, field: string): string {
 /** The origin of deep links (works on GH Pages and localhost alike). */
 function appOrigin(): string {
   if (typeof window === "undefined") return "https://pulse.network";
-  return `${window.location.origin}${window.location.pathname.replace(/\/[^/]*\.html?$/, "").replace(/\/$/, "")}`;
+  // Static export lives under /pulse; local dev is served from the root.
+  const base = window.location.pathname.startsWith("/pulse") ? "/pulse" : "";
+  return `${window.location.origin}${base}`;
 }
 
 function acceptLink(hash: string): string {
@@ -137,24 +154,41 @@ function acceptLink(hash: string): string {
 /* The callable                                                        */
 /* ------------------------------------------------------------------ */
 
+/** Response shape of the deployed callables (functions/src/index.ts). */
+type CallableResponse = {
+  messageId?: string;
+  inviteId?: string;
+  messageIds?: string[];
+  invited?: number;
+};
+
 /**
- * Invokes a Pulse Cloud Function. Validation errors throw
- * [CloudFunctionError] exactly like an `HttpsError` would; success
- * resolves with the delivered messages after a realistic transport
- * latency.
+ * Invokes a deployed Pulse Cloud Function in `europe-west1`.
+ *
+ * The payload is validated locally first, so bad input fails instantly with
+ * the same copy an `HttpsError` would produce. On success the server's
+ * message ids are attached to previews rendered here from the identical
+ * templates — the server sends the mail, the client renders the preview
+ * dialog and files the delivery into the local outbox. A callable rejection
+ * is rethrown as [CloudFunctionError] with the server's code and message.
  */
 export async function callCloudFunction(
   name: CloudFnName,
   payload: TeamInvitePayload | PulseAdminInvitePayload | PharmacyCreatedPayload
 ): Promise<CloudFunctionResult> {
-  // Validate first — throw before anything is filed.
+  // Validate and build the previews first — throw before calling out.
   let messages: InvitationMessage[] = [];
-  let detail = "";
 
   if (name === "sendTeamInvite") {
     const p = payload as TeamInvitePayload;
     const email = assertEmail(p.inviteeEmail, "inviteeEmail");
     if (!p.pharmacyName?.trim()) throw new CloudFunctionError("invalid-argument", "pharmacyName is required.");
+    const inviteId = `INV-${Date.now().toString(36).toUpperCase()}`;
+    const expiresAt = new Date(Date.now() + 7 * DAY).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
     const content = renderTeamInviteEmail({
       pharmacyName: p.pharmacyName.trim(),
       inviterName: p.inviterName?.trim() || "The team",
@@ -162,28 +196,30 @@ export async function callCloudFunction(
       role: p.role,
       storeNames: p.storeNames.length ? p.storeNames : ["All stores"],
       personalMessage: p.personalMessage?.trim(),
-      inviteId: `INV-${Date.now().toString(36).toUpperCase()}`,
-      acceptUrl: acceptLink(email.split("@")[0].replace(/[^a-z0-9]/gi, "")),
-      expiresAt: new Date(Date.now() + 7 * DAY).toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
+      inviteId,
+      acceptUrl: acceptLink(inviteId),
+      expiresAt,
     });
     messages = [message("sendTeamInvite", [email], content, "Team invitation")];
-    detail = "sendTeamInvite";
   } else if (name === "sendPulseAdminInvite") {
     const p = payload as PulseAdminInvitePayload;
     const email = assertEmail(p.inviteeEmail, "inviteeEmail");
+    const inviteId = `INV-${Date.now().toString(36).toUpperCase()}`;
+    const expiresAt = new Date(Date.now() + 7 * DAY).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
     const content = renderPulseAdminInviteEmail({
       inviterName: p.inviterName?.trim() || "Pulse",
       inviteeName: p.inviteeName?.trim() ?? "",
       inviteeEmail: email,
       role: p.role,
-      acceptUrl: acceptLink(email.split("@")[0].replace(/[^a-z0-9]/gi, "")),
+      inviteId,
+      acceptUrl: acceptLink(inviteId),
+      expiresAt,
     });
     messages = [message("sendPulseAdminInvite", [email], content, "Console invitation")];
-    detail = "sendPulseAdminInvite";
   } else {
     // onPharmacyCreated — welcome the owner, then invite every listed
     // teammate through the same pipeline a manual invite would use.
@@ -205,6 +241,12 @@ export async function callCloudFunction(
       const email = assertEmail(raw, "teamEmails");
       if (seen.has(email)) continue; // skip duplicates & the owner
       seen.add(email);
+      const inviteId = `INV-${Date.now().toString(36).toUpperCase()}`;
+      const expiresAt = new Date(Date.now() + 7 * DAY).toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      });
       const content = renderTeamInviteEmail({
         pharmacyName: p.pharmacyName.trim(),
         inviterName: p.ownerName.trim() || "The owner",
@@ -212,25 +254,112 @@ export async function callCloudFunction(
         role: "Team member",
         storeNames: ["All stores"],
         personalMessage: `Welcome aboard — your ${p.pharmacyName.trim()} account is live and this is your seat at the counter.`,
-        inviteId: `INV-${Date.now().toString(36).toUpperCase()}`,
-        acceptUrl: acceptLink(email.split("@")[0].replace(/[^a-z0-9]/gi, "")),
-        expiresAt: new Date(Date.now() + 7 * DAY).toLocaleDateString("en-US", {
-          weekday: "long",
-          month: "long",
-          day: "numeric",
-        }),
+        inviteId,
+        acceptUrl: acceptLink(inviteId),
+        expiresAt,
       });
       invites.push(message("onPharmacyCreated", [email], content, "Registration invite"));
     }
     messages = [...messages, ...invites];
-    detail = `onPharmacyCreated → 1 welcome + ${invites.length} team invite${invites.length === 1 ? "" : "s"}`;
   }
 
-  // Realistic transport latency for the callable.
-  await new Promise((resolve) => setTimeout(resolve, 620 + Math.random() * 480));
+  const response = await invokeCallable(name, payload);
+
+  // Prefer the ids the deployed function assigned so the preview, the
+  // Firestore archive (InvitationMail/{id}) and the outbox all agree.
+  if (name === "onPharmacyCreated") {
+    const ids = response.messageIds ?? [];
+    messages = messages.map((msg, index) => {
+      const id = ids[index];
+      return id ? { ...msg, id } : msg;
+    });
+  } else {
+    const id = response.messageId;
+    if (id) messages = messages.map((msg) => ({ ...msg, id }));
+  }
 
   fileMessages(messages);
   return { messageId: messages[0]?.id ?? messageId(), messages };
+}
+
+/**
+ * Resolves an invitation before the recipient has an account.
+ * Returns null when the id is unknown, expired or already used.
+ */
+export async function lookupInvitation(inviteId: string): Promise<InvitationRecord | null> {
+  const functions = getFirebaseFunctions();
+  if (!functions) return null;
+  try {
+    const callable = httpsCallable<{ inviteId: string }, { invitation: InvitationRecord | null }>(
+      functions,
+      "getInvitation"
+    );
+    const result = await callable({ inviteId });
+    return result.data?.invitation ?? null;
+  } catch (err) {
+    const raw = err as { message?: unknown } | null;
+    throw new CloudFunctionError(
+      "unavailable",
+      typeof raw?.message === "string" && raw.message
+        ? raw.message
+        : "We couldn't load this invitation. Please try again."
+    );
+  }
+}
+
+/** Marks an invitation accepted for the signed-in recipient. */
+export async function acceptInvitation(inviteId: string): Promise<void> {
+  const functions = getFirebaseFunctions();
+  if (!functions) {
+    throw new CloudFunctionError("unavailable", "The invitation service isn't available right now.");
+  }
+  try {
+    const callable = httpsCallable<{ inviteId: string }, { ok?: boolean }>(
+      functions,
+      "acceptInvitation"
+    );
+    await callable({ inviteId });
+  } catch (err) {
+    const raw = err as { message?: unknown } | null;
+    throw new CloudFunctionError(
+      "failed-precondition",
+      typeof raw?.message === "string" && raw.message
+        ? raw.message
+        : "We couldn't confirm this invitation. Please try again."
+    );
+  }
+}
+
+/** Calls the deployable by name, normalizing failures to CloudFunctionError. */
+async function invokeCallable(
+  name: CloudFnName,
+  payload: TeamInvitePayload | PulseAdminInvitePayload | PharmacyCreatedPayload
+): Promise<CallableResponse> {
+  const functions = getFirebaseFunctions();
+  if (!functions) {
+    throw new CloudFunctionError(
+      "unavailable",
+      "The invitation service isn't available right now."
+    );
+  }
+
+  try {
+    const callable = httpsCallable<typeof payload, CallableResponse>(functions, name);
+    const result = await callable(payload);
+    return result.data ?? {};
+  } catch (err) {
+    if (err instanceof CloudFunctionError) throw err;
+    const raw = err as { code?: unknown; message?: unknown } | null;
+    const code =
+      typeof raw?.code === "string"
+        ? raw.code.replace(/^functions\//, "")
+        : "unavailable";
+    const message =
+      typeof raw?.message === "string" && raw.message
+        ? raw.message
+        : "We couldn't reach the invitation service. Please try again.";
+    throw new CloudFunctionError(code, message);
+  }
 }
 
 function message(

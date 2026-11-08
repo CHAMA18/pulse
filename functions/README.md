@@ -15,10 +15,11 @@ render used in previews).
 ## How the portals reach these
 
 The web app calls invitations through one seam — `callCloudFunction(name, payload)`
-in `src/lib/cloud/invitations.ts`. Today that seam executes the same email
-builders locally (so the static site demos full delivery with previews and an
-outbox). To move to live delivery, deploy this directory and point
-`callCloudFunction` at `httpsCallable(functions, name)` — no component changes.
+in `src/lib/cloud/invitations.ts`. That seam invokes these deployed callables
+with the Firebase JS SDK (region `europe-west1`), sending the signed-in user's
+ID token with every request. The same templates are rendered client-side for
+the preview dialog and local outbox, and a callable rejection surfaces as
+`CloudFunctionError` with the server's code and message. No component changes.
 
 ## Configuration
 
@@ -26,16 +27,16 @@ outbox). To move to live delivery, deploy this directory and point
 cd functions
 npm install
 
-# SMTP for delivery (any provider — Mailgun, SES, Postmark, Gmail relay…)
-export SMTP_HOST=smtp.mailgun.org
-export SMTP_PORT=587
-export SMTP_USER=postmaster@pulse.network
-export SMTP_PASS=••••••••
-export SMTP_SECURE=false
+# Email delivery goes through Resend, sending from the domain verified in
+# the Resend account (thestackone.com). The key lives in Secret Manager —
+# no SMTP host or password needed.
+firebase functions:secrets:set RESEND_API_KEY
 
-# Where invite links point (defaults to the GH Pages deployment)
-export APP_URL=https://chama18.github.io/pulse/
-export EMAIL_FROM="Pulse <invitations@pulse.network>"
+# Optional overrides (the defaults target the GH Pages deployment and the
+# verified sender):
+# APP_URL=https://chama18.github.io/pulse/
+# EMAIL_FROM="Pulse <noreply@thestackone.com>"
+# EMAIL_REPLY_TO=noreply@thestackone.com
 ```
 
 ## Deploy

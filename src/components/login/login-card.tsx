@@ -29,6 +29,11 @@ import { GoogleIcon } from "@/components/login/google-icon";
 import { PulseBeatMark } from "@/components/login/pulse-logo";
 import { RegisterDialog } from "@/components/login/register-dialog";
 import { useToast } from "@/hooks/use-toast";
+import {
+  acceptInvitation,
+  lookupInvitation,
+  type InvitationRecord,
+} from "@/lib/cloud/invitations";
 import { cn } from "@/lib/utils";
 import { routeForPortal, setStoredPortal } from "@/lib/portal";
 import {
@@ -115,7 +120,11 @@ function PortalToggle({
   );
 }
 
-export function LoginCard() {
+export function LoginCard({
+  initialMode = "login",
+}: {
+  initialMode?: "login" | "register";
+}) {
   const { toast } = useToast();
   const router = useRouter();
 
@@ -127,11 +136,14 @@ export function LoginCard() {
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
-  const [portal, setPortal] = useState<Portal>("pulse");
+  const [portal, setPortal] = useState<Portal>(initialMode === "register" ? "pharmacy" : "pulse");
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [registerOpen, setRegisterOpen] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(initialMode === "register");
+  // The invitation carried by ?invite= — resolved before registration opens.
+  const [invitation, setInvitation] = useState<InvitationRecord | null>(null);
+  const [registerInvitation, setRegisterInvitation] = useState<InvitationRecord | null>(null);
 
   // Deep-link support: /login?intent=register (the landing page's Register
   // button) opens the pharmacy registration dialog on arrival. Read from
@@ -141,6 +153,47 @@ export function LoginCard() {
       setRegisterOpen(true);
     }
   }, []);
+
+  // Invitation links land here with ?invite=<id>. Resolve the record before
+  // opening registration so every field can be filled from the invitation.
+  useEffect(() => {
+    const inviteId = new URLSearchParams(window.location.search).get("invite");
+    if (!inviteId) return;
+
+    let active = true;
+    void (async () => {
+      try {
+        const record = await lookupInvitation(inviteId);
+        if (!active) return;
+        if (!record) {
+          toast({
+            title: "Invitation unavailable",
+            description:
+              "This invitation may have expired or already been used. Ask your administrator for a new one.",
+            variant: "destructive",
+          });
+          return;
+        }
+        setInvitation(record);
+        setRegisterInvitation(record);
+        setEmail(record.email);
+        setPortal(record.portal);
+        setRegisterOpen(true);
+      } catch {
+        if (active) {
+          toast({
+            title: "Couldn't load your invitation",
+            description: "Check your connection and open the link again.",
+            variant: "destructive",
+          });
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [toast]);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -209,29 +262,46 @@ export function LoginCard() {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const user = credential.user;
 
+      // Existing account opening an invitation link: claim the seat and land
+      // in the portal the invitation belongs to.
+      const inviteMatch =
+        invitation && user.email?.trim().toLowerCase() === invitation.email.trim().toLowerCase()
+          ? invitation
+          : null;
+      const effectivePortal = inviteMatch ? inviteMatch.portal : portal;
+
       // Pharmacy portal: refuse sessions without elevated (admin) rights.
-      if (portal === "pharmacy" && !(await isAdminUser(user))) {
+      if (effectivePortal === "pharmacy" && !(await isAdminUser(user))) {
         await signOut(auth);
         setStatus("idle");
-        void trackEvent("login_failure", { method: "password", portal, reason: "not_pharmacy_admin" });
+        void trackEvent("login_failure", { method: "password", portal: effectivePortal, reason: "not_pharmacy_admin" });
         setFormError("This account doesn't have Pharmacy portal access. Use the Pulse portal instead.");
         return;
       }
 
+      if (inviteMatch) {
+        try {
+          await acceptInvitation(inviteMatch.id);
+        } catch {
+          /* already accepted — the account still signs in to the right portal */
+        }
+        setPortal(inviteMatch.portal);
+      }
+
       setStatus("success");
       // The portal chosen at sign-in decides which console the session opens.
-      setStoredPortal(portal);
-      void trackEvent("login", { method: "password", status: "success", portal });
+      setStoredPortal(effectivePortal);
+      void trackEvent("login", { method: "password", status: "success", portal: effectivePortal });
       const firstName = (user.displayName ?? user.email?.split("@")[0] ?? "there").split(" ")[0];
       toast({
         title: `Welcome back, ${firstName} 👋`,
         description:
-          portal === "pharmacy"
+          effectivePortal === "pharmacy"
             ? "Signing you in to the Pharmacy portal…"
             : "Signing you in to Pulse…",
       });
       // Hand the fresh session to the console for this portal.
-      window.setTimeout(() => router.push(routeForPortal(portal)), 900);
+      window.setTimeout(() => router.push(routeForPortal(effectivePortal)), 900);
     } catch (err) {
       setStatus("idle");
       void trackEvent("login_failure", { method: "password", portal, reason: authErrorCode(err) });
@@ -256,10 +326,16 @@ export function LoginCard() {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
+      const inviteMatch =
+        invitation && user.email?.trim().toLowerCase() === invitation.email.trim().toLowerCase()
+          ? invitation
+          : null;
+      const effectivePortal = inviteMatch ? inviteMatch.portal : portal;
+
       // Pharmacy portal: refuse sessions without elevated (admin) rights.
-      if (portal === "pharmacy" && !(await isAdminUser(user))) {
+      if (effectivePortal === "pharmacy" && !(await isAdminUser(user))) {
         await signOut(auth);
-        void trackEvent("login_failure", { method: "google", portal, reason: "not_pharmacy_admin" });
+        void trackEvent("login_failure", { method: "google", portal: effectivePortal, reason: "not_pharmacy_admin" });
         toast({
           title: "Pharmacy access required",
           description: "This account doesn't have Pharmacy portal access. Use the Pulse portal instead.",
@@ -268,14 +344,23 @@ export function LoginCard() {
         return;
       }
 
-      void trackEvent("login", { method: "google", status: "success", portal });
-      setStoredPortal(portal);
+      if (inviteMatch) {
+        try {
+          await acceptInvitation(inviteMatch.id);
+        } catch {
+          /* already accepted — the account still signs in to the right portal */
+        }
+        setPortal(inviteMatch.portal);
+      }
+
+      void trackEvent("login", { method: "google", status: "success", portal: effectivePortal });
+      setStoredPortal(effectivePortal);
       toast({
         title: "Signed in with Google",
         description: [user.displayName, user.email].filter(Boolean).join(" · ") || "Welcome to Pulse",
       });
       // Hand the fresh session to the console for this portal.
-      window.setTimeout(() => router.push(routeForPortal(portal)), 900);
+      window.setTimeout(() => router.push(routeForPortal(effectivePortal)), 900);
     } catch (err) {
       const code = authErrorCode(err);
       void trackEvent("login_failure", { method: "google", portal, reason: code });
@@ -339,6 +424,42 @@ export function LoginCard() {
                 : "Let\u2019s get started by filling out the form below."}
             </p>
           </motion.div>
+
+          {/* The invitation found from the email link */}
+          {invitation && (
+            <motion.div
+              variants={item}
+              className="mt-5 rounded-xl border border-purple-200 bg-purple-50/70 px-4 py-3.5 text-left dark:border-purple-500/25 dark:bg-purple-500/10"
+            >
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-purple-700 dark:text-purple-300">
+                <Mail className="h-3.5 w-3.5" aria-hidden="true" /> Invitation ready
+              </p>
+              <p className="mt-1 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
+                You&rsquo;re invited to{" "}
+                <span className="font-semibold text-slate-800 dark:text-white">
+                  {invitation.kind === "team"
+                    ? invitation.pharmacyName || "your pharmacy"
+                    : "the Pulse console"}
+                </span>{" "}
+                as <span className="font-semibold text-slate-800 dark:text-white">{invitation.role}</span>.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegisterInvitation(invitation);
+                    setRegisterOpen(true);
+                  }}
+                  className="rounded-md text-[12.5px] font-semibold text-purple-700 hover:underline dark:text-purple-300"
+                >
+                  Continue invitation
+                </button>
+                <span className="text-[11.5px] text-slate-400">
+                  or sign in with {invitation.email}
+                </span>
+              </div>
+            </motion.div>
+          )}
 
           {/* Portal toggle */}
           <motion.div variants={item} className="mt-5">
@@ -585,7 +706,10 @@ export function LoginCard() {
               New pharmacy?{" "}
               <button
                 type="button"
-                onClick={() => setRegisterOpen(true)}
+                onClick={() => {
+                  setRegisterInvitation(null);
+                  setRegisterOpen(true);
+                }}
                 className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
               >
                 Register your pharmacy
@@ -597,7 +721,11 @@ export function LoginCard() {
       </motion.section>
 
       <ForgotDialog open={forgotOpen} onOpenChange={setForgotOpen} />
-      <RegisterDialog open={registerOpen} onOpenChange={setRegisterOpen} />
+      <RegisterDialog
+        open={registerOpen}
+        onOpenChange={setRegisterOpen}
+        invitation={registerInvitation}
+      />
     </MotionConfig>
   );
 }

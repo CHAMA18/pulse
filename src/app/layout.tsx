@@ -19,24 +19,24 @@ const satoshi = localFont({
 export const metadata: Metadata = {
   title: "Pulse — Pharmacy Intelligence, Delivered.",
   description:
-    "Sign in to Pulse, the pharmacy intelligence platform. Track stock, demand and delivery in real time.",
+    "A live view of pharmacy stock, demand and delivery — so care never waits on medicine.",
   keywords: [
     "Pulse",
     "Pharmacy Intelligence",
     "Healthcare logistics",
-    "Sign in",
+    "Pharmacy management",
   ],
   authors: [{ name: "Pulse" }],
   openGraph: {
     title: "Pulse — Pharmacy Intelligence, Delivered.",
-    description: "Sign in to Pulse — the pharmacy intelligence platform.",
+    description: "Track pharmacy stock, demand and delivery in real time with Pulse.",
     siteName: "Pulse",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Pulse — Pharmacy Intelligence, Delivered.",
-    description: "Sign in to Pulse — the pharmacy intelligence platform.",
+    description: "Track pharmacy stock, demand and delivery in real time with Pulse.",
   },
 };
 

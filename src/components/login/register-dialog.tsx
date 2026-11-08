@@ -25,13 +25,16 @@ import {
 } from "@/components/ui/dialog";
 import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
 import {
+  acceptInvitation,
   callCloudFunction,
   type InvitationMessage,
+  type InvitationRecord,
 } from "@/lib/cloud/invitations";
-import { setStoredPortal } from "@/lib/portal";
+import { routeForPortal, setStoredPortal } from "@/lib/portal";
 import {
   authErrorCode,
   describeAuthError,
+  registerInvitedAccount,
   registerPharmacyAccount,
   trackEvent,
 } from "@/lib/firebase";
@@ -59,11 +62,15 @@ const TEAM_EMAIL_LIMIT = 8;
 export function RegisterDialog({
   open,
   onOpenChange,
+  invitation = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When present, the dialog claims this invitation instead of creating a pharmacy. */
+  invitation?: InvitationRecord | null;
 }) {
   const router = useRouter();
+  const invited = Boolean(invitation);
 
   const [pharmacyName, setPharmacyName] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -120,17 +127,24 @@ export function RegisterDialog({
   };
 
   const pharmacyRef = useRef<HTMLInputElement>(null);
+  const ownerRef = useRef<HTMLInputElement>(null);
 
   // Reopening the dialog starts a fresh form. Reset during render when the
-  // `open` prop flips (the React-documented alternative to a reset effect,
-  // which the react-hooks/set-state-in-effect rule forbids).
+  // `open` prop flips or a resolved invitation arrives while it is open
+  // (the React-documented alternative to a reset effect, which the
+  // react-hooks/set-state-in-effect rule forbids).
+  const invitationKey = invitation?.id ?? "";
   const [prevOpen, setPrevOpen] = useState(open);
-  if (open !== prevOpen) {
+  const [prevInvitationKey, setPrevInvitationKey] = useState(invitationKey);
+  if (open !== prevOpen || invitationKey !== prevInvitationKey) {
     setPrevOpen(open);
+    setPrevInvitationKey(invitationKey);
     if (open) {
-      setPharmacyName("");
-      setOwnerName("");
-      setEmail("");
+      setPharmacyName(invitation?.pharmacyName ?? "");
+      setOwnerName(
+        invitation?.name?.trim() || invitation?.email.split("@")[0] || ""
+      );
+      setEmail(invitation?.email ?? "");
       setPassword("");
       setConfirm("");
       setShowPassword(false);
@@ -154,16 +168,17 @@ export function RegisterDialog({
     if (!open || status !== "success" || invitesPending || previewOpen) return;
     const timer = window.setTimeout(() => {
       onOpenChange(false);
-      // New pharmacies open their own portal console, not the Pulse admin one.
-      setStoredPortal("pharmacy");
-      router.push("/pharmacy");
-    }, 1400);
+      // Invitations open the console they belong to; new pharmacies open theirs.
+      const portal = invitation?.portal ?? "pharmacy";
+      setStoredPortal(portal);
+      router.push(routeForPortal(portal));
+    }, 1500);
     return () => window.clearTimeout(timer);
-  }, [open, status, invitesPending, previewOpen, onOpenChange, router]);
+  }, [open, status, invitesPending, previewOpen, invitation, onOpenChange, router]);
 
   const validate = (): Errors => {
     const next: Errors = {};
-    if (pharmacyName.trim().length < 2)
+    if (!invited && pharmacyName.trim().length < 2)
       next.pharmacyName = "Enter your pharmacy's name.";
     if (!ownerName.trim()) next.ownerName = "Enter the owner's full name.";
     if (!email.trim()) next.email = "Enter your email address.";
@@ -185,6 +200,49 @@ export function RegisterDialog({
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       if (nextErrors.pharmacyName) pharmacyRef.current?.focus();
+      return;
+    }
+
+    // — Invited teammate / console user: claim the seat, do not create a pharmacy.
+    if (invited && invitation) {
+      setFormError(null);
+      setStatus("loading");
+      try {
+        const result = await registerInvitedAccount({
+          name: ownerName,
+          email: email.trim(),
+          password,
+          role: invitation.role,
+          kind: invitation.kind,
+          pharmacyName: invitation.pharmacyName,
+        });
+        try {
+          await acceptInvitation(invitation.id);
+        } catch {
+          /* the account exists; a retry from the inviter can reconcile the seat */
+        }
+        setRegisteredName(
+          invitation.kind === "team"
+            ? invitation.pharmacyName || result.name
+            : "the Pulse console"
+        );
+        setStatus("success");
+        void trackEvent("invitation_accepted", {
+          kind: invitation.kind,
+          portal: invitation.portal,
+          role: invitation.role,
+          profile_saved: result.profileSaved,
+        });
+      } catch (err) {
+        setStatus("idle");
+        const code = authErrorCode(err);
+        void trackEvent("invitation_accepted", { reason: code });
+        setFormError(
+          code === "auth/email-already-in-use"
+            ? "You already have a Pulse account with this email. Close this window and sign in — your email is already filled in."
+            : describeAuthError(err)
+        );
+      }
       return;
     }
 
@@ -261,7 +319,7 @@ export function RegisterDialog({
         className="max-h-[92dvh] overflow-y-auto rounded-2xl bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] p-6 sm:max-w-[440px] sm:p-8"
         onOpenAutoFocus={(e) => {
           e.preventDefault();
-          pharmacyRef.current?.focus();
+          (invited ? ownerRef.current : pharmacyRef.current)?.focus();
         }}
       >
         <AnimatePresence mode="wait" initial={false}>
@@ -276,14 +334,23 @@ export function RegisterDialog({
             >
               <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 ring-1 ring-emerald-200">
                 <CheckCircle2 className="h-9 w-9 text-emerald-500" aria-hidden="true" />
-              </span>
-              <DialogHeader className="mt-5 space-y-2">
+              </span>                <DialogHeader className="mt-5 space-y-2">
                 <DialogTitle className="text-[22px] font-semibold tracking-tight text-slate-900">
-                  Pharmacy registered! 🎉
+                  {invited ? "You're in! 🎉" : "Pharmacy registered! 🎉"}
                 </DialogTitle>
                 <DialogDescription className="text-[14px] leading-relaxed text-slate-500">
-                  <span className="font-medium text-slate-700">{registeredName}</span> now has a
-                  Pulse account. Taking you to your pharmacy console…
+                  {invited ? (
+                    <>
+                      Welcome to{" "}
+                      <span className="font-medium text-slate-700">{registeredName}</span>. Taking
+                      you to your {invitation?.portal === "pulse" ? "Pulse" : "pharmacy"} console…
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium text-slate-700">{registeredName}</span> now has
+                      a Pulse account. Taking you to your pharmacy console…
+                    </>
+                  )}
                 </DialogDescription>
               </DialogHeader>
 
@@ -333,15 +400,51 @@ export function RegisterDialog({
             >
               <DialogHeader className="space-y-1.5 text-center sm:text-center">
                 <DialogTitle className="text-[24px] font-semibold tracking-tight text-slate-900">
-                  Register your pharmacy
+                  {invited ? "Accept your invitation" : "Register your pharmacy"}
                 </DialogTitle>
                 <DialogDescription className="text-[13.5px] text-slate-500">
-                  Join the Pulse network — stock, staff and sales in one console.
+                  {invited ? (
+                    <>
+                      You&rsquo;re joining{" "}
+                      <span className="font-medium text-slate-700">
+                        {invitation?.kind === "team"
+                          ? invitation.pharmacyName || "your pharmacy"
+                          : "the Pulse console"}
+                      </span>{" "}
+                      as <span className="font-medium text-slate-700">{invitation?.role}</span>. Set
+                      a password to claim your seat.
+                    </>
+                  ) : (
+                    "Join the Pulse network — stock, staff and sales in one console."
+                  )}
                 </DialogDescription>
               </DialogHeader>
 
+              {invitation && (
+                <div className="mt-5 flex items-start gap-3 rounded-xl border border-purple-100 bg-purple-50/70 px-4 py-3.5 text-left dark:border-purple-500/20 dark:bg-purple-500/10">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-purple-600 ring-1 ring-purple-200 dark:bg-white/10 dark:text-purple-300 dark:ring-purple-500/30">
+                    <Mail className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-purple-700 dark:text-purple-300">
+                      Invitation ready
+                    </p>
+                    <p className="mt-0.5 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
+                      {invitation.inviterName} invited you as{" "}
+                      <span className="font-semibold text-slate-800 dark:text-white">
+                        {invitation.role}
+                      </span>
+                      {invitation.kind === "team" && invitation.storeNames.length > 0
+                        ? ` · ${invitation.storeNames.join(", ")}`
+                        : ""}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <form onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
-                {/* Pharmacy name */}
+                {/* Pharmacy name — only when creating a new pharmacy */}
+                {!invited && (
                 <div className="relative">
                   <label htmlFor="register-pharmacy" className="sr-only">
                     Pharmacy name
@@ -369,22 +472,24 @@ export function RegisterDialog({
                   />
                   {fieldError(errors.pharmacyName, "pharmacy-error")}
                 </div>
+                )}
 
                 {/* Owner name */}
                 <div className="relative">
                   <label htmlFor="register-owner" className="sr-only">
-                    Owner full name
+                    Full name
                   </label>
                   <UserRound
                     aria-hidden="true"
                     className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
                   />
                   <input
+                    ref={ownerRef}
                     id="register-owner"
                     name="ownerName"
                     type="text"
                     autoComplete="name"
-                    placeholder="Owner full name"
+                    placeholder={invited ? "Your full name" : "Owner full name"}
                     value={ownerName}
                     onChange={(e) => {
                       setOwnerName(e.target.value);
@@ -419,9 +524,21 @@ export function RegisterDialog({
                       if (errors.email) setErrors((p) => ({ ...p, email: undefined }));
                       if (formError) setFormError(null);
                     }}
+                    readOnly={invited}
                     aria-invalid={!!errors.email}
-                    className={cn(inputBase, inputState(errors.email), "pl-11")}
+                    aria-describedby={invited ? "register-email-hint" : undefined}
+                    className={cn(
+                      inputBase,
+                      inputState(errors.email),
+                      "pl-11",
+                      invited && "bg-slate-50 text-slate-500 focus:border-slate-200 focus:ring-0 dark:bg-white/5"
+                    )}
                   />
+                  {invited && (
+                    <p id="register-email-hint" className="mt-1.5 text-[11.5px] text-slate-400">
+                      This invitation is tied to this address.
+                    </p>
+                  )}
                   {fieldError(errors.email)}
                 </div>
 
@@ -503,9 +620,8 @@ export function RegisterDialog({
                   </div>
                 )}
 
-                {/* Invite your team — emails outlined here receive the
-                    branded Pulse invitation the moment this pharmacy is
-                    created (triggered by the onPharmacyCreated function). */}
+                {/* Invite your team — only while creating a new pharmacy. */}
+                {!invited && (
                 <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-4 dark:border-purple-500/20 dark:bg-purple-500/10">
                   <label
                     htmlFor="register-team"
@@ -567,6 +683,7 @@ export function RegisterDialog({
                     </div>
                   )}
                 </div>
+                )}
 
                 <motion.button
                   whileTap={{ scale: 0.985 }}
@@ -577,16 +694,19 @@ export function RegisterDialog({
                   {status === "loading" ? (
                     <>
                       <Loader2 className="h-[18px] w-[18px] animate-spin" aria-hidden="true" />
-                      Creating account…
+                      {invited ? "Claiming your seat…" : "Creating account…"}
                     </>
+                  ) : invited ? (
+                    "Accept invitation"
                   ) : (
                     "Create pharmacy account"
                   )}
                 </motion.button>
 
                 <p className="text-center text-[12px] leading-relaxed text-slate-400">
-                  Your pharmacy joins the Pulse network pending review. By registering you agree to
-                  the Pulse terms of service.
+                  {invited
+                    ? "By accepting you agree to the Pulse terms of service. Your role and access are set by your inviter."
+                    : "Your pharmacy joins the Pulse network pending review. By registering you agree to the Pulse terms of service."}
                 </p>
               </form>
             </motion.div>

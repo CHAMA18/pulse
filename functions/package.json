@@ -3,7 +3,7 @@
   "description": "Pulse Cloud Functions — invitation email delivery for the Pulse and Pharmacy portals",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "lib/index.js",
   "scripts": {
@@ -15,11 +15,9 @@
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",
-    "firebase-functions": "^5.1.1",
-    "nodemailer": "^6.9.15"
+    "firebase-functions": "^5.1.1"
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.16",
     "typescript": "^5.6.2"
   }
 }

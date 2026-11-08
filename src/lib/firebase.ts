@@ -14,6 +14,7 @@ import {
   setDoc,
   type Firestore,
 } from "firebase/firestore";
+import { getFunctions, type Functions } from "firebase/functions";
 import { recordAudit } from "@/lib/audit-log";
 
 /**
@@ -36,6 +37,7 @@ const firebaseConfig = {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let cloudFunctions: Functions | null = null;
 let analyticsPromise: Promise<Analytics | null> | null = null;
 
 /**
@@ -60,6 +62,22 @@ export function getFirebaseDb(): Firestore | null {
   if (!application) return null; // never init on the server
   if (!db) db = getFirestore(application);
   return db;
+}
+
+/** Region shared by every deployed Pulse callable (functions/src/index.ts). */
+export const CLOUD_FUNCTIONS_REGION = "europe-west1";
+
+/**
+ * Returns the shared Cloud Functions client for the region the Pulse
+ * callables are deployed to (lazily initialized, browser only).
+ */
+export function getFirebaseFunctions(): Functions | null {
+  const application = getFirebaseApp();
+  if (!application) return null; // never init on the server
+  if (!cloudFunctions) {
+    cloudFunctions = getFunctions(application, CLOUD_FUNCTIONS_REGION);
+  }
+  return cloudFunctions;
 }
 
 /**
@@ -187,6 +205,18 @@ export async function isAdminUser(user: User): Promise<boolean> {
     return true;
   }
 
+  // Accounts created through a pharmacy team invitation are team members
+  // even if the Firestore profile write was blocked by rules.
+  if (
+    readInvitedAccounts().some(
+      (account) =>
+        account.kind === "team" &&
+        (account.uid === user.uid || (email && account.email === email))
+    )
+  ) {
+    return true;
+  }
+
   const store = getFirebaseDb();
   if (store) {
     try {
@@ -213,6 +243,7 @@ type PharmacyRegistration = {
 };
 
 const PHARMACY_REGISTRY_KEY = "pulse.pharmacy-registrations.v1";
+const INVITED_ACCOUNTS_KEY = "pulse.invited-accounts.v1";
 
 /** Reads the local pharmacy registry (this browser only). */
 function readPharmacyRegistry(): PharmacyRegistration[] {
@@ -244,6 +275,118 @@ function recordPharmacyRegistration(entry: PharmacyRegistration): void {
  */
 export function getPharmacyRegistrations(): PharmacyRegistration[] {
   return readPharmacyRegistry();
+}
+
+/* ------------------------------------------------------------------ */
+/* Invitation acceptance                                               */
+/* ------------------------------------------------------------------ */
+
+type InvitedAccount = {
+  uid: string;
+  email: string;
+  name: string;
+  role: string;
+  kind: "team" | "console";
+  pharmacyName: string | null;
+  at: string;
+};
+
+function readInvitedAccounts(): InvitedAccount[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(INVITED_ACCOUNTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as InvitedAccount[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function recordInvitedAccount(entry: InvitedAccount): void {
+  try {
+    const accounts = readInvitedAccounts().filter((account) => account.uid !== entry.uid);
+    accounts.push(entry);
+    window.localStorage.setItem(INVITED_ACCOUNTS_KEY, JSON.stringify(accounts));
+  } catch {
+    /* best-effort fallback — the Firestore profile remains the primary record */
+  }
+}
+
+export type InvitedAccountInput = {
+  name: string;
+  email: string;
+  password: string;
+  role: string;
+  kind: "team" | "console";
+  pharmacyName?: string | null;
+};
+
+export type InvitedAccountResult = {
+  uid: string;
+  email: string;
+  name: string;
+  kind: "team" | "console";
+  profileSaved: boolean;
+};
+
+/**
+ * Creates the Firebase Auth account for someone who arrived through an
+ * invitation, then stores the role and organisation the invitation carried.
+ * The pharmacy was created earlier by the inviter, so no new pharmacy is
+ * registered here — the new account simply joins the right console.
+ */
+export async function registerInvitedAccount(
+  input: InvitedAccountInput
+): Promise<InvitedAccountResult> {
+  const auth = getFirebaseAuth();
+  if (!auth) {
+    throw new FirebaseError("auth/unavailable", "Authentication isn't available right now.");
+  }
+
+  const email = input.email.trim().toLowerCase();
+  const credential = await createUserWithEmailAndPassword(auth, email, input.password);
+  const user = credential.user;
+  const name = input.name.trim() || email.split("@")[0];
+  try {
+    await updateProfile(user, { displayName: name });
+  } catch {
+    /* the profile write below still carries the display name */
+  }
+
+  const pharmacyName = input.pharmacyName?.trim() || null;
+  let profileSaved = false;
+  const store = getFirebaseDb();
+  if (store) {
+    try {
+      await setDoc(doc(store, "User", user.uid), {
+        email,
+        uid: user.uid,
+        display_name: name,
+        created_time: serverTimestamp(),
+        role: input.role.trim().toLowerCase(),
+        role_label: input.role.trim(),
+        account_type: input.kind === "console" ? "Pulse" : "Pharmacy",
+        pharmacy_name: pharmacyName,
+        invited: true,
+        approved_by_duniya: input.kind === "console",
+      });
+      profileSaved = true;
+    } catch {
+      /* rules or offline — the local fallback keeps the seat usable */
+    }
+  }
+
+  recordInvitedAccount({
+    uid: user.uid,
+    email,
+    name,
+    role: input.role.trim(),
+    kind: input.kind,
+    pharmacyName,
+    at: new Date().toISOString(),
+  });
+
+  return { uid: user.uid, email, name, kind: input.kind, profileSaved };
 }
 
 export type PharmacyRegistrationInput = {
