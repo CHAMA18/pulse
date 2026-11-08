@@ -23,7 +23,7 @@ import {
   signOut,
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
 import { RegisterDialog } from "@/components/login/register-dialog";
@@ -114,12 +114,7 @@ function PortalToggle({
   );
 }
 
-export function LoginCard({
-  initialRegisterOpen = false,
-}: {
-  /** Deep-link support: /login?intent=register opens the pharmacy registration dialog on arrival. */
-  initialRegisterOpen?: boolean;
-} = {}) {
+export function LoginCard() {
   const { toast } = useToast();
   const router = useRouter();
 
@@ -135,7 +130,16 @@ export function LoginCard({
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [registerOpen, setRegisterOpen] = useState(initialRegisterOpen);
+  const [registerOpen, setRegisterOpen] = useState(false);
+
+  // Deep-link support: /login?intent=register (the landing page's Register
+  // button) opens the pharmacy registration dialog on arrival. Read from
+  // window.location on mount so the route stays fully static-exportable.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("intent") === "register") {
+      setRegisterOpen(true);
+    }
+  }, []);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
