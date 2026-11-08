@@ -26,10 +26,10 @@ import { trackEvent } from "@/lib/firebase";
 const CATEGORY_CHIPS = ["All", "Pharmaceuticals", "Consumables", "Supplements", "Equipment"];
 
 const MONOGRAM_TONES = [
-  "from-emerald-500 to-teal-600",
-  "from-teal-500 to-cyan-600",
-  "from-emerald-600 to-green-600",
-  "from-cyan-600 to-teal-500",
+  "from-purple-500 to-fuchsia-600",
+  "from-fuchsia-500 to-purple-600",
+  "from-violet-500 to-purple-600",
+  "from-purple-600 to-fuchsia-500",
 ];
 
 function SupplierCard({
@@ -116,7 +116,7 @@ function SupplierCard({
       <button
         type="button"
         onClick={() => onRequest(supplier)}
-        className="mt-4 inline-flex h-10 items-center justify-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 text-[13.5px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
+        className="mt-4 inline-flex h-10 items-center justify-center gap-1.5 rounded-md border border-purple-200 bg-purple-50 text-[13.5px] font-semibold text-purple-700 transition-colors hover:bg-purple-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-purple-500/25 dark:bg-purple-500/10 dark:text-purple-300 dark:hover:bg-purple-500/20"
       >
         Request stock
         <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
@@ -191,7 +191,7 @@ export function PharmacySuppliers({ onGoToRequests }: { onGoToRequests: () => vo
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search suppliers or categories…"
             aria-label="Search supplier directory"
-            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
           />
         </div>
         <div role="radiogroup" aria-label="Filter by category" className="flex flex-wrap items-center gap-1.5">
@@ -205,10 +205,10 @@ export function PharmacySuppliers({ onGoToRequests }: { onGoToRequests: () => vo
                 aria-checked={active}
                 onClick={() => setChip(label)}
                 className={cn(
-                  "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500",
+                  "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
                   active
-                    ? "bg-emerald-600 text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.7)]"
-                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-emerald-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+                    ? "bg-purple-600 text-white shadow-[0_6px_16px_-6px_rgba(147,51,234,0.7)]"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-purple-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
                 )}
               >
                 {label}
@@ -231,7 +231,7 @@ export function PharmacySuppliers({ onGoToRequests }: { onGoToRequests: () => vo
               setQuery("");
               setChip("All");
             }}
-            className="text-[13px] font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+            className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
           >
             Clear search & filters
           </button>

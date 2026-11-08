@@ -5,6 +5,7 @@ import {
   Bell,
   Boxes,
   Building2,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -23,6 +24,8 @@ import {
   Store,
   TriangleAlert,
   Truck,
+  Users,
+  Warehouse,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -35,15 +38,21 @@ import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
 import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
 import { PharmacyStockBalance } from "@/components/pharmacy/pharmacy-stock-balance";
 import { PharmacyStockRequests } from "@/components/pharmacy/pharmacy-stock-requests";
+import { PharmacyStores } from "@/components/pharmacy/pharmacy-stores";
 import { PharmacySuppliers } from "@/components/pharmacy/pharmacy-suppliers";
+import { PharmacyUserManagement } from "@/components/pharmacy/pharmacy-user-management";
 import {
   formatDay,
   formatZMW,
   loadDeliveries,
   loadInventory,
   loadStockRequests,
+  loadStores,
+  resolveStoreId,
+  saveStores,
   type Delivery,
   type InventoryItem,
+  type PharmacyStore,
   type StockRequest,
 } from "@/components/pharmacy/pharmacy-data";
 import {
@@ -82,6 +91,8 @@ type PharmacyPage =
   | "requests"
   | "deliveries"
   | "suppliers"
+  | "stores"
+  | "users"
   | "profile"
   | "settings";
 
@@ -93,6 +104,8 @@ const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   requests: "StockRequests",
   deliveries: "Deliveries",
   suppliers: "SupplierDirectory",
+  stores: "PharmacyStores",
+  users: "PharmacyUserManagement",
   profile: "MyPharmacy",
   settings: "PharmacySettings",
 };
@@ -110,6 +123,13 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
   },
   { section: "Network", items: [{ label: "Supplier Directory", icon: Store }] },
   {
+    section: "Administration",
+    items: [
+      { label: "Stores", icon: Warehouse },
+      { label: "User Management", icon: Users },
+    ],
+  },
+  {
     section: "Account",
     items: [
       { label: "My Pharmacy", icon: Building2 },
@@ -126,6 +146,8 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   "Stock Requests": "requests",
   Deliveries: "deliveries",
   "Supplier Directory": "suppliers",
+  Stores: "stores",
+  "User Management": "users",
   "My Pharmacy": "profile",
   Settings: "settings",
 };
@@ -164,6 +186,9 @@ function PharmacySidebar({
   onClose,
   user,
   page,
+  stores,
+  activeStore,
+  onStoreChange,
 }: {
   collapsed: boolean;
   dark: boolean;
@@ -174,11 +199,79 @@ function PharmacySidebar({
   onClose?: () => void;
   user: { name: string; email: string; initial: string };
   page: PharmacyPage;
+  stores: PharmacyStore[];
+  activeStore: string;
+  onStoreChange: (storeId: string) => void;
 }) {
   const [quickOpen, setQuickOpen] = useState(false);
 
+  const activeStoreName =
+    activeStore === "all"
+      ? "All stores"
+      : stores.find((store) => store.id === activeStore)?.name ?? "All stores";
+
+  const storeSwitcher = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Store view — ${activeStoreName}`}
+          title={collapsed ? `Store view — ${activeStoreName}` : undefined}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl bg-slate-50 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:bg-white/5 dark:hover:bg-white/10",
+            collapsed ? "justify-center p-2" : "p-2.5"
+          )}
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
+            <Store className="h-4 w-4" strokeWidth={2.1} aria-hidden="true" />
+          </span>
+          {!collapsed && (
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block truncate text-[13px] font-semibold leading-tight text-slate-900 dark:text-white">
+                {activeStoreName}
+              </span>
+              <span className="block truncate text-[11px] leading-tight text-slate-500 dark:text-slate-400">
+                Store view
+              </span>
+            </span>
+          )}
+          {!collapsed && (
+            <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-60">
+        <DropdownMenuLabel>Store view</DropdownMenuLabel>
+        <DropdownMenuItem onClick={() => onStoreChange("all")} className="gap-2">
+          <Boxes className="h-4 w-4 text-slate-400" aria-hidden="true" />
+          <span>All stores</span>
+          {activeStore === "all" && (
+            <Check className="ml-auto h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden="true" />
+          )}
+        </DropdownMenuItem>
+        {stores.map((store) => (
+          <DropdownMenuItem
+            key={store.id}
+            onClick={() => onStoreChange(store.id)}
+            className="gap-2"
+          >
+            <Store className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+            <span className="min-w-0 truncate">{store.name}</span>
+            {activeStore === store.id ? (
+              <Check className="ml-auto h-4 w-4 shrink-0 text-purple-600 dark:text-purple-400" aria-hidden="true" />
+            ) : store.isMain ? (
+              <span className="ml-auto shrink-0 text-[10px] font-bold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                Main
+              </span>
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
-    <div className="flex h-full flex-col bg-white dark:bg-[#08130e]">
+    <div className="flex h-full flex-col bg-white dark:bg-[#100823]">
       {/* Brand — the Pharmacy portal wears its own mark, not the Pulse logo */}
       <div
         className={cn(
@@ -188,7 +281,7 @@ function PharmacySidebar({
       >
         <span
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 shadow-[0_6px_16px_-6px_rgba(16,185,129,0.8)]"
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-fuchsia-600 shadow-[0_6px_16px_-6px_rgba(168,85,247,0.8)]"
           )}
         >
           <Pill className="h-5 w-5 text-white" strokeWidth={2.2} aria-hidden="true" />
@@ -219,7 +312,7 @@ function PharmacySidebar({
           )}
           title={collapsed ? user.name : undefined}
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-[15px] font-bold text-white">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-600 to-fuchsia-600 text-[15px] font-bold text-white">
             {user.initial}
           </span>
           {!collapsed && (
@@ -227,13 +320,16 @@ function PharmacySidebar({
               <p className="truncate text-[13.5px] font-semibold text-slate-900 dark:text-white">
                 {user.name}
               </p>
-              <span className="mt-0.5 inline-block rounded-full bg-emerald-100 px-2 py-px text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+              <span className="mt-0.5 inline-block rounded-full bg-purple-100 px-2 py-px text-[11px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">
                 Owner
               </span>
             </div>
           )}
         </div>
       </div>
+
+      {/* Store view — scope the console to one storefront or the whole account */}
+      <div className={cn("shrink-0", collapsed ? "px-2 pb-1" : "px-3 pb-1")}>{storeSwitcher}</div>
 
       {/* Navigation */}
       <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary">
@@ -257,10 +353,10 @@ function PharmacySidebar({
                     aria-current={active ? "page" : undefined}
                     onClick={() => onNavClick(label)}
                     className={cn(
-                      "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500",
+                      "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
                       collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
                       active
-                        ? "bg-emerald-100/90 text-slate-900 dark:bg-emerald-500/20 dark:text-white"
+                        ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
                         : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
                     )}
                   >
@@ -268,7 +364,7 @@ function PharmacySidebar({
                       className={cn(
                         "h-[18px] w-[18px] shrink-0 transition-colors",
                         active
-                          ? "text-emerald-600 dark:text-emerald-400"
+                          ? "text-purple-600 dark:text-purple-400"
                           : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
                       )}
                       strokeWidth={2.1}
@@ -298,7 +394,7 @@ function PharmacySidebar({
             <Moon
               className={cn(
                 "h-[18px] w-[18px] shrink-0",
-                dark ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"
+                dark ? "text-purple-600 dark:text-purple-400" : "text-slate-400"
               )}
               aria-hidden="true"
             />
@@ -308,7 +404,7 @@ function PharmacySidebar({
             <Moon
               className={cn(
                 "h-[18px] w-[18px] shrink-0",
-                dark ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"
+                dark ? "text-purple-600 dark:text-purple-400" : "text-slate-400"
               )}
               aria-hidden="true"
             />
@@ -399,11 +495,17 @@ function PharmacyHome({
   user,
   pharmacyName,
   pendingReview,
+  storeId,
+  storeName,
   onGoTo,
 }: {
   user: { name: string; initial: string };
   pharmacyName: string;
   pendingReview: boolean;
+  /** Active store scope: "all" or a store id. */
+  storeId: string;
+  /** Display name of the scoped store ("" for all stores). */
+  storeName: string;
   onGoTo: (page: PharmacyPage) => void;
 }) {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -424,11 +526,19 @@ function PharmacyHome({
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
-  const skuCount = items.length;
-  const units = items.reduce((acc, entry) => acc + entry.qty, 0);
-  const value = items.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
-  const pendingCount = requests.filter((r) => r.status === "pending").length;
-  const attentionItems = items.filter((entry) => entry.qty <= entry.reorderLevel);
+  // The dashboard follows the sidebar's store view — one storefront or all.
+  const inScope = <T extends { storeId?: string }>(records: T[]): T[] =>
+    storeId === "all" ? records : records.filter((entry) => resolveStoreId(entry) === storeId);
+
+  const scopedItems = inScope(items);
+  const scopedRequests = inScope(requests);
+  const scopedDeliveries = inScope(deliveries);
+
+  const skuCount = scopedItems.length;
+  const units = scopedItems.reduce((acc, entry) => acc + entry.qty, 0);
+  const value = scopedItems.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
+  const pendingCount = scopedRequests.filter((r) => r.status === "pending").length;
+  const attentionItems = scopedItems.filter((entry) => entry.qty <= entry.reorderLevel);
 
   const STAT_CARDS: {
     id: string;
@@ -444,7 +554,7 @@ function PharmacyHome({
       label: "Stock on Hand",
       desc: `${hydrated ? units : "—"} units · ${hydrated ? formatZMW(value) : "—"} value`,
       icon: ShoppingBag,
-      tile: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
+      tile: "bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400",
     },
     {
       id: "items-sold",
@@ -474,12 +584,12 @@ function PharmacyHome({
 
   // Requests + deliveries merged into one recent-activity feed.
   const activity = [
-    ...requests.map((r) => ({
+    ...scopedRequests.map((r) => ({
       kind: "REQUEST" as const,
       title: `${r.id} · ${r.item} × ${r.qty}`,
       when: r.submittedAt,
     })),
-    ...deliveries.map((d) => ({
+    ...scopedDeliveries.map((d) => ({
       kind: "DELIVERY" as const,
       title: `${d.id} · ${d.supplier}`,
       when: d.receivedAt,
@@ -493,7 +603,7 @@ function PharmacyHome({
       {/* Greeting hero — the Pharmacy portal's signature card */}
       <motion.section
         variants={item}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-500 px-6 py-7 shadow-[0_20px_50px_-20px_rgba(16,185,129,0.55)] sm:px-8"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-700 via-purple-600 to-fuchsia-600 px-6 py-7 shadow-[0_20px_50px_-20px_rgba(147,51,234,0.55)] sm:px-8"
       >
         <div
           aria-hidden="true"
@@ -501,15 +611,21 @@ function PharmacyHome({
         />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-[13.5px] font-medium text-emerald-50/90">
+            <p className="text-[13.5px] font-medium text-purple-50/90">
               {greeting}, {user.name.split(" ")[0]} 👋
             </p>
             <h1 className="mt-1.5 text-[24px] font-bold leading-tight tracking-tight text-white sm:text-[26px]">
               {pharmacyName}
             </h1>
-            <p className="mt-1.5 max-w-xl text-[13.5px] leading-relaxed text-emerald-50/90">
+            <p className="mt-1.5 max-w-xl text-[13.5px] leading-relaxed text-purple-50/90">
               Your pharmacy at a glance — stock, requests and deliveries in one place.
             </p>
+            {storeId !== "all" && (
+              <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white">
+                <Store className="h-3.5 w-3.5" aria-hidden="true" />
+                {storeName}
+              </span>
+            )}
           </div>
           <div className="flex flex-col items-end gap-2.5">
             {pendingReview ? (
@@ -526,7 +642,7 @@ function PharmacyHome({
             <button
               type="button"
               onClick={() => onGoTo("requests")}
-              className="inline-flex h-10 items-center gap-2 rounded-md bg-white px-4 text-[13.5px] font-semibold text-emerald-700 shadow-[0_8px_20px_-8px_rgba(6,78,59,0.5)] transition-colors hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              className="inline-flex h-10 items-center gap-2 rounded-md bg-white px-4 text-[13.5px] font-semibold text-purple-700 shadow-[0_8px_20px_-8px_rgba(88,28,135,0.5)] transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
             >
               <ClipboardList className="h-4 w-4" aria-hidden="true" />
               Request stock
@@ -582,7 +698,7 @@ function PharmacyHome({
       {/* Inventory health — live from the pharmacy's own shelves */}
       <motion.section variants={item} className="mt-9" aria-labelledby="pharmacy-inventory-health">
         <div className="flex flex-wrap items-center gap-3.5">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
             <Package className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
           </span>
           <div>
@@ -599,7 +715,7 @@ function PharmacyHome({
           <button
             type="button"
             onClick={() => onGoTo("balance")}
-            className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-emerald-200 bg-white px-3.5 text-[13px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/25 dark:bg-transparent dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+            className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-purple-200 bg-white px-3.5 text-[13px] font-semibold text-purple-700 transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-purple-500/25 dark:bg-transparent dark:text-purple-300 dark:hover:bg-purple-500/10"
           >
             Full stock balance
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
@@ -635,7 +751,7 @@ function PharmacyHome({
       {/* Recent activity — requests and deliveries in one feed */}
       <motion.section variants={item} className="mt-9" aria-labelledby="pharmacy-activity">
         <div className="flex flex-wrap items-center gap-3.5">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
             <Truck className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
           </span>
           <div>
@@ -659,7 +775,7 @@ function PharmacyHome({
                     "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
                     kind === "REQUEST"
                       ? "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
-                      : "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+                      : "bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
                   )}
                 >
                   {kind === "REQUEST" ? (
@@ -701,6 +817,8 @@ export function PharmacyApp() {
   const [pendingReview, setPendingReview] = useState(false);
   const [resolved, setResolved] = useState(false);
   const [bouncing, setBouncing] = useState(false);
+  const [stores, setStores] = useState<PharmacyStore[]>([]);
+  const [activeStore, setActiveStore] = useState("all");
 
   // Resolve the session: pharmacy-portal sessions stay; Pulse-portal sessions
   // without elevated rights are bounced back to the Pulse console.
@@ -748,7 +866,10 @@ export function PharmacyApp() {
     const prefersDark = window.localStorage.getItem("pulse-theme") === "dark";
     document.documentElement.classList.toggle("dark", prefersDark);
     const raf = requestAnimationFrame(() => {
-      if (active) setDark(prefersDark);
+      if (active) {
+        setDark(prefersDark);
+        setStores(loadStores());
+      }
     });
 
     return () => {
@@ -780,6 +901,21 @@ export function PharmacyApp() {
     document.documentElement.classList.toggle("dark", on);
     window.localStorage.setItem("pulse-theme", on ? "dark" : "light");
   };
+
+  /** Persisted store edits from the Stores page, mirrored into the switcher. */
+  const onStoresChange = (next: PharmacyStore[]) => {
+    setStores(next);
+    saveStores(next);
+    // Never keep pointing at a store that no longer exists.
+    setActiveStore((current) =>
+      current !== "all" && !next.some((store) => store.id === current) ? "all" : current
+    );
+  };
+
+  const activeStoreName =
+    activeStore === "all"
+      ? ""
+      : stores.find((store) => store.id === activeStore)?.name ?? "";
 
   const goTo = (target: PharmacyPage) => {
     setPage(target);
@@ -857,6 +993,9 @@ export function PharmacyApp() {
       onClose={extra.onClose}
       user={user}
       page={page}
+      stores={stores}
+      activeStore={activeStore}
+      onStoreChange={setActiveStore}
     />
   );
 
@@ -869,11 +1008,11 @@ export function PharmacyApp() {
         aria-live="polite"
         aria-busy="true"
       >
-        <span className="flex h-14 w-14 animate-float items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 shadow-[0_0_24px_rgba(16,185,129,0.45)]">
+        <span className="flex h-14 w-14 animate-float items-center justify-center rounded-2xl bg-gradient-to-br from-purple-600 to-fuchsia-600 shadow-[0_0_24px_rgba(168,85,247,0.5)]">
           <Pill className="h-7 w-7 text-white" aria-hidden="true" />
         </span>
         <p className="flex items-center gap-2.5 text-sm text-white/70">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" aria-hidden="true" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-fuchsia-400" aria-hidden="true" />
           {bouncing ? "Taking you to the Pulse console…" : "Preparing your pharmacy workspace…"}
         </p>
       </div>
@@ -882,7 +1021,7 @@ export function PharmacyApp() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="flex min-h-dvh bg-[#f4f7f5] text-slate-900 dark:bg-[#050f0b] dark:text-white">
+      <div className="flex min-h-dvh bg-[#f6f5fb] text-slate-900 dark:bg-[#0a0413] dark:text-white">
         {/* Desktop sidebar */}
         <aside
           className={cn(
@@ -910,7 +1049,7 @@ export function PharmacyApp() {
 
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-slate-200/70 bg-white/85 px-4 backdrop-blur-md sm:px-6 dark:border-white/10 dark:bg-[#071711]/85">
+          <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-slate-200/70 bg-white/85 px-4 backdrop-blur-md sm:px-6 dark:border-white/10 dark:bg-[#0d0618]/85">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
@@ -925,7 +1064,7 @@ export function PharmacyApp() {
                 type="button"
                 aria-label="Search"
                 onClick={() => toast({ title: "Search", description: "Search is coming soon." })}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-slate-400 dark:hover:bg-white/10"
+                className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:text-slate-400 dark:hover:bg-white/10"
               >
                 <Search className="h-[18px] w-[18px]" />
               </button>
@@ -935,7 +1074,7 @@ export function PharmacyApp() {
                 onClick={() =>
                   toast({ title: "You're all caught up", description: "No new notifications." })
                 }
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100/70 text-emerald-600 transition-colors hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-emerald-500/15 dark:text-emerald-400 dark:hover:bg-emerald-500/25"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-100/70 text-purple-600 transition-colors hover:bg-purple-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:bg-purple-500/15 dark:text-purple-400 dark:hover:bg-purple-500/25"
               >
                 <Bell className="h-[18px] w-[18px]" />
               </button>
@@ -945,7 +1084,7 @@ export function PharmacyApp() {
                   <button
                     type="button"
                     aria-label="Account menu"
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-[15px] font-bold text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                    className="btn-brand flex h-10 w-10 items-center justify-center rounded-full text-[15px] font-bold text-white shadow-[0_6px_16px_-6px_rgba(168,85,247,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
                   >
                     {user.initial}
                   </button>
@@ -978,15 +1117,19 @@ export function PharmacyApp() {
             className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
           >
             {page === "inventory" ? (
-              <PharmacyInventory />
+              <PharmacyInventory storeId={activeStore} />
             ) : page === "balance" ? (
-              <PharmacyStockBalance />
+              <PharmacyStockBalance storeId={activeStore} />
             ) : page === "requests" ? (
-              <PharmacyStockRequests />
+              <PharmacyStockRequests storeId={activeStore} />
             ) : page === "deliveries" ? (
-              <PharmacyDeliveries />
+              <PharmacyDeliveries storeId={activeStore} />
             ) : page === "suppliers" ? (
               <PharmacySuppliers onGoToRequests={() => goTo("requests")} />
+            ) : page === "stores" ? (
+              <PharmacyStores stores={stores} onStoresChange={onStoresChange} />
+            ) : page === "users" ? (
+              <PharmacyUserManagement stores={stores} pharmacyName={pharmacyName} />
             ) : page === "profile" ? (
               <PharmacyProfile user={user} />
             ) : page === "settings" ? (
@@ -1001,6 +1144,8 @@ export function PharmacyApp() {
                 user={user}
                 pharmacyName={pharmacyName}
                 pendingReview={pendingReview}
+                storeId={activeStore}
+                storeName={activeStoreName}
                 onGoTo={goTo}
               />
             )}

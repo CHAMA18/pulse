@@ -34,7 +34,7 @@ type SettingsSectionProps = {
   children: React.ReactNode;
 };
 
-/** Carded section with an emerald tile header, matching the console language. */
+/** Carded section with a purple tile header, matching the console language. */
 function SettingsSection({ icon: Icon, title, description, children }: SettingsSectionProps) {
   return (
     <motion.section
@@ -43,7 +43,7 @@ function SettingsSection({ icon: Icon, title, description, children }: SettingsS
       aria-labelledby={`settings-${title.toLowerCase().replace(/\s+/g, "-")}`}
     >
       <div className="flex items-center gap-3.5">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
           <Icon className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
         </span>
         <div className="min-w-0">
@@ -222,7 +222,7 @@ export function PharmacySettings({
           description="Who is signed in on this device"
         >
           <div className="flex flex-wrap items-center gap-4 rounded-xl bg-slate-50 px-4 py-3.5 dark:bg-white/5">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-[15px] font-bold text-white">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-600 to-fuchsia-600 text-[15px] font-bold text-white">
               {(user.name[0] ?? "P").toUpperCase()}
             </span>
             <div className="min-w-0 flex-1">

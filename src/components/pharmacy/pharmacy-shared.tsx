@@ -6,19 +6,19 @@ import { cn } from "@/lib/utils";
 /* ------------------------------------------------------------------ */
 /* Shared bits for the Pharmacy portal console                          */
 /* ------------------------------------------------------------------ */
-/* The Pharmacy portal deliberately wears its own identity — emerald   */
-/* and teal, not the Pulse console's purple — so the two portals feel  */
-/* like different products after authentication.                       */
+/* The Pharmacy portal wears the same Pulse identity as the rest of    */
+/* the product — the purple/fuchsia brand — so the whole app feels     */
+/* like one family after authentication.                               */
 
 export const PHARMACY_WORKSPACE = "Pharmacy workspace";
 
-/** Card surface — same geometry as the console, emerald-tinted shadows. */
+/** Card surface — same geometry as the console, purple-tinted shadows. */
 export const pharmacyCardCls =
-  "rounded-2xl bg-white shadow-[0_1px_3px_rgba(6,78,59,0.06),0_10px_28px_-18px_rgba(6,95,70,0.16)] dark:bg-white/[0.045] dark:shadow-none dark:ring-1 dark:ring-white/10";
+  "rounded-2xl bg-white shadow-[0_1px_3px_rgba(88,28,135,0.06),0_10px_28px_-18px_rgba(88,28,135,0.14)] dark:bg-white/[0.045] dark:shadow-none dark:ring-1 dark:ring-white/10";
 
-/** Emerald brand button (mirrors the console's btn-brand). */
+/** Purple brand button (mirrors the console's btn-brand). */
 export const brandBtnCls =
-  "inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_8px_22px_-8px_rgba(16,185,129,0.65)] transition-shadow hover:shadow-[0_12px_28px_-8px_rgba(16,185,129,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500";
+  "inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 text-white shadow-[0_8px_22px_-8px_rgba(147,51,234,0.65)] transition-shadow hover:shadow-[0_12px_28px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500";
 
 export function PageHeader({
   icon: Icon,
@@ -36,7 +36,7 @@ export function PageHeader({
       <span
         className={cn(
           "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
-          "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+          "bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
         )}
       >
         <Icon className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />

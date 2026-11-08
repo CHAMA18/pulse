@@ -13,6 +13,7 @@ import {
   formatDay,
   loadStockRequests,
   nextId,
+  resolveStoreId,
   saveStockRequests,
   type RequestPriority,
   type RequestStatus,
@@ -57,12 +58,15 @@ function NewRequestDialog({
   requests,
   onCreated,
   actor,
+  storeId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   requests: StockRequest[];
   onCreated: (request: StockRequest) => void;
   actor: { name: string; email: string };
+  /** Destination store for the request ("all" records into the main store). */
+  storeId: string;
 }) {
   const { toast } = useToast();
 
@@ -121,6 +125,7 @@ function NewRequestDialog({
       priority,
       status: "pending",
       submittedAt: Date.now(),
+      ...(storeId !== "all" ? { storeId } : {}),
     };
     onCreated(request);
     toast({
@@ -146,7 +151,7 @@ function NewRequestDialog({
   const inputState = (hasError?: string) =>
     hasError
       ? "border-rose-300 focus:border-rose-400 focus:ring-4 focus:ring-rose-500/10"
-      : "border-slate-200 hover:border-slate-300 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10";
+      : "border-slate-200 hover:border-slate-300 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10";
 
   const fieldError = (message?: string) =>
     message && (
@@ -234,10 +239,10 @@ function NewRequestDialog({
                     aria-checked={active}
                     onClick={() => setPriority(option)}
                     className={cn(
-                      "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500",
+                      "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
                       active
-                        ? "bg-emerald-600 text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.7)]"
-                        : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-emerald-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+                        ? "bg-purple-600 text-white shadow-[0_6px_16px_-6px_rgba(147,51,234,0.7)]"
+                        : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-purple-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
                     )}
                   >
                     {option}
@@ -258,7 +263,7 @@ function NewRequestDialog({
               placeholder="Anything the hub should know — batch preferences, urgency context…"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full rounded-md border border-slate-200 bg-white px-3.5 py-2.5 text-[14px] text-slate-900 outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+              className="w-full rounded-md border border-slate-200 bg-white px-3.5 py-2.5 text-[14px] text-slate-900 outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
             />
           </div>
         </div>
@@ -274,7 +279,7 @@ function NewRequestDialog({
           <button
             type="button"
             onClick={submit}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(16,185,129,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
           >
             <PackagePlus className="h-4 w-4" aria-hidden="true" />
             Submit request
@@ -289,7 +294,7 @@ function NewRequestDialog({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export function PharmacyStockRequests() {
+export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string }) {
   const { toast } = useToast();
 
   const [requests, setRequests] = useState<StockRequest[]>([]);
@@ -325,15 +330,24 @@ export function PharmacyStockRequests() {
     };
   }, []);
 
+  // The queue follows the sidebar's store view; new requests are recorded for it.
+  const visible = useMemo(
+    () =>
+      storeId === "all"
+        ? requests
+        : requests.filter((entry) => resolveStoreId(entry) === storeId),
+    [requests, storeId]
+  );
+
   const counts = useMemo(() => {
     const map = new Map<RequestStatus, number>(STATUS_ORDER.map((s) => [s, 0]));
-    for (const r of requests) map.set(r.status, (map.get(r.status) ?? 0) + 1);
+    for (const r of visible) map.set(r.status, (map.get(r.status) ?? 0) + 1);
     return map;
-  }, [requests]);
+  }, [visible]);
 
   const sorted = useMemo(
-    () => [...requests].sort((a, b) => b.submittedAt - a.submittedAt),
-    [requests]
+    () => [...visible].sort((a, b) => b.submittedAt - a.submittedAt),
+    [visible]
   );
 
   const persist = (next: StockRequest[]) => {
@@ -375,7 +389,7 @@ export function PharmacyStockRequests() {
           <button
             type="button"
             onClick={() => setAddOpen(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(16,185,129,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(16,185,129,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
           >
             <PackagePlus className="h-4 w-4" aria-hidden="true" />
             New request
@@ -466,16 +480,17 @@ export function PharmacyStockRequests() {
 
       {hydrated && (
         <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
-          {requests.length} requests · newest first · changes persist on this device
+          {visible.length} requests in this store view · newest first · changes persist on this device
         </p>
       )}
 
       <NewRequestDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        requests={requests}
+        requests={visible}
         onCreated={onCreated}
         actor={actor}
+        storeId={storeId}
       />
     </div>
   );

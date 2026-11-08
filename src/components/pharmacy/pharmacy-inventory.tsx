@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   formatZMW,
   loadInventory,
+  resolveStoreId,
   saveInventory,
   type InventoryItem,
 } from "@/components/pharmacy/pharmacy-data";
@@ -54,7 +55,7 @@ function StatChip({ value, label }: { value: string; label: string }) {
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export function PharmacyInventory() {
+export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
   const { toast } = useToast();
 
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -92,9 +93,18 @@ export function PharmacyInventory() {
     };
   }, []);
 
+  // The table follows the sidebar's store view; edits persist for every store.
+  const visible = useMemo(
+    () =>
+      storeId === "all"
+        ? items
+        : items.filter((entry) => resolveStoreId(entry) === storeId),
+    [items, storeId]
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return items.filter((entry) => {
+    return visible.filter((entry) => {
       const matchesQuery =
         !q ||
         entry.name.toLowerCase().includes(q) ||
@@ -104,11 +114,11 @@ export function PharmacyInventory() {
       const matchesFilter = filter === "all" || status === filter;
       return matchesQuery && matchesFilter;
     });
-  }, [items, query, filter]);
+  }, [visible, query, filter]);
 
-  const units = items.reduce((acc, entry) => acc + entry.qty, 0);
-  const value = items.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
-  const lowCount = items.filter((entry) => stockStatusOf(entry.qty, entry.reorderLevel) !== "healthy").length;
+  const units = visible.reduce((acc, entry) => acc + entry.qty, 0);
+  const value = visible.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
+  const lowCount = visible.filter((entry) => stockStatusOf(entry.qty, entry.reorderLevel) !== "healthy").length;
 
   /** ±1 quantity adjustment, persisted like every console edit. */
   const adjustQty = (id: string, delta: number) => {
@@ -171,7 +181,7 @@ export function PharmacyInventory() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by product, category or batch…"
             aria-label="Search inventory"
-            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
           />
         </div>
         <div
@@ -189,10 +199,10 @@ export function PharmacyInventory() {
                 aria-checked={active}
                 onClick={() => setFilter(id)}
                 className={cn(
-                  "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500",
+                  "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
                   active
-                    ? "bg-emerald-600 text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.7)]"
-                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-emerald-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+                    ? "bg-purple-600 text-white shadow-[0_6px_16px_-6px_rgba(147,51,234,0.7)]"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-purple-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
                 )}
               >
                 {label}
@@ -216,7 +226,7 @@ export function PharmacyInventory() {
                 setQuery("");
                 setFilter("all");
               }}
-              className="text-[13px] font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+              className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
             >
               Clear search & filters
             </button>
@@ -269,7 +279,7 @@ export function PharmacyInventory() {
                             type="button"
                             aria-label={`Increase ${entry.name} by one`}
                             onClick={() => adjustQty(entry.id, +1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:bg-emerald-50 hover:text-emerald-600 dark:border-white/10 dark:text-slate-300 dark:hover:bg-emerald-500/15"
+                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:bg-purple-50 hover:text-purple-600 dark:border-white/10 dark:text-slate-300 dark:hover:bg-purple-500/15"
                           >
                             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
@@ -303,7 +313,8 @@ export function PharmacyInventory() {
       </motion.div>
 
       <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
-        Showing {filtered.length} of {items.length} items · quantities persist on this device
+        Showing {filtered.length} of {visible.length} items in this store view · quantities persist on
+        this device
       </p>
     </div>
   );

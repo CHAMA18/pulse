@@ -13,6 +13,7 @@ import {
   formatDay,
   loadDeliveries,
   nextId,
+  resolveStoreId,
   saveDeliveries,
   type Delivery,
 } from "@/components/pharmacy/pharmacy-data";
@@ -44,12 +45,15 @@ function RecordDeliveryDialog({
   deliveries,
   onRecorded,
   actor,
+  storeId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   deliveries: Delivery[];
   onRecorded: (delivery: Delivery) => void;
   actor: { name: string; email: string };
+  /** Receiving store for the goods ("all" records into the main store). */
+  storeId: string;
 }) {
   const { toast } = useToast();
 
@@ -96,6 +100,7 @@ function RecordDeliveryDialog({
       units: Number.parseInt(units, 10),
       receivedAt: Date.now(),
       condition: "verified",
+      ...(storeId !== "all" ? { storeId } : {}),
     };
     onRecorded(delivery);
     toast({
@@ -121,7 +126,7 @@ function RecordDeliveryDialog({
   const inputState = (hasError?: string) =>
     hasError
       ? "border-rose-300 focus:border-rose-400 focus:ring-4 focus:ring-rose-500/10"
-      : "border-slate-200 hover:border-slate-300 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10";
+      : "border-slate-200 hover:border-slate-300 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10";
 
   const fieldError = (message?: string) =>
     message && (
@@ -220,7 +225,7 @@ function RecordDeliveryDialog({
           <button
             type="button"
             onClick={submit}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(16,185,129,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
           >
             <PackageCheck className="h-4 w-4" aria-hidden="true" />
             Record goods
@@ -235,7 +240,7 @@ function RecordDeliveryDialog({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export function PharmacyDeliveries() {
+export function PharmacyDeliveries({ storeId = "all" }: { storeId?: string }) {
   const { toast } = useToast();
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -271,12 +276,21 @@ export function PharmacyDeliveries() {
     };
   }, []);
 
-  const sorted = useMemo(
-    () => [...deliveries].sort((a, b) => b.receivedAt - a.receivedAt),
-    [deliveries]
+  // The ledger follows the sidebar's store view; goods land in that store.
+  const visible = useMemo(
+    () =>
+      storeId === "all"
+        ? deliveries
+        : deliveries.filter((entry) => resolveStoreId(entry) === storeId),
+    [deliveries, storeId]
   );
 
-  const unitsTotal = deliveries.reduce((acc, d) => acc + d.units, 0);
+  const sorted = useMemo(
+    () => [...visible].sort((a, b) => b.receivedAt - a.receivedAt),
+    [visible]
+  );
+
+  const unitsTotal = visible.reduce((acc, d) => acc + d.units, 0);
   const lastDelivery = sorted[0];
 
   const onRecorded = (delivery: Delivery) => {
@@ -299,7 +313,7 @@ export function PharmacyDeliveries() {
           <button
             type="button"
             onClick={() => setAddOpen(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(16,185,129,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(16,185,129,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
           >
             <PackageCheck className="h-4 w-4" aria-hidden="true" />
             Record delivery
@@ -354,7 +368,7 @@ export function PharmacyDeliveries() {
           <ol className="divide-y divide-slate-100 dark:divide-white/5">
             {sorted.map((delivery) => (
               <li key={delivery.id} className="flex items-start gap-3.5 px-5 py-4">
-                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
                   <Truck className="h-5 w-5" strokeWidth={2.1} aria-hidden="true" />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -396,9 +410,10 @@ export function PharmacyDeliveries() {
       <RecordDeliveryDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        deliveries={deliveries}
+        deliveries={visible}
         onRecorded={onRecorded}
         actor={actor}
+        storeId={storeId}
       />
     </div>
   );

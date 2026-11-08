@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   formatZMW,
   loadInventory,
+  resolveStoreId,
   type InventoryItem,
 } from "@/components/pharmacy/pharmacy-data";
 import {
@@ -71,7 +72,7 @@ function daysToExpiry(iso: string, now: number): number {
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export function PharmacyStockBalance() {
+export function PharmacyStockBalance({ storeId = "all" }: { storeId?: string }) {
   const { toast } = useToast();
 
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -120,7 +121,11 @@ export function PharmacyStockBalance() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = items.filter((entry) => {
+    const list =
+      storeId === "all"
+        ? items
+        : items.filter((entry) => resolveStoreId(entry) === storeId);
+    const visible = list.filter((entry) => {
       const matchesQuery =
         !q ||
         entry.name.toLowerCase().includes(q) ||
@@ -131,7 +136,7 @@ export function PharmacyStockBalance() {
       const matchesFilter = filter === "all" || status === filter;
       return matchesQuery && matchesCategory && matchesFilter;
     });
-    return list.sort((a, b) => {
+    return visible.sort((a, b) => {
       switch (sort) {
         case "qty":
           return b.qty - a.qty;
@@ -143,18 +148,18 @@ export function PharmacyStockBalance() {
           return a.name.localeCompare(b.name);
       }
     });
-  }, [items, query, category, filter, sort]);
+  }, [items, storeId, query, category, filter, sort]);
 
-  const units = items.reduce((acc, entry) => acc + entry.qty, 0);
-  const value = items.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
-  const lowCount = items.filter((e) => stockStatusOf(e.qty, e.reorderLevel) === "low").length;
-  const outCount = items.filter((e) => stockStatusOf(e.qty, e.reorderLevel) === "out").length;
-  const healthyCount = items.length - lowCount - outCount;
+  const units = filtered.reduce((acc, entry) => acc + entry.qty, 0);
+  const value = filtered.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
+  const lowCount = filtered.filter((e) => stockStatusOf(e.qty, e.reorderLevel) === "low").length;
+  const outCount = filtered.filter((e) => stockStatusOf(e.qty, e.reorderLevel) === "out").length;
+  const healthyCount = filtered.length - lowCount - outCount;
 
   /** Value share per category — the balance at a glance. */
   const byCategory = useMemo(() => {
     const map = new Map<string, { units: number; value: number }>();
-    for (const entry of items) {
+    for (const entry of filtered) {
       const agg = map.get(entry.category) ?? { units: 0, value: 0 };
       agg.units += entry.qty;
       agg.value += entry.qty * entry.unitPrice;
@@ -163,17 +168,17 @@ export function PharmacyStockBalance() {
     return Array.from(map.entries())
       .map(([name, agg]) => ({ name, ...agg, share: value > 0 ? agg.value / value : 0 }))
       .sort((a, b) => b.value - a.value);
-  }, [items, value]);
+  }, [filtered, value]);
 
   /** Batches inside the expiry watch window, soonest first. */
   const expiryWatch = useMemo(
     () =>
-      items
+      filtered
         .map((entry) => ({ entry, days: daysToExpiry(entry.expiry, now) }))
         .filter(({ days }) => days <= EXPIRY_WATCH_DAYS)
         .sort((a, b) => a.days - b.days)
         .slice(0, 4),
-    [items, now]
+    [filtered, now]
   );
 
   /** Download the currently filtered balance as CSV. */
@@ -249,7 +254,7 @@ export function PharmacyStockBalance() {
 
       {/* Balance summary */}
       <div className={cn(pharmacyCardCls, "mt-5 flex flex-wrap gap-3 p-4")}>
-        <StatChip value={String(hydrated ? items.length : "—")} label="SKUs" />
+        <StatChip value={String(hydrated ? filtered.length : "—")} label="SKUs" />
         <StatChip value={String(hydrated ? units : "—")} label="Units on hand" />
         <StatChip value={hydrated ? formatZMW(value) : "—"} label="Total stock value" />
         <StatChip
@@ -297,7 +302,7 @@ export function PharmacyStockBalance() {
                     initial={{ width: 0 }}
                     animate={{ width: `${Math.max(share * 100, 2)}%` }}
                     transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500"
+                    className="h-full rounded-full bg-gradient-to-r from-purple-500 to-fuchsia-500"
                   />
                 </div>
               </li>
@@ -364,14 +369,14 @@ export function PharmacyStockBalance() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by product, category or batch…"
             aria-label="Search stock balance"
-            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
           />
         </div>
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           aria-label="Filter by category"
-          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] outline-none transition-[border-color,box-shadow] focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white [&>option]:bg-white [&>option]:text-slate-900 dark:[&>option]:bg-[#0a1f16] dark:[&>option]:text-white"
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] outline-none transition-[border-color,box-shadow] focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white [&>option]:bg-white [&>option]:text-slate-900 dark:[&>option]:bg-[#100823] dark:[&>option]:text-white"
         >
           <option value="all">All categories</option>
           {categories.map((name) => (
@@ -384,7 +389,7 @@ export function PharmacyStockBalance() {
           value={sort}
           onChange={(e) => setSort(e.target.value as SortKey)}
           aria-label="Sort balance table"
-          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] outline-none transition-[border-color,box-shadow] focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white [&>option]:bg-white [&>option]:text-slate-900 dark:[&>option]:bg-[#0a1f16] dark:[&>option]:text-white"
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] outline-none transition-[border-color,box-shadow] focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white [&>option]:bg-white [&>option]:text-slate-900 dark:[&>option]:bg-[#100823] dark:[&>option]:text-white"
         >
           {SORTS.map(({ id, label }) => (
             <option key={id} value={id}>
@@ -403,10 +408,10 @@ export function PharmacyStockBalance() {
                 aria-checked={active}
                 onClick={() => setFilter(id)}
                 className={cn(
-                  "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500",
+                  "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
                   active
-                    ? "bg-emerald-600 text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.7)]"
-                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-emerald-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+                    ? "bg-purple-600 text-white shadow-[0_6px_16px_-6px_rgba(147,51,234,0.7)]"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-purple-50 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
                 )}
               >
                 {label}
@@ -434,7 +439,7 @@ export function PharmacyStockBalance() {
                 setFilter("all");
                 setCategory("all");
               }}
-              className="text-[13px] font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+              className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
             >
               Clear search & filters
             </button>
@@ -551,5 +556,5 @@ export function PharmacyStockBalance() {
 
 /** Local brand-button class (keeps this file free of extra imports). */
 function brandBtn() {
-  return "inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_8px_22px_-8px_rgba(16,185,129,0.65)] transition-shadow hover:shadow-[0_12px_28px_-8px_rgba(16,185,129,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500";
+  return "inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 text-white shadow-[0_8px_22px_-8px_rgba(147,51,234,0.65)] transition-shadow hover:shadow-[0_12px_28px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500";
 }

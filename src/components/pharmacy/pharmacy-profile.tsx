@@ -163,7 +163,7 @@ export function PharmacyProfile({
             className={cn(pharmacyCardCls, "p-6")}
           >
             <div className="flex items-start gap-4">
-              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-[20px] font-bold text-white shadow-[0_10px_24px_-10px_rgba(16,185,129,0.7)]">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-600 to-fuchsia-600 text-[20px] font-bold text-white shadow-[0_10px_24px_-10px_rgba(147,51,234,0.7)]">
                 {(profile.pharmacyName[0] ?? "P").toUpperCase()}
               </span>
               <div className="min-w-0 flex-1">
@@ -224,7 +224,7 @@ export function PharmacyProfile({
                     <button
                       type="button"
                       onClick={copyUid}
-                      className="text-[12px] font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+                      className="text-[12px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
                     >
                       Copy
                     </button>
@@ -271,7 +271,7 @@ export function PharmacyProfile({
                         className={cn(
                           "absolute left-[13px] top-7 h-[calc(100%-1.75rem)] w-px",
                           state === "done" && stepStates[index + 1] === "done"
-                            ? "bg-emerald-400"
+                            ? "bg-purple-400"
                             : "bg-slate-200 dark:bg-white/10"
                         )}
                       />
@@ -280,7 +280,7 @@ export function PharmacyProfile({
                       className={cn(
                         "relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
                         state === "done"
-                          ? "bg-emerald-500 text-white shadow-[0_4px_12px_-4px_rgba(16,185,129,0.8)]"
+                          ? "bg-purple-600 text-white shadow-[0_4px_12px_-4px_rgba(147,51,234,0.8)]"
                           : "border-2 border-dashed border-slate-300 bg-white text-slate-300 dark:border-white/20 dark:bg-transparent dark:text-slate-500"
                       )}
                     >
