@@ -181,7 +181,7 @@ export function RegisterDialog({
       }}
     >
       <DialogContent
-        className="max-h-[92dvh] overflow-y-auto rounded-[20px] bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] p-6 sm:max-w-[440px] sm:p-8"
+        className="max-h-[92dvh] overflow-y-auto rounded-2xl bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] p-6 sm:max-w-[440px] sm:p-8"
         onOpenAutoFocus={(e) => {
           e.preventDefault();
           pharmacyRef.current?.focus();

@@ -299,13 +299,13 @@ export function LoginCard() {
         initial={{ opacity: 0, y: 34, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: "spring", stiffness: 110, damping: 17, mass: 0.9 }}
-        className="card-spotlight relative w-full max-w-[440px] rounded-[20px] bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] px-6 py-9 shadow-[0_50px_140px_-24px_rgba(139,47,232,0.65),0_16px_48px_-16px_rgba(10,4,20,0.55)] sm:px-10 sm:py-10"
+        className="card-spotlight relative w-full max-w-[440px] rounded-2xl bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] px-6 py-9 shadow-[0_50px_140px_-24px_rgba(139,47,232,0.65),0_16px_48px_-16px_rgba(10,4,20,0.55)] sm:px-10 sm:py-10"
         aria-labelledby="login-heading"
       >
         {/* gradient hairline border */}
         <span aria-hidden="true" className="card-hairline" />
         {/* one-time sheen sweep on mount */}
-        <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[20px]">
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl">
           <span className="animate-sheen absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent" />
         </span>
 
