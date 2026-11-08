@@ -1,43 +1,37 @@
-import { PulseBackground } from "@/components/login/pulse-background";
-import { LoginCard } from "@/components/login/login-card";
 import { PulseHero } from "@/components/login/pulse-hero";
+import { AccessCta } from "@/components/login/access-cta";
 import { DesktopSection } from "@/components/login/desktop-section";
-import { PulseMark } from "@/components/login/pulse-logo";
-import { RELEASES_URL } from "@/components/login/download-buttons";
+import {
+  BrandHeader,
+  PulseAtmosphere,
+  SiteFooter,
+} from "@/components/login/site-chrome";
 
-export default function LoginPage() {
+/**
+ * Landing page — pure marketing.
+ *
+ * The hero tells the story; the AccessCta panel hands visitors over to the
+ * dedicated sign-in screen (/login) via Register and Login actions. The
+ * authentication form itself lives at /login so this page stays focused.
+ */
+export default function LandingPage() {
   return (
     <main id="top" className="pulse-space relative flex min-h-svh w-full flex-col overflow-hidden">
       {/* — atmosphere: aurora fields, living canvas, grain, vignette — */}
-      <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div className="aurora-blob aurora-a" />
-        <div className="aurora-blob aurora-b" />
-        <div className="aurora-blob aurora-c" />
-        <PulseBackground className="absolute inset-0 h-full w-full" />
-        <div className="pulse-grain absolute inset-0 opacity-[0.05]" />
-        <div className="absolute inset-0 bg-[radial-gradient(1100px_700px_at_30%_40%,transparent_0%,rgba(5,2,10,0.42)_72%,rgba(5,2,10,0.66)_100%)]" />
-      </div>
+      <PulseAtmosphere />
 
       {/* — content — */}
       <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1 flex-col px-5 py-6 sm:px-8 sm:py-8 lg:px-12">
-        {/* compact brand row (mobile / tablet) */}
-        <header className="flex items-center justify-between lg:hidden">
-          <span className="inline-flex items-center gap-2.5">
-            <PulseMark className="h-8 w-8" glow={false} />
-            <span className="text-brand-gradient text-xl font-bold tracking-tight">Pulse</span>
-          </span>
-          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
-            Pharmacy intelligence
-          </span>
-        </header>
+        {/* compact brand row — desktop uses the hero's lockup instead */}
+        <BrandHeader className="lg:hidden" />
 
         <div className="grid flex-1 items-center gap-10 py-10 lg:grid-cols-[minmax(0,1fr)_minmax(420px,470px)] lg:gap-16 lg:py-0">
-          {/* editorial hero (desktop) */}
-          <PulseHero className="hidden lg:block" />
+          {/* editorial hero — now the landing's leading act on every screen */}
+          <PulseHero />
 
-          {/* sign-in card */}
+          {/* route into the product: Register / Login → /login */}
           <div className="flex justify-center lg:justify-end">
-            <LoginCard />
+            <AccessCta className="w-full max-w-[470px]" />
           </div>
         </div>
 
@@ -45,37 +39,7 @@ export default function LoginPage() {
         <DesktopSection />
       </div>
 
-      {/* — footer (sticks to the bottom, never floats) — */}
-      <footer className="relative z-10 mt-16 border-t border-white/8 py-7">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 sm:px-8 lg:px-12">
-          <p className="text-[12px] text-white/35">
-            © {new Date().getFullYear()} Duniya Healthcare · Pulse
-          </p>
-          <nav aria-label="Downloads" className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-            <a
-              href={RELEASES_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded text-[12px] font-medium text-white/50 transition-colors hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400"
-            >
-              <span aria-hidden="true"></span>
-              Download for Mac
-            </a>
-            <a
-              href={RELEASES_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded text-[12px] font-medium text-white/50 transition-colors hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400"
-            >
-              <span aria-hidden="true"></span>
-              Download for Windows
-            </a>
-          </nav>
-          <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-white/30">
-            Privacy-first · Secured sessions
-          </p>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

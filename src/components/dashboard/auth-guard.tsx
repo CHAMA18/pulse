@@ -39,7 +39,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         setState("authed");
       } else {
         setState("anonymous");
-        router.replace("/");
+        router.replace("/login");
       }
     })();
 

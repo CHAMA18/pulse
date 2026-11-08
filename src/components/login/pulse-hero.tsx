@@ -44,8 +44,9 @@ export function PulseHero({ className }: { className?: string }) {
 
   return (
     <div className={className}>
-      {/* Brand lockup — the mark thumps with a lub-dub heartbeat */}
-      <motion.div {...fadeUp(0)} className="inline-flex items-center gap-3.5">
+      {/* Brand lockup — the mark thumps with a lub-dub heartbeat.
+          Hidden on mobile: the page's compact brand header covers it there. */}
+      <motion.div {...fadeUp(0)} className="hidden items-center gap-3.5 lg:inline-flex">
         <span className="relative inline-flex">
           <span
             aria-hidden="true"

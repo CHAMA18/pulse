@@ -114,7 +114,12 @@ function PortalToggle({
   );
 }
 
-export function LoginCard() {
+export function LoginCard({
+  initialRegisterOpen = false,
+}: {
+  /** Deep-link support: /login?intent=register opens the pharmacy registration dialog on arrival. */
+  initialRegisterOpen?: boolean;
+} = {}) {
   const { toast } = useToast();
   const router = useRouter();
 
@@ -130,7 +135,7 @@ export function LoginCard() {
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [registerOpen, setRegisterOpen] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(initialRegisterOpen);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
