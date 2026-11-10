@@ -180,7 +180,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
     })
     .filter((line): line is { product: CatalogueProduct; qty: number; unitCost: number } => line !== null && line.qty > 0);
   const draftTotal = draftLines.reduce((acc, line) => acc + line.qty * line.unitCost, 0);
-  const canCreate = supplier.length > 0 && draftLines.length > 0;
+  const canCreate = supplier.trim().length > 1 && draftLines.length > 0;
 
   const pickProduct = (key: number, productId: string) => {
     setLines((prev) =>
@@ -201,7 +201,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
     const now = Date.now();
     return {
       id: nextId(orders, "PO"),
-      supplier,
+      supplier: supplier.trim(),
       status,
       createdAt: now,
       expectedAt: expectedAt || undefined,
@@ -370,13 +370,19 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
             <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
               {filter === "all" ? "No purchase orders yet." : `No ${filter} orders right now.`}
             </p>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-            >
-              Raise the first order
-            </button>
+            {catalogue.length === 0 ? (
+              <p className="max-w-sm text-[12.5px] text-slate-400 dark:text-slate-500">
+                Add a product to your catalogue first, then raise a purchase order for it.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+              >
+                Raise the first order
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -598,19 +604,28 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label htmlFor="po-supplier">Supplier</Label>
-                <Select value={supplier} onValueChange={setSupplier}>
-                  <SelectTrigger id="po-supplier" className="w-full">
-                    <SelectValue placeholder="Choose a supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers.map((entry) => (
-                      <SelectItem key={entry.id} value={entry.name}>
-                        {entry.name}
-                        {entry.verified ? " ✓" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {suppliers.length > 0 ? (
+                  <Select value={supplier} onValueChange={setSupplier}>
+                    <SelectTrigger id="po-supplier" className="w-full">
+                      <SelectValue placeholder="Choose a supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((entry) => (
+                        <SelectItem key={entry.id} value={entry.name}>
+                          {entry.name}
+                          {entry.verified ? " ✓" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="po-supplier"
+                    value={supplier}
+                    onChange={(e) => setSupplier(e.target.value)}
+                    placeholder="e.g. Pulse Central Hub"
+                  />
+                )}
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="po-expected">Expected delivery</Label>
@@ -626,6 +641,11 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
             {/* Lines */}
             <div className="grid gap-2">
               <Label>Order lines</Label>
+              {catalogue.length === 0 && (
+                <p className="text-[12px] text-amber-600 dark:text-amber-400">
+                  No products in the catalogue yet — add a product before raising an order.
+                </p>
+              )}
               {lines.map((line, index) => {
                 const product = catalogue.find((entry) => entry.id === line.productId);
                 return (

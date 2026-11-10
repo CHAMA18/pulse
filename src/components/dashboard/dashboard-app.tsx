@@ -3,6 +3,7 @@
 import { motion, MotionConfig } from "framer-motion";
 import {
   ArrowDownLeft,
+  ArrowLeftRight,
   Bell,
   Calculator,
   CheckCircle2,
@@ -18,6 +19,8 @@ import {
   Menu,
   Moon,
   PackageCheck,
+  PackageSearch,
+  Receipt,
   Search,
   ShoppingBasket,
   Store,
@@ -29,6 +32,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
@@ -41,6 +45,21 @@ import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
 import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-visibility";
 import { UserManagement } from "@/components/dashboard/user-management";
 import { AuditLogs } from "@/components/dashboard/audit-logs";
+import { PharmacySalesReport } from "@/components/dashboard/pharmacy-sales-report";
+import { PharmacyCatalogue } from "@/components/pharmacy/pharmacy-catalogue";
+import { PharmacyStockMovement } from "@/components/pharmacy/pharmacy-stock-movement";
+import {
+  formatDay,
+  loadDeliveries,
+  loadInventory,
+  loadMovements,
+  loadSales,
+  loadStores,
+  MOVEMENT_TYPE_META,
+  type InventoryItem,
+  type PharmacyStore,
+  type StockMovement,
+} from "@/components/pharmacy/pharmacy-data";
 import { WalkthroughTour } from "@/components/walkthrough/walkthrough";
 import { recordAudit, WORKSPACE_NAME } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
@@ -55,70 +74,123 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { getFirebaseAuth, trackEvent } from "@/lib/firebase";
+import {
+  getFirebaseAuth,
+  getFirebaseDb,
+  getInvitedAccountRole,
+  trackEvent,
+} from "@/lib/firebase";
+import {
+  canOpenPulsePage,
+  normalizePulseRole,
+  PULSE_ROLE_META,
+  type PulsePage as DashboardPage,
+  type PulseRole,
+} from "@/lib/pulse-rbac";
 
 /* ------------------------------------------------------------------ */
 /* Content model — mirrors the live system's home snapshot             */
 /* ------------------------------------------------------------------ */
 
-const STAT_CARDS: {
-  id: string;
-  value: string;
-  label: string;
-  desc: string;
-  icon: LucideIcon;
-  tile: string;
-}[] = [
-  {
-    id: "inventory-value",
-    value: "ZMW 7.44K",
-    label: "Inventory Value",
-    desc: "272 active SKUs in the pharmacy",
-    icon: ShoppingBasket,
-    tile: "bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400",
-  },
-  {
-    id: "items-sold",
-    value: "0",
-    label: "Items Sold",
-    desc: "Sell-through captured from POS",
-    icon: Calculator,
-    tile: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
-  },
-  {
-    id: "goods-received",
-    value: "1",
-    label: "Goods Received",
-    desc: "Credit supply deliveries recorded",
-    icon: Truck,
-    tile: "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400",
-  },
-  {
-    id: "low-stock",
-    value: "0",
-    label: "Low Stock Alerts",
-    desc: "Items approaching reorder levels",
-    icon: TriangleAlert,
-    tile: "bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400",
-  },
-];
+/** Compact ZMW readout ("ZMW 7.4K") for the overview cards. */
+function compactZMW(value: number): string {
+  if (value <= 0) return "ZMW 0";
+  if (value >= 1_000_000) return `ZMW ${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (value >= 1_000) return `ZMW ${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return `ZMW ${Math.round(value)}`;
+}
 
-const MOVEMENT_LEGEND: { label: string; value: number; dot: string }[] = [
-  { label: "Sales", value: 0, dot: "bg-emerald-500" },
-  { label: "Goods received", value: 1, dot: "bg-amber-500" },
-  { label: "Stock movements", value: 2, dot: "bg-purple-500" },
-];
+/** Everything on the overview is derived from records saved on this device. */
+type HomeSnapshot = {
+  inventoryValue: number;
+  skuCount: number;
+  itemsSold: number;
+  goodsReceived: number;
+  lowStock: InventoryItem[];
+  expiring: InventoryItem[];
+  salesCount: number;
+  movementCount: number;
+  recent: StockMovement[];
+};
 
-const MOVEMENT_FEED = [
-  { kind: "RECEIVED", title: "Recorded stock movement", when: "Jun 19, 6:15 PM" },
-  { kind: "RECEIVED", title: "Done", when: "Jun 13, 10:07 AM" },
-];
+const WATCH_WINDOW = 90 * 24 * 60 * 60 * 1000;
+
+function buildHomeSnapshot(): HomeSnapshot {
+  const items = loadInventory();
+  const sales = loadSales();
+  const deliveries = loadDeliveries();
+  const movements = loadMovements();
+  const cutoff = Date.now() + WATCH_WINDOW;
+
+  return {
+    inventoryValue: items.reduce((acc, item) => acc + Math.max(0, item.qty) * item.unitPrice, 0),
+    skuCount: items.filter((item) => item.qty > 0).length,
+    itemsSold: sales.reduce(
+      (acc, sale) => acc + sale.lines.reduce((units, line) => units + line.qty, 0),
+      0
+    ),
+    goodsReceived: deliveries.length,
+    lowStock: items
+      .filter((item) => item.qty <= item.reorderLevel)
+      .sort((a, b) => a.qty - b.qty),
+    expiring: items
+      .filter((item) => item.qty > 0 && Date.parse(item.expiry) <= cutoff)
+      .sort((a, b) => Date.parse(a.expiry) - Date.parse(b.expiry)),
+    salesCount: sales.length,
+    movementCount: movements.length,
+    recent: [...movements].sort((a, b) => b.at - a.at).slice(0, 2),
+  };
+}
+
+function statCards(home: HomeSnapshot | null) {
+  const skuLabel = home
+    ? `${home.skuCount} active SKU${home.skuCount === 1 ? "" : "s"} on the shelves`
+    : "Reading the saved shelves…";
+  return [
+    {
+      id: "inventory-value",
+      value: home ? compactZMW(home.inventoryValue) : "—",
+      label: "Inventory Value",
+      desc: skuLabel,
+      icon: ShoppingBasket,
+      tile: "bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400",
+    },
+    {
+      id: "items-sold",
+      value: home ? String(home.itemsSold) : "—",
+      label: "Items Sold",
+      desc: "Sell-through captured from POS",
+      icon: Calculator,
+      tile: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
+    },
+    {
+      id: "goods-received",
+      value: home ? String(home.goodsReceived) : "—",
+      label: "Goods Received",
+      desc: "Credit supply deliveries recorded",
+      icon: Truck,
+      tile: "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400",
+    },
+    {
+      id: "low-stock",
+      value: home ? String(home.lowStock.length) : "—",
+      label: "Low Stock Alerts",
+      desc: "Items approaching reorder levels",
+      icon: TriangleAlert,
+      tile: "bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400",
+    },
+  ];
+}
 
 const QUICK_ACTIONS = ["Add product", "Record stock movement", "Invite pharmacy staff"];
 
-type NavItem = { label: string; icon: LucideIcon };
+const QUICK_ACTION_PAGES: Record<(typeof QUICK_ACTIONS)[number], DashboardPage> = {
+  "Add product": "catalogue",
+  "Record stock movement": "movement",
+  "Invite pharmacy staff": "users",
+};
 
-type DashboardPage = "home" | "suppliers" | "pharmacies" | "stock" | "users" | "audit" | "walkthrough";
+type NavItem = { label: string; icon: LucideIcon; page: DashboardPage };
 
 /** Human page titles used in the audit trail ("Viewed Pulse Pharmacies"). */
 const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
@@ -126,41 +198,36 @@ const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   audit: "Audit Logs",
   users: "User Management",
   pharmacies: "Pulse Pharmacies",
-  stock: "Stock Balance",
+  sales: "Sales Report",
+  catalogue: "Product Catalogue",
+  movement: "Stock Movement",
+  stock: "Stock Balance Visibility",
   suppliers: "Supplier Management",
   walkthrough: "Walkthrough",
 };
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
-  { section: "Main", items: [{ label: "Home", icon: Home }] },
+  { section: "Main", items: [{ label: "Home", page: "home", icon: Home }] },
   {
     section: "Admin",
     items: [
-      { label: "Audit Logs", icon: History },
-      { label: "User Management", icon: UserCog },
+      { label: "Audit Logs", page: "audit", icon: History },
+      { label: "User Management", page: "users", icon: UserCog },
     ],
   },
   {
     section: "Pulse Network",
     items: [
-      { label: "Pulse Pharmacies", icon: LayoutGrid },
-      { label: "Stock Balance Visibility", icon: Eye },
-      { label: "Supplier Management", icon: Store },
+      { label: "Pulse Pharmacies", page: "pharmacies", icon: LayoutGrid },
+      { label: "Sales Report", page: "sales", icon: Receipt },
+      { label: "Product Catalogue", page: "catalogue", icon: PackageSearch },
+      { label: "Stock Movement", page: "movement", icon: ArrowLeftRight },
+      { label: "Stock Balance Visibility", page: "stock", icon: Eye },
+      { label: "Supplier Management", page: "suppliers", icon: Store },
     ],
   },
-  { section: "Learn", items: [{ label: "Walkthrough", icon: Compass }] },
+  { section: "Learn", items: [{ label: "Walkthrough", page: "walkthrough", icon: Compass }] },
 ];
-
-/** Which sidebar entries are live pages vs. "coming soon" stubs. */
-const LIVE_PAGES: Record<string, DashboardPage> = {
-  Home: "home",
-  "Audit Logs": "audit",
-  "User Management": "users",
-  "Pulse Pharmacies": "pharmacies",
-  "Stock Balance Visibility": "stock",
-  "Supplier Management": "suppliers",
-  Walkthrough: "walkthrough",
-};
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
@@ -249,13 +316,17 @@ function SidebarContent({
   dark: boolean;
   onDarkChange: (on: boolean) => void;
   onCollapsedChange?: (collapsed: boolean) => void;
-  onNavClick: (label: string) => void;
+  onNavClick: (target: DashboardPage) => void;
   onQuickAction: (action?: string) => void;
   onClose?: () => void;
-  user: { name: string; email: string; initial: string };
+  user: { name: string; email: string; initial: string; role: PulseRole };
   page: DashboardPage;
 }) {
   const [quickOpen, setQuickOpen] = useState(false);
+  const canOpen = (target: DashboardPage) => canOpenPulsePage(user.role, target);
+  const visibleQuickActions = QUICK_ACTIONS.filter((action) =>
+    canOpen(QUICK_ACTION_PAGES[action])
+  );
 
   return (
     <div className="flex h-full flex-col bg-white dark:bg-[#100823]">
@@ -301,8 +372,13 @@ function SidebarContent({
               <p className="truncate text-[13.5px] font-semibold text-slate-900 dark:text-white">
                 {user.name}
               </p>
-              <span className="mt-0.5 inline-block rounded-full bg-purple-100 px-2 py-px text-[11px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">
-                Owner
+              <span
+                className={cn(
+                  "mt-0.5 inline-block rounded-full px-2 py-px text-[11px] font-semibold",
+                  PULSE_ROLE_META[user.role].pill
+                )}
+              >
+                {PULSE_ROLE_META[user.role].label}
               </span>
             </div>
           )}
@@ -311,50 +387,54 @@ function SidebarContent({
 
       {/* Navigation */}
       <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary" data-tour="pulse-nav">
-        {NAV_SECTIONS.map(({ section, items }) => (
-          <div key={section} className="mt-4 first:mt-1">
-            {!collapsed ? (
-              <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                {section}
-              </p>
-            ) : (
-              <div className="mx-auto my-3 h-px w-8 bg-slate-100 dark:bg-white/10" />
-            )}
-            <div className="flex flex-col gap-0.5">
-              {items.map(({ label, icon: Icon }) => {
-                const active = LIVE_PAGES[label] === page;
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    title={collapsed ? label : undefined}
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => onNavClick(label)}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
-                      collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
-                      active
-                        ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
-                    )}
-                  >
-                    <Icon
+        {NAV_SECTIONS.map(({ section, items }) => {
+          const visibleItems = items.filter(({ page: targetPage }) => canOpen(targetPage));
+          if (visibleItems.length === 0) return null;
+          return (
+            <div key={section} className="mt-4 first:mt-1">
+              {!collapsed ? (
+                <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
+                  {section}
+                </p>
+              ) : (
+                <div className="mx-auto my-3 h-px w-8 bg-slate-100 dark:bg-white/10" />
+              )}
+              <div className="flex flex-col gap-0.5">
+                {visibleItems.map(({ label, page: targetPage, icon: Icon }) => {
+                  const active = targetPage === page;
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      title={collapsed ? label : undefined}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => onNavClick(targetPage)}
                       className={cn(
-                        "h-[18px] w-[18px] shrink-0 transition-colors",
+                        "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
+                        collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
                         active
-                          ? "text-purple-600 dark:text-purple-400"
-                          : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+                          ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
+                          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
                       )}
-                      strokeWidth={2.1}
-                      aria-hidden="true"
-                    />
-                    {!collapsed && <span className="truncate">{label}</span>}
-                  </button>
-                );
-              })}
+                    >
+                      <Icon
+                        className={cn(
+                          "h-[18px] w-[18px] shrink-0 transition-colors",
+                          active
+                            ? "text-purple-600 dark:text-purple-400"
+                            : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+                        )}
+                        strokeWidth={2.1}
+                        aria-hidden="true"
+                      />
+                      {!collapsed && <span className="truncate">{label}</span>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Bottom controls */}
@@ -396,47 +476,51 @@ function SidebarContent({
           </div>
         )}
 
-        {/* Quick access */}
-        <div>
-          <button
-            type="button"
-            onClick={() => (collapsed ? onQuickAction() : setQuickOpen((v) => !v))}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-lg text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/5",
-              collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2"
+        {/* Quick access — hidden when the role has none of its actions */}
+        {visibleQuickActions.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() =>
+                collapsed ? onCollapsedChange?.(false) : setQuickOpen((v) => !v)
+              }
+              className={cn(
+                "flex w-full items-center gap-3 rounded-lg text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/5",
+                collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2"
+              )}
+              aria-expanded={quickOpen}
+              title={collapsed ? "Quick Access" : undefined}
+            >
+              <LayoutGrid className="h-[18px] w-[18px] shrink-0 text-slate-400" aria-hidden="true" />
+              {!collapsed && (
+                <>
+                  <span>Quick Access</span>
+                  <ChevronDown
+                    className={cn(
+                      "ml-auto h-4 w-4 text-slate-400 transition-transform duration-200",
+                      quickOpen && "rotate-180"
+                    )}
+                    aria-hidden="true"
+                  />
+                </>
+              )}
+            </button>
+            {quickOpen && !collapsed && (
+              <div className="mb-1 ml-9 mt-0.5 flex flex-col gap-0.5 rounded-lg bg-slate-50 p-1.5 dark:bg-white/5">
+                {visibleQuickActions.map((action) => (
+                  <button
+                    key={action}
+                    type="button"
+                    onClick={() => onQuickAction(action)}
+                    className="rounded-md px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-all hover:bg-white hover:text-slate-900 hover:shadow-sm dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
             )}
-            aria-expanded={quickOpen}
-            title={collapsed ? "Quick Access" : undefined}
-          >
-            <LayoutGrid className="h-[18px] w-[18px] shrink-0 text-slate-400" aria-hidden="true" />
-            {!collapsed && (
-              <>
-                <span>Quick Access</span>
-                <ChevronDown
-                  className={cn(
-                    "ml-auto h-4 w-4 text-slate-400 transition-transform duration-200",
-                    quickOpen && "rotate-180"
-                  )}
-                  aria-hidden="true"
-                />
-              </>
-            )}
-          </button>
-          {quickOpen && !collapsed && (
-            <div className="mb-1 ml-9 mt-0.5 flex flex-col gap-0.5 rounded-lg bg-slate-50 p-1.5 dark:bg-white/5">
-              {QUICK_ACTIONS.map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  onClick={() => onQuickAction(action)}
-                  className="rounded-md px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-all hover:bg-white hover:text-slate-900 hover:shadow-sm dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
-                >
-                  {action}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Collapse (desktop only) */}
         {onCollapsedChange && (
@@ -477,7 +561,15 @@ export function DashboardApp() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [page, setPage] = useState<DashboardPage>("home");
-  const [user, setUser] = useState({ name: "Pulse User", email: "", initial: "P" });
+  const [user, setUser] = useState({
+    uid: "",
+    name: "Pulse User",
+    email: "",
+    initial: "P",
+    role: "staff" as PulseRole,
+  });
+  const [networkStores, setNetworkStores] = useState<PharmacyStore[]>([]);
+  const [home, setHome] = useState<HomeSnapshot | null>(null);
   const [bouncing, setBouncing] = useState(false);
   // Interactive walkthrough — shell level, so it rides above every page.
   const [tourOpen, setTourOpen] = useState(false);
@@ -508,10 +600,50 @@ export function DashboardApp() {
 
       const current = auth?.currentUser;
       const name = current?.displayName ?? current?.email?.split("@")[0] ?? "Pulse User";
+      const email = current?.email ?? "";
+
+      // The invitation carries the console role; read it from the Firestore
+      // profile first, then fall back to the invitation accepted on this device.
+      let role: PulseRole | undefined;
+      const store = getFirebaseDb();
+      if (store && current) {
+        try {
+          const snap = await getDoc(doc(store, "User", current.uid));
+          const profile = snap.data() as
+            | { role?: string; role_label?: string; access_revoked?: boolean }
+            | undefined;
+          if (profile?.access_revoked === true) {
+            try {
+              await signOut(auth!);
+            } catch {
+              /* the local session is cleared below regardless */
+            }
+            clearStoredPortal();
+            if (active) {
+              toast({
+                title: "Console access removed",
+                description: "An Owner has removed this account from the Pulse console.",
+              });
+              router.replace("/login");
+            }
+            return;
+          }
+          role = normalizePulseRole(profile?.role ?? profile?.role_label);
+        } catch {
+          /* rules or offline — the local invitation fallback below still applies */
+        }
+      }
+      role ??= normalizePulseRole(
+        current ? getInvitedAccountRole(current.uid, email) : null
+      );
+
+      if (!active) return;
       setUser({
+        uid: current?.uid ?? "",
         name,
-        email: current?.email ?? "",
+        email,
         initial: (name[0] ?? "P").toUpperCase(),
+        role: role ?? "staff",
       });
     })();
 
@@ -532,6 +664,24 @@ export function DashboardApp() {
     void trackEvent("dashboard_view");
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    const raf = requestAnimationFrame(() => {
+      if (!active) return;
+      setNetworkStores(loadStores());
+      setHome(buildHomeSnapshot());
+    });
+    return () => {
+      active = false;
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // Keep the console on a page this role may open after the profile resolves.
+  useEffect(() => {
+    if (!canOpenPulsePage(user.role, page)) setPage("home");
+  }, [user.role, page]);
+
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
     if (bouncing || !user.email) return;
@@ -550,34 +700,45 @@ export function DashboardApp() {
     window.localStorage.setItem("pulse-theme", on ? "dark" : "light");
   };
 
-  const onNavClick = (label: string) => {
+  const onNavClick = (target: DashboardPage) => {
     setMobileOpen(false);
-    const target = LIVE_PAGES[label];
-    if (target && target !== page) {
-      setPage(target);
-      if (user.email) {
-        recordAudit({
-          title: "Sidebar navigation",
-          action: "View",
-          detail: WORKSPACE_NAME,
-          actor: user.name,
-          email: user.email,
-        });
-      }
-      void trackEvent("nav_click", { page: target });
+    if (!canOpenPulsePage(user.role, target)) {
+      toast({
+        title: "Not available for your role",
+        description: `Your ${PULSE_ROLE_META[user.role].label} role doesn't include this area.`,
+      });
       return;
     }
-    if (target) return; // already on that page
-    toast({
-      title: `${label} is coming soon`,
-      description: "This area of the Pulse console is on its way.",
-    });
+    if (target === page) return;
+    setPage(target);
+    if (user.email) {
+      recordAudit({
+        title: "Sidebar navigation",
+        action: "View",
+        detail: WORKSPACE_NAME,
+        actor: user.name,
+        email: user.email,
+      });
+    }
+    void trackEvent("nav_click", { page: target });
   };
 
   const onQuickAction = (action?: string) => {
+    const target =
+      action === "Add product"
+        ? "catalogue"
+        : action === "Record stock movement"
+          ? "movement"
+          : action === "Invite pharmacy staff"
+            ? "users"
+            : undefined;
+    if (target) {
+      onNavClick(target);
+      return;
+    }
     toast({
-      title: `${action ?? "Quick access"} is coming soon`,
-      description: "Shortcuts land here as the console grows.",
+      title: "Quick Access",
+      description: "Expand the sidebar to choose an action.",
     });
   };
 
@@ -595,6 +756,10 @@ export function DashboardApp() {
     toast({ title: "Signed out", description: "See you soon!" });
     router.replace("/");
   };
+
+  const tourSteps = PULSE_TOUR_STEPS.filter(
+    (step) => !step.page || canOpenPulsePage(user.role, step.page as DashboardPage)
+  );
 
   const sidebar = (extra: { collapsed: boolean; onCollapsedChange?: (c: boolean) => void; onClose?: () => void }) => (
     <SidebarContent
@@ -729,19 +894,35 @@ export function DashboardApp() {
               <SupplierManagement />
             ) : page === "pharmacies" ? (
               <PulsePharmacies />
+            ) : page === "sales" ? (
+              <PharmacySalesReport />
             ) : page === "stock" ? (
               <StockBalanceVisibility />
+            ) : page === "catalogue" ? (
+              <PharmacyCatalogue stores={networkStores} />
+            ) : page === "movement" ? (
+              <PharmacyStockMovement
+                storeId="all"
+                stores={networkStores}
+                actor={{ name: user.name, email: user.email }}
+              />
             ) : page === "users" ? (
-              <UserManagement />
+              <UserManagement role={user.role} currentUid={user.uid} />
             ) : page === "audit" ? (
               <AuditLogs />
             ) : page === "walkthrough" ? (
-              <DashboardWalkthrough onGoTo={(target) => setPage(target as DashboardPage)} onStartTour={() => setTourOpen(true)} />
+              <DashboardWalkthrough
+                onGoTo={(target) => onNavClick(target as DashboardPage)}
+                onStartTour={() => setTourOpen(true)}
+                allowedPages={(target) =>
+                  canOpenPulsePage(user.role, target as DashboardPage)
+                }
+              />
             ) : (
               <>
             {/* Stat cards */}
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4" data-tour="pulse-home">
-              {STAT_CARDS.map(({ id, value, label, desc, icon: Icon, tile }) => (
+              {statCards(home).map(({ id, value, label, desc, icon: Icon, tile }) => (
                 <motion.div key={id} variants={item} className={cn(cardCls, "flex items-center gap-4 p-5")}>
                   <span
                     className={cn(
@@ -771,7 +952,37 @@ export function DashboardApp() {
                   subtitle="What needs attention right now"
                 />
                 <div className="mt-4">
-                  <EmptyState>All clear — nothing needs attention right now.</EmptyState>
+                  {home === null ? (
+                    <EmptyState>Reading the saved shelves…</EmptyState>
+                  ) : home.lowStock.length === 0 ? (
+                    <EmptyState>All clear — nothing is at or below its reorder level.</EmptyState>
+                  ) : (
+                    <ul className={cn(cardCls, "divide-y divide-slate-100 dark:divide-white/10")}>
+                      {home.lowStock.map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3"
+                        >
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
+                              item.qty === 0
+                                ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+                                : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                            )}
+                          >
+                            {item.qty === 0 ? "Out of stock" : "Low stock"}
+                          </span>
+                          <span className="text-[14px] font-semibold text-slate-900 dark:text-white">
+                            {item.name}
+                          </span>
+                          <span className="text-[12.5px] text-slate-500 dark:text-slate-400">
+                            {item.category} · {item.qty} on hand · reorder at {item.reorderLevel}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </motion.section>
 
@@ -783,31 +994,50 @@ export function DashboardApp() {
                 />
                 <div className={cn(cardCls, "mt-4 p-5")}>
                   <div className="flex flex-col gap-3.5">
-                    {MOVEMENT_LEGEND.map(({ label, value, dot }) => (
+                    {[
+                      { label: "Sales", value: home?.salesCount ?? 0, dot: "bg-emerald-500" },
+                      { label: "Goods received", value: home?.goodsReceived ?? 0, dot: "bg-amber-500" },
+                      { label: "Stock movements", value: home?.movementCount ?? 0, dot: "bg-purple-500" },
+                    ].map(({ label, value, dot }) => (
                       <div key={label} className="flex items-center gap-2.5 text-sm">
                         <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", dot)} aria-hidden="true" />
                         <span className="font-medium text-slate-700 dark:text-slate-300">{label}</span>
-                        <span className="ml-auto font-bold tabular-nums">{value}</span>
+                        <span className="ml-auto font-bold tabular-nums">{home ? value : "—"}</span>
                       </div>
                     ))}
                   </div>
                   <div className="mt-5 border-t border-slate-100 pt-4 dark:border-white/10">
-                    <ul className="flex flex-col gap-4">
-                      {MOVEMENT_FEED.map(({ kind, title, when }, index) => (
-                        <li key={`${when}-${index}`} className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
-                            <ArrowDownLeft className="h-4 w-4" strokeWidth={2.4} aria-hidden="true" />
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-[13px] font-bold tracking-wide">{kind}</p>
-                            <p className="truncate text-[13px] text-slate-500 dark:text-slate-400">{title}</p>
-                          </div>
-                          <time className="ml-auto shrink-0 whitespace-nowrap text-[13px] text-slate-500 dark:text-slate-400">
-                            {when}
-                          </time>
-                        </li>
-                      ))}
-                    </ul>
+                    {home && home.recent.length > 0 ? (
+                      <ul className="flex flex-col gap-4">
+                        {home.recent.map((movement) => (
+                          <li key={movement.id} className="flex items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+                              <ArrowDownLeft className="h-4 w-4" strokeWidth={2.4} aria-hidden="true" />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-bold tracking-wide">
+                                {MOVEMENT_TYPE_META[movement.type].label.toUpperCase()}
+                              </p>
+                              <p className="truncate text-[13px] text-slate-500 dark:text-slate-400">
+                                {movement.productName} · {movement.reason}
+                              </p>
+                            </div>
+                            <time className="ml-auto shrink-0 whitespace-nowrap text-[13px] text-slate-500 dark:text-slate-400">
+                              {new Date(movement.at).toLocaleString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </time>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[13px] text-slate-500 dark:text-slate-400">
+                        {home ? "No stock movements recorded yet." : "Reading the saved ledger…"}
+                      </p>
+                    )}
                   </div>
                 </div>
               </motion.section>
@@ -819,10 +1049,44 @@ export function DashboardApp() {
                 icon={Eye}
                 title="Supply Watchlist"
                 subtitle="SKUs approaching reorder or expiry pressure"
-              />
-              <div className="mt-4">
-                <EmptyState>No SKUs are approaching reorder or expiry thresholds.</EmptyState>
-              </div>
+              />                <div className="mt-4">
+                  {home === null ? (
+                    <EmptyState>Reading expiry dates…</EmptyState>
+                  ) : home.expiring.length === 0 ? (
+                    <EmptyState>No SKUs are approaching reorder or expiry thresholds.</EmptyState>
+                  ) : (
+                    <ul className={cn(cardCls, "divide-y divide-slate-100 dark:divide-white/10")}>
+                      {home.expiring.map((item) => {
+                        const expires = Date.parse(item.expiry);
+                        const expired = expires <= Date.now();
+                        return (
+                          <li
+                            key={item.id}
+                            className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3"
+                          >
+                            <span
+                              className={cn(
+                                "rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
+                                expired
+                                  ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+                                  : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                              )}
+                            >
+                              {expired ? "Expired" : "Expiring"}
+                            </span>
+                            <span className="text-[14px] font-semibold text-slate-900 dark:text-white">
+                              {item.name}
+                            </span>
+                            <span className="text-[12.5px] text-slate-500 dark:text-slate-400">
+                              {item.category} · {item.qty} on hand · {expired ? "expired" : "expires"}{" "}
+                              {formatDay(expires)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
             </motion.section>
               </>
             )}
@@ -833,9 +1097,9 @@ export function DashboardApp() {
       {/* Interactive walkthrough — an overlay above every page */}
       {tourOpen && (
         <WalkthroughTour
-          steps={PULSE_TOUR_STEPS}
+          steps={tourSteps}
           portalLabel="Pulse console"
-          onNavigate={(target) => setPage(target as DashboardPage)}
+          onNavigate={(target) => onNavClick(target as DashboardPage)}
           onFinish={() => {
             setTourOpen(false);
             setPage("walkthrough");

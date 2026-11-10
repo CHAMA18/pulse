@@ -55,8 +55,11 @@ const STEPS: { title: string; desc: string }[] = [
 
 export function PharmacyProfile({
   user,
+  roleLabel,
 }: {
   user: { name: string; email: string; initial: string };
+  /** The signed-in member's role, e.g. "Cashier". */
+  roleLabel: string;
 }) {
   const { toast } = useToast();
 
@@ -201,9 +204,11 @@ export function PharmacyProfile({
             <dl className="mt-6 flex flex-col gap-4 text-[13.5px]">
               <div className="flex items-center gap-3">
                 <UserRound className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-                <dt className="w-24 shrink-0 text-slate-500 dark:text-slate-400">Owner</dt>
+                <dt className="w-24 shrink-0 text-slate-500 dark:text-slate-400">
+                  {roleLabel === "Owner" ? "Owner" : "Role"}
+                </dt>
                 <dd className="min-w-0 truncate font-semibold text-slate-900 dark:text-white">
-                  {profile.ownerName}
+                  {roleLabel === "Owner" ? profile.ownerName : roleLabel}
                 </dd>
               </div>
               <div className="flex items-center gap-3">

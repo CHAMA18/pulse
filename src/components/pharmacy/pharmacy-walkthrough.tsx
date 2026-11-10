@@ -164,13 +164,16 @@ const CHAPTER_ICONS: Record<string, typeof Compass> = {
 };
 
 export function PharmacyWalkthrough({
+  steps,
   onGoTo,
   onStartTour,
 }: {
+  /** Tour steps this role is allowed to visit. */
+  steps: WalkthroughStep[];
   onGoTo: (page: string) => void;
   onStartTour: () => void;
 }) {
-  const chapters = PHARMACY_TOUR_STEPS.filter((step) => step.id !== "ph-welcome" && step.id !== "ph-finish");
+  const chapters = steps.filter((step) => step.id !== "ph-welcome" && step.id !== "ph-finish");
 
   return (
     <div aria-labelledby="pharmacy-walkthrough-title">
@@ -213,7 +216,7 @@ export function PharmacyWalkthrough({
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-purple-600 dark:text-purple-300">
               <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              Interactive · {PHARMACY_TOUR_STEPS.length} steps · about 3 minutes
+              Interactive · {steps.length} steps · about 3 minutes
             </p>
             <h3 className="mt-1.5 text-[19px] font-bold leading-snug tracking-tight text-slate-900 dark:text-white">
               Learn every corner of the console — only the section being discussed is lit up

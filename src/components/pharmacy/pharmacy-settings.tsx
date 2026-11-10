@@ -3,27 +3,19 @@
 import { motion } from "framer-motion";
 import {
   Bell,
-  Database,
   LogOut,
   Moon,
-  Settings,
+  Settings as SettingsIcon,
   ShieldCheck,
-  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   loadPharmacySettings,
-  PHARMACY_DELIVERIES_KEY,
-  PHARMACY_INVENTORY_KEY,
-  PHARMACY_REQUESTS_KEY,
-  PHARMACY_SETTINGS_KEY,
   savePharmacySettings,
   type PharmacySettings as Settings,
 } from "@/components/pharmacy/pharmacy-data";
 import { PageHeader, pharmacyCardCls } from "@/components/pharmacy/pharmacy-shared";
-import { recordAudit } from "@/lib/audit-log";
-import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 
@@ -98,20 +90,16 @@ export function PharmacySettings({
   onDarkChange: (on: boolean) => void;
   onSignOut: () => void;
 }) {
-  const { toast } = useToast();
   const [prefs, setPrefs] = useState<Settings>({
     lowStockAlerts: true,
     deliveryUpdates: true,
     requestStatus: true,
     weeklyDigest: false,
   });
-  const [hydrated, setHydrated] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       setPrefs(loadPharmacySettings());
-      setHydrated(true);
     });
     return () => cancelAnimationFrame(raf);
   }, []);
@@ -122,39 +110,10 @@ export function PharmacySettings({
     savePharmacySettings(next);
   };
 
-  const resetData = () => {
-    if (!confirmReset) {
-      setConfirmReset(true);
-      return;
-    }
-    for (const key of [PHARMACY_INVENTORY_KEY, PHARMACY_REQUESTS_KEY, PHARMACY_DELIVERIES_KEY, PHARMACY_SETTINGS_KEY]) {
-      try {
-        window.localStorage.removeItem(key);
-      } catch {
-        /* best-effort */
-      }
-    }
-    if (user.email) {
-      recordAudit({
-        title: "Workspace Data Reset",
-        action: "Delete",
-        detail: "Pharmacy demo stores restored to network defaults",
-        actor: user.name,
-        email: user.email,
-      });
-    }
-    toast({
-      title: "Workspace data reset",
-      description: "Shelves, requests and deliveries are back to network defaults.",
-    });
-    setConfirmReset(false);
-    window.location.reload();
-  };
-
   return (
     <div aria-labelledby="pharmacy-settings-title">
       <PageHeader
-        icon={Settings}
+        icon={SettingsIcon}
         title="Settings"
         subtitle="Preferences for this device and your pharmacy workspace"
         tourId="ph-settings"
@@ -246,33 +205,6 @@ export function PharmacySettings({
           </p>
         </SettingsSection>
 
-        {/* Data */}
-        <SettingsSection
-          icon={Database}
-          title="Workspace data"
-          description="Shelves, requests and deliveries on this device"
-        >
-          <div className="rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-3.5 dark:border-rose-500/20 dark:bg-rose-500/10">
-            <p className="text-[14px] font-semibold text-rose-700 dark:text-rose-300">Reset demo data</p>
-            <p className="mt-0.5 text-[12.5px] leading-snug text-rose-600/90 dark:text-rose-300/80">
-              Restores the network's starter shelves, request queue and delivery history. Adjustments
-              you've made are lost.
-            </p>
-            <button
-              type="button"
-              onClick={resetData}
-              className={cn(
-                "mt-3 inline-flex h-9 items-center gap-2 rounded-md px-3.5 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500",
-                confirmReset
-                  ? "bg-rose-600 text-white hover:bg-rose-700"
-                  : "border border-rose-300 bg-white text-rose-600 hover:bg-rose-100 dark:border-rose-500/30 dark:bg-transparent dark:text-rose-400 dark:hover:bg-rose-500/15"
-              )}
-            >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              {confirmReset ? "Tap again to confirm" : "Reset workspace data"}
-            </button>
-          </div>
-        </SettingsSection>
       </motion.div>
     </div>
   );

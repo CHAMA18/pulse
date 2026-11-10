@@ -217,7 +217,7 @@ export function PharmacyStockBalance({ storeId = "all" }: { storeId?: string }) 
     if (actor.email) {
       recordAudit({
         title: "Stock Balance Exported",
-        action: "Export",
+        action: "View",
         detail: `${filtered.length} items · ${formatZMW(
           filtered.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0)
         )} filtered value`,
@@ -430,20 +430,28 @@ export function PharmacyStockBalance({ storeId = "all" }: { storeId?: string }) 
         {filtered.length === 0 ? (
           <div className="flex min-h-[140px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center">
             <EmptyIcon className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
-            <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
-              No items match {query.trim() ? `"${query.trim()}"` : "this filter"}.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setQuery("");
-                setFilter("all");
-                setCategory("all");
-              }}
-              className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-            >
-              Clear search & filters
-            </button>
+            {items.length === 0 ? (
+              <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                No stock recorded yet — add a product with opening stock, or receive goods in.
+              </p>
+            ) : (
+              <>
+                <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                  No items match {query.trim() ? `"${query.trim()}"` : "this filter"}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setFilter("all");
+                    setCategory("all");
+                  }}
+                  className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                >
+                  Clear search & filters
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

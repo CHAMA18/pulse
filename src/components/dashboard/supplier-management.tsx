@@ -84,37 +84,19 @@ const CATEGORIES = [
   "Other",
 ] as const;
 
-/** The supplier that ships with every fresh console, mirroring the network seed. */
-function seedSuppliers(): Supplier[] {
-  return [
-    {
-      id: "sup-duniya",
-      name: "Duniya",
-      contact: "Jane Banda",
-      email: "jane@duniyahealthcare.com",
-      category: "Pharmaceuticals",
-      leadDays: 14,
-      productsLinked: 0,
-      catalogueValue: 0,
-      active: true,
-      addedAt: Date.parse("2026-06-01T09:00:00Z"),
-    },
-  ];
-}
-
 function loadSuppliers(): Supplier[] {
-  if (typeof window === "undefined") return seedSuppliers();
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedSuppliers();
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return seedSuppliers();
+    if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (s): s is Supplier =>
         !!s && typeof s === "object" && typeof (s as Supplier).name === "string"
     );
   } catch {
-    return seedSuppliers();
+    return [];
   }
 }
 

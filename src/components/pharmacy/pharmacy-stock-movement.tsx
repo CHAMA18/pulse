@@ -176,7 +176,7 @@ function RecordMovementDialog({
   }
 
   const storeName = (id?: string) =>
-    id === undefined ? "Main store" : (stores.find((store) => store.id === id)?.name ?? "Main store");
+    id === undefined ? "Main store" : (stores.find((store) => store.id === id)?.name ?? "Removed store");
 
   /** The shelf a movement starts from is the item's own store. */
   const selectedItem = items.find((entry) => entry.id === itemId);
@@ -204,8 +204,9 @@ function RecordMovementDialog({
       item: selectedItem,
       qty: parsedQty,
       // Adjustments & returns can go either way; receipts are always in,
-      // issues always out.
-      direction: type === "receipt" ? "in" : type === "issue" ? "out" : direction,
+      // while issues and transfers always leave the source shelf.
+      direction:
+        type === "receipt" ? "in" : type === "issue" || type === "transfer" ? "out" : direction,
       toStoreId: type === "transfer" ? toStoreId : undefined,
       reason,
       note: note.trim(),
@@ -290,6 +291,11 @@ function RecordMovementDialog({
               ))}
             </select>
             {errorCls("item")}
+            {items.length === 0 && (
+              <p className="mt-1.5 text-[12px] text-amber-600 dark:text-amber-400">
+                No stock recorded yet — add a product with opening stock before recording a movement.
+              </p>
+            )}
             {selectedItem && (
               <p className="mt-1.5 text-[12px] text-slate-500 dark:text-slate-400">
                 Source shelf: {storeName(sourceStoreId)} · {selectedItem.qty} units ·{" "}
@@ -500,7 +506,7 @@ export function PharmacyStockMovement({
     .filter((entry) => entry.type === "receipt" || (entry.type === "return" && entry.qty > 0) || (entry.type === "adjustment" && entry.qty > 0))
     .reduce((acc, entry) => acc + Math.abs(entry.qty), 0);
   const unitsOut = week
-    .filter((entry) => entry.type === "issue" || entry.qty < 0)
+    .filter((entry) => entry.type !== "transfer" && (entry.type === "issue" || entry.qty < 0))
     .reduce((acc, entry) => acc + Math.abs(entry.qty), 0);
   const net = week.reduce((acc, entry) => {
     if (entry.type === "transfer") return acc; // transfers move, not grow
@@ -554,9 +560,9 @@ export function PharmacyStockMovement({
     );
 
     if (input.type === "transfer" && input.toStoreId) {
-      // Reduce already applied; add the stock to the destination shelf —
-      // reusing an existing row of the same product+batch when there is one.
-      const remaining = Math.max(0, input.item.qty - Math.abs(signed));
+      // The source was reduced above; add the transferred units to the
+      // destination shelf, reusing an existing product+batch row when there is one.
+      const moved = Math.abs(signed);
       const twin = nextItems.find(
         (row) =>
           row.id !== input.item.id &&
@@ -566,7 +572,7 @@ export function PharmacyStockMovement({
       );
       if (twin) {
         nextItems = nextItems.map((row) =>
-          row.id === twin.id ? { ...row, qty: row.qty + remaining } : row
+          row.id === twin.id ? { ...row, qty: row.qty + moved } : row
         );
       } else {
         const created: InventoryItem = {
@@ -575,7 +581,7 @@ export function PharmacyStockMovement({
           category: input.item.category,
           batch: input.item.batch,
           expiry: input.item.expiry,
-          qty: remaining,
+          qty: moved,
           reorderLevel: input.item.reorderLevel,
           unitPrice: input.item.unitPrice,
           storeId: input.toStoreId,
@@ -597,7 +603,7 @@ export function PharmacyStockMovement({
     if (actor.email) {
       recordAudit({
         title: "Stock Movement Recorded",
-        action: "Create",
+        action: "Update",
         detail: `${MOVEMENT_TYPE_META[input.type].label} · ${input.item.name} ${signed > 0 ? "+" : ""}${signed} (${input.reason})`,
         actor: actor.name,
         email: actor.email,
@@ -716,19 +722,27 @@ export function PharmacyStockMovement({
         {filtered.length === 0 ? (
           <div className="flex min-h-[140px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center">
             <FilterIcon className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
-            <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
-              No movements match {query.trim() ? `"${query.trim()}"` : "this filter"}.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setQuery("");
-                setFilter("all");
-              }}
-              className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-            >
-              Clear search &amp; filters
-            </button>
+            {visible.length === 0 ? (
+              <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                No stock movements recorded yet — record one to start the ledger.
+              </p>
+            ) : (
+              <>
+                <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                  No movements match {query.trim() ? `"${query.trim()}"` : "this filter"}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setFilter("all");
+                  }}
+                  className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                >
+                  Clear search &amp; filters
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

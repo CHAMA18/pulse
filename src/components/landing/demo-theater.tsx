@@ -87,11 +87,11 @@ function Shell({
       <div className="hidden w-[26%] max-w-[168px] shrink-0 flex-col gap-1 border-r border-white/8 bg-[#0d0716]/80 p-3 sm:flex">
         <div className="mb-3 flex items-center gap-2 px-1">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-purple-700 text-[9px] font-bold text-white">
-            C
+            P
           </span>
           <div className="min-w-0">
             <p className="truncate text-[10px] font-semibold text-white/85">
-              Chungu Chemist
+              My Pharmacy
             </p>
             <p className="text-[8px] font-medium uppercase tracking-[0.14em] text-white/35">
               Owner
@@ -514,10 +514,10 @@ function TeamScene({ t }: { t: number }) {
             Team invitation
           </p>
           <p className="text-[12.5px] font-bold leading-snug text-white">
-            Join Chungu Chemist Lusaka on Pulse
+            Join Central Pharmacy Lusaka on Pulse
           </p>
           <p className="text-[9.5px] leading-relaxed text-white/55">
-            Chungu Chipimo Chama has invited you as{" "}
+            The pharmacy owner has invited you as{" "}
             <span className="font-semibold text-white/85">Pharmacist</span> —
             Cairo Road Main Store. Accept below to set your password and step
             in.
@@ -555,7 +555,7 @@ function TeamScene({ t }: { t: number }) {
           style={enter(τ, 0.35)}
           className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[9.5px] font-medium text-white/75"
         >
-          Chungu C.
+          Pharmacy Owner
           <span className="rounded-full bg-purple-500/25 px-1.5 py-px font-mono text-[7.5px] uppercase tracking-wide text-purple-200">
             Owner
           </span>
@@ -744,32 +744,14 @@ export function DemoTheater() {
   })();
 
   return (
-    <section id="demo" aria-labelledby="demo-title" className="relative scroll-mt-20 py-16 sm:py-24">
+    <section id="demo" aria-label="Live product demo" className="relative scroll-mt-20 py-16 sm:py-24">
       <div className="mx-auto w-full max-w-[1180px] px-5 sm:px-8 lg:px-12">
-        {/* section head */}
-        <div className="mx-auto max-w-2xl text-center">
-          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.26em] text-fuchsia-300/80">
-            The product, playing
-          </p>
-          <h2
-            id="demo-title"
-            className="mt-3 text-[clamp(1.9rem,3.4vw,2.9rem)] font-semibold leading-[1.06] tracking-[-0.03em] text-white"
-          >
-            No video.{" "}
-            <span className="text-brand-gradient">Pulse, rendering itself.</span>
-          </h2>
-          <p className="mt-4 text-[15px] leading-relaxed text-white/55">
-            This is not a screen recording — every pixel below is drawn live by
-            the same code your pharmacy runs. Press play, or jump to a chapter.
-          </p>
-        </div>
-
         {/* hyperframe */}
         <div
           ref={frameRef}
           onMouseMove={reduced ? undefined : onTilt}
           onMouseLeave={reduced ? undefined : untilt}
-          className="demo-theater group relative mx-auto mt-10 max-w-[980px] [perspective:1200px]"
+          className="demo-theater group relative mx-auto max-w-[980px] [perspective:1200px]"
         >
           {/* ambient glow */}
           <div

@@ -4,7 +4,6 @@ import {
   BackHomeLink,
   BrandHeader,
   PulseAtmosphere,
-  SiteFooter,
 } from "@/components/login/site-chrome";
 
 /**
@@ -37,8 +36,6 @@ export default function SignInPage() {
           <LoginCard />
         </div>
       </div>
-
-      <SiteFooter />
     </main>
   );
 }

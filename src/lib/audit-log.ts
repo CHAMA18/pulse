@@ -22,91 +22,7 @@ export const AUDIT_STORAGE_KEY = "pulse.audit.v1";
 export const AUDIT_EVENT_NAME = "pulse:audit";
 const AUDIT_CAP = 500;
 
-/** The workspace id mirrored from the live console's audit trail. */
-export const WORKSPACE_USER_REF = "User: PkP5vTnIysYgIPCMRkzCPbaepbJ3";
 export const WORKSPACE_NAME = "Pulse workspace";
-
-/** The four people every fresh console opens with. */
-const SEED_ACTORS: { name: string; email: string }[] = [
-  { name: "Chungu Chipimo Chama", email: "chungu424@gmail.com" },
-  { name: "Chungu Chama", email: "chungu90@thestackone.com" },
-  { name: "E2E PO", email: "popo1790656699@uberip.com" },
-  { name: "GRImp Owner", email: "grimp1790659419@uberip.com" },
-];
-
-const VIEWED_PAGES = [
-  "Audit Logs", "Pulse Pharmacies", "User Management", "Stock Balance",
-  "Supplier Management", "Dashboard", "Home",
-] as const;
-
-const TAP_TARGETS = ["Home", "Pulse Pharmacies", "Audit Logs", "User Management"] as const;
-
-type SeedEvent = {
-  title: string;
-  action: AuditAction;
-  detail: string;
-};
-
-function seedEventFor(i: number): SeedEvent {
-  // The first five mirror the live console exactly; the rest are generated.
-  switch (i) {
-    case 0:
-      return { title: "Viewed Audit Logs", action: "View", detail: WORKSPACE_NAME };
-    case 1:
-      return { title: "Viewed Pulse Pharmacies", action: "View", detail: WORKSPACE_NAME };
-    case 2:
-      return { title: "Sidebar navigation", action: "View", detail: WORKSPACE_USER_REF };
-    case 3:
-      return { title: "Sidebar selection", action: "Update", detail: WORKSPACE_USER_REF };
-    case 4:
-      return { title: "Tapped Home in the sidebar", action: "Activity", detail: WORKSPACE_USER_REF };
-    default: {
-      const kind = i % 5;
-      if (kind === 0 || kind === 1) {
-        const page = VIEWED_PAGES[(i * 7) % VIEWED_PAGES.length];
-        return { title: `Viewed ${page}`, action: "View", detail: WORKSPACE_NAME };
-      }
-      if (kind === 2) {
-        return { title: "Sidebar navigation", action: "View", detail: WORKSPACE_USER_REF };
-      }
-      if (kind === 3) {
-        return { title: "Sidebar selection", action: "Update", detail: WORKSPACE_USER_REF };
-      }
-      const target = TAP_TARGETS[(i * 3) % TAP_TARGETS.length];
-      return { title: `Tapped ${target} in the sidebar`, action: "Activity", detail: WORKSPACE_USER_REF };
-    }
-  }
-}
-
-/** 250 events: the first 15 land within the last hour (today), the rest
- *  spread back over ~30 days — exactly mirroring the live console. */
-function seedAuditEvents(now: number): AuditEvent[] {
-  const events: AuditEvent[] = [];
-  for (let i = 0; i < 250; i += 1) {
-    const { title, action, detail } = seedEventFor(i);
-    const actor = SEED_ACTORS[i % 2 === 0 ? 0 : Math.floor(i / 3) % 4];
-    // First five mirror the live console's timestamps ("Just now", "1h ago"…);
-    // events 6-15 fill out the last 24h, the rest spread back over ~28 days.
-    const minute =
-      i === 0
-        ? 0.3
-        : i < 5
-          ? 60 + i * 1.5
-          : i < 15
-            ? 120 + (i - 5) * 80
-            : 1500 + (i - 15) * 162;
-    events.push({
-      id: `aud-seed-${String(i).padStart(3, "0")}`,
-      title,
-      action,
-      actor: actor.name,
-      detail,
-      email: actor.email,
-      ts: now - Math.round(minute * 60 * 1000),
-    });
-  }
-  return events;
-}
 
 function isValidEvent(e: unknown): e is AuditEvent {
   return (
@@ -143,12 +59,12 @@ export function loadAuditEvents(): AuditEvent[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(AUDIT_STORAGE_KEY);
-    if (!raw) return seedAuditEvents(Date.now());
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return seedAuditEvents(Date.now());
-    let migrated = false;
-    const events = parsed
-      .filter(isValidEvent)
+    if (!Array.isArray(parsed)) return [];
+    const valid = parsed.filter(isValidEvent).filter((event) => !event.id.startsWith("aud-seed-"));
+    let migrated = valid.length !== parsed.length;
+    const events = valid
       .map((e) => {
         const title = humanizeLegacyTitle(e.title);
         if (title !== e.title) migrated = true;
@@ -163,7 +79,7 @@ export function loadAuditEvents(): AuditEvent[] {
     }
     return events;
   } catch {
-    return seedAuditEvents(Date.now());
+    return [];
   }
 }
 

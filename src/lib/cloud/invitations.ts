@@ -95,6 +95,7 @@ export type InvitationRecord = {
   name: string;
   role: string;
   pharmacyName: string | null;
+  pharmacyId?: string | null;
   storeNames: string[];
   inviterName: string;
   expiresAt: string;

@@ -100,19 +100,6 @@ export function stockStatusOf(qty: number, reorderLevel: number): StockStatus {
 /* localStorage store helpers                                          */
 /* ------------------------------------------------------------------ */
 
-/** Loads a list from localStorage, falling back to the provided seed. */
-export function loadPharmacyList<T>(key: string, seed: T[]): T[] {
-  if (typeof window === "undefined") return seed;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return seed;
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as T[]) : seed;
-  } catch {
-    return seed;
-  }
-}
-
 /** Persists a list to localStorage (best-effort). */
 export function savePharmacyList<T>(key: string, list: T[]): void {
   if (typeof window === "undefined") return;

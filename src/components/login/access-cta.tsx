@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { LogIn, UserPlus, type LucideIcon } from "lucide-react";
+import { PulseMark } from "@/components/login/pulse-logo";
 
 /**
  * AccessCta — the landing page's route into the product.
@@ -50,6 +51,13 @@ export function AccessCta({ className }: { className?: string }) {
     >
       {/* gradient hairline border (radius follows the panel) */}
       <span aria-hidden="true" className="card-hairline opacity-60" />
+
+      <div className="mb-6 inline-flex items-center gap-2.5">
+        <PulseMark className="h-9 w-9" glow={false} />
+        <span className="text-brand-gradient text-[27px] font-bold leading-none tracking-tight">
+          Pulse
+        </span>
+      </div>
 
       <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.24em] text-fuchsia-300/80">
         Pulse access

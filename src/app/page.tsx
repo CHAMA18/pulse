@@ -12,9 +12,7 @@ import {
   FinalCta,
   HowItWorks,
   PortalsShowcase,
-  StatsBand,
   TrustStrip,
-  Voices,
 } from "@/components/landing/sections";
 
 /**
@@ -23,9 +21,9 @@ import {
  * The composition: a sticky glass nav; the editorial hero pairing with the
  * access panel; the DemoTheater (Pulse rendering itself on a scrubbable
  * timeline — no video file, no fakery); a capability marquee; a bento of
- * live micro-visuals; honest animated stats; three beats of onboarding;
- * the two portals; the desktop apps; voices from the network; and one
- * closing CTA. The authentication form itself lives at /login.
+ * live micro-visuals; three beats of onboarding; the two portals; the
+ * desktop apps; and one closing CTA. The authentication form itself lives
+ * at /login.
  */
 export default function LandingPage() {
   return (
@@ -57,9 +55,6 @@ export default function LandingPage() {
         {/* bento features */}
         <BentoFeatures />
 
-        {/* honest numbers */}
-        <StatsBand />
-
         {/* three beats */}
         <HowItWorks />
 
@@ -70,9 +65,6 @@ export default function LandingPage() {
         <div className="mx-auto w-full max-w-[1400px] px-5 sm:px-8 lg:px-12">
           <DesktopSection />
         </div>
-
-        {/* voices from the network */}
-        <Voices />
 
         {/* closing CTA */}
         <FinalCta />

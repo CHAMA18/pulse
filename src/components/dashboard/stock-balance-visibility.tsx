@@ -76,27 +76,22 @@ const HEALTH_META: Record<StockHealth, { label: string; pill: string }> = {
   },
 };
 
-/** The two pharmacies that currently share balances with this console. */
-function seedVisibility(): VisibilityPharmacy[] {
-  return [
-    { id: "vis-apex", name: "Apex Health Pharmacy", address: "Salama Park Lusaka", rows: [] },
-    { id: "vis-stackone", name: "StackOne", address: "Lusaka", rows: [] },
-  ];
-}
-
 function loadVisibility(): VisibilityPharmacy[] {
-  if (typeof window === "undefined") return seedVisibility();
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedVisibility();
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return seedVisibility();
+    if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (p): p is VisibilityPharmacy =>
-        !!p && typeof p === "object" && typeof (p as VisibilityPharmacy).name === "string"
+        !!p &&
+        typeof p === "object" &&
+        typeof (p as VisibilityPharmacy).name === "string" &&
+        !["vis-apex", "vis-stackone"].includes(String((p as VisibilityPharmacy).id ?? ""))
     );
   } catch {
-    return seedVisibility();
+    return [];
   }
 }
 

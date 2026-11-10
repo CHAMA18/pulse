@@ -42,16 +42,6 @@ export function AuthExperience({
         </div>
       </div>
 
-      <footer className="relative z-10 border-t border-white/8 py-5">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-5 sm:px-8 lg:px-12">
-          <p className="text-[12px] text-white/35">
-            © {new Date().getFullYear()} Duniya Healthcare · Pulse
-          </p>
-          <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-white/30">
-            Secure account access
-          </p>
-        </div>
-      </footer>
     </main>
   );
 }

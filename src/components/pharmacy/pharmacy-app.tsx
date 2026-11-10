@@ -3,6 +3,7 @@
 import { motion, MotionConfig } from "framer-motion";
 import {
   ArrowLeftRight,
+  BarChart3,
   Bell,
   Boxes,
   Building2,
@@ -34,6 +35,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
@@ -41,6 +43,7 @@ import { PharmacyCatalogue } from "@/components/pharmacy/pharmacy-catalogue";
 import { PharmacyDeliveries } from "@/components/pharmacy/pharmacy-deliveries";
 import { PharmacyInventory } from "@/components/pharmacy/pharmacy-inventory";
 import { PharmacyPOS } from "@/components/pharmacy/pharmacy-pos";
+import { PharmacySalesReport } from "@/components/pharmacy/pharmacy-sales-report";
 import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
 import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
 import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
@@ -49,7 +52,11 @@ import { PharmacyStockMovement } from "@/components/pharmacy/pharmacy-stock-move
 import { PharmacyStockRequests } from "@/components/pharmacy/pharmacy-stock-requests";
 import { PharmacyStores } from "@/components/pharmacy/pharmacy-stores";
 import { PharmacySuppliers } from "@/components/pharmacy/pharmacy-suppliers";
-import { PharmacyUserManagement } from "@/components/pharmacy/pharmacy-user-management";
+import {
+  PharmacyUserManagement,
+  ROLE_META,
+  type PharmacyRole,
+} from "@/components/pharmacy/pharmacy-user-management";
 import {
   PHARMACY_TOUR_STEPS,
   PharmacyWalkthrough,
@@ -91,6 +98,8 @@ import { Switch } from "@/components/ui/switch";
 import { clearStoredPortal, getStoredPortal } from "@/lib/portal";
 import {
   getFirebaseAuth,
+  getFirebaseDb,
+  getInvitedAccountRole,
   getPharmacyRegistrations,
   isAdminUser,
   trackEvent,
@@ -103,6 +112,7 @@ import {
 type PharmacyPage =
   | "home"
   | "pos"
+  | "sales-report"
   | "balance"
   | "inventory"
   | "movement"
@@ -121,6 +131,7 @@ type PharmacyPage =
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   home: "Dashboard",
   pos: "Point of Sale",
+  "sales-report": "Sales Report",
   balance: "Stock Balance",
   inventory: "Inventory",
   movement: "Stock Movement",
@@ -142,6 +153,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
     items: [
       { label: "Dashboard", icon: LayoutDashboard },
       { label: "Point of Sale", icon: ShoppingCart },
+      { label: "Sales Report", icon: BarChart3 },
     ],
   },
   {
@@ -178,6 +190,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
 const LIVE_PAGES: Record<string, PharmacyPage> = {
   Dashboard: "home",
   "Point of Sale": "pos",
+  "Sales Report": "sales-report",
   "Stock Balance": "balance",
   Inventory: "inventory",
   "Stock Movement": "movement",
@@ -194,6 +207,117 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
 };
 
 const QUICK_ACTIONS = ["New sale", "Request stock", "Record movement", "Record delivery"];
+
+const QUICK_ACTION_PAGES: Record<string, PharmacyPage> = {
+  "New sale": "pos",
+  "Request stock": "requests",
+  "Record movement": "movement",
+  "Record delivery": "deliveries",
+};
+
+/**
+ * Pages each role may open — mirrors the capability matrix on User Management.
+ * Cashiers get the counter plus read-only stock visibility; technicians add
+ * movements and deliveries; pharmacists also manage catalogue, suppliers and
+ * orders; managers and owners see the whole console.
+ */
+const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
+  owner: new Set<PharmacyPage>([
+    "home",
+    "pos",
+    "sales-report",
+    "balance",
+    "inventory",
+    "movement",
+    "catalogue",
+    "orders",
+    "requests",
+    "deliveries",
+    "suppliers",
+    "stores",
+    "users",
+    "profile",
+    "settings",
+    "walkthrough",
+  ]),
+  manager: new Set<PharmacyPage>([
+    "home",
+    "pos",
+    "sales-report",
+    "balance",
+    "inventory",
+    "movement",
+    "catalogue",
+    "orders",
+    "requests",
+    "deliveries",
+    "suppliers",
+    "stores",
+    "users",
+    "profile",
+    "settings",
+    "walkthrough",
+  ]),
+  pharmacist: new Set<PharmacyPage>([
+    "home",
+    "pos",
+    "sales-report",
+    "balance",
+    "inventory",
+    "movement",
+    "catalogue",
+    "orders",
+    "requests",
+    "deliveries",
+    "suppliers",
+    "profile",
+    "settings",
+    "walkthrough",
+  ]),
+  technician: new Set<PharmacyPage>([
+    "home",
+    "pos",
+    "sales-report",
+    "balance",
+    "inventory",
+    "movement",
+    "requests",
+    "deliveries",
+    "profile",
+    "settings",
+    "walkthrough",
+  ]),
+  cashier: new Set<PharmacyPage>([
+    "home",
+    "pos",
+    "sales-report",
+    "balance",
+    "inventory",
+    "requests",
+    "profile",
+    "settings",
+    "walkthrough",
+  ]),
+};
+
+const ROLE_ALIASES: Record<string, PharmacyRole> = {
+  owner: "owner",
+  manager: "manager",
+  "pharmacy manager": "manager",
+  pharmacist: "pharmacist",
+  technician: "technician",
+  "pharmacy technician": "technician",
+  cashier: "cashier",
+};
+
+function normalizeRole(value: string | null | undefined): PharmacyRole | undefined {
+  if (!value) return undefined;
+  return ROLE_ALIASES[value.trim().toLowerCase()];
+}
+
+function canOpen(role: PharmacyRole, page: PharmacyPage): boolean {
+  return ROLE_PAGES[role].has(page);
+}
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
@@ -238,7 +362,7 @@ function PharmacySidebar({
   onNavClick: (label: string) => void;
   onQuickAction: (action?: string) => void;
   onClose?: () => void;
-  user: { name: string; email: string; initial: string };
+  user: { name: string; email: string; initial: string; role: PharmacyRole };
   page: PharmacyPage;
   stores: PharmacyStore[];
   activeStore: string;
@@ -360,8 +484,13 @@ function PharmacySidebar({
               <p className="truncate text-[13.5px] font-semibold text-slate-900 dark:text-white">
                 {user.name}
               </p>
-              <span className="mt-0.5 inline-block rounded-full bg-purple-100 px-2 py-px text-[11px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">
-                Owner
+              <span
+                className={cn(
+                  "mt-0.5 inline-block rounded-full px-2 py-px text-[11px] font-semibold",
+                  ROLE_META[user.role].pill
+                )}
+              >
+                {ROLE_META[user.role].label}
               </span>
             </div>
           )}
@@ -373,7 +502,13 @@ function PharmacySidebar({
 
       {/* Navigation */}
       <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary" data-tour="ph-nav">
-        {NAV_SECTIONS.map(({ section, items }) => (
+        {NAV_SECTIONS.map(({ section, items }) => {
+          const visible = items.filter(({ label }) => {
+            const target = LIVE_PAGES[label];
+            return !target || canOpen(user.role, target);
+          });
+          if (visible.length === 0) return null;
+          return (
           <div key={section} className="mt-4 first:mt-1">
             {!collapsed ? (
               <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
@@ -383,7 +518,7 @@ function PharmacySidebar({
               <div className="mx-auto my-3 h-px w-8 bg-slate-100 dark:bg-white/10" />
             )}
             <div className="flex flex-col gap-0.5">
-              {items.map(({ label, icon: Icon }) => {
+              {visible.map(({ label, icon: Icon }) => {
                 const active = LIVE_PAGES[label] === page;
                 return (
                   <button
@@ -416,7 +551,8 @@ function PharmacySidebar({
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Bottom controls */}
@@ -486,7 +622,10 @@ function PharmacySidebar({
           </button>
           {quickOpen && !collapsed && (
             <div className="mb-1 ml-9 mt-0.5 flex flex-col gap-0.5 rounded-lg bg-slate-50 p-1.5 dark:bg-white/5">
-              {QUICK_ACTIONS.map((action) => (
+              {QUICK_ACTIONS.filter((action) => {
+                const target = QUICK_ACTION_PAGES[action];
+                return !target || canOpen(user.role, target);
+              }).map((action) => (
                 <button
                   key={action}
                   type="button"
@@ -532,20 +671,20 @@ function PharmacySidebar({
 /* ------------------------------------------------------------------ */
 
 function PharmacyHome({
-  user,
   pharmacyName,
   pendingReview,
   storeId,
   storeName,
+  isCashier,
   onGoTo,
 }: {
-  user: { name: string; initial: string };
   pharmacyName: string;
   pendingReview: boolean;
   /** Active store scope: "all" or a store id. */
   storeId: string;
   /** Display name of the scoped store ("" for all stores). */
   storeName: string;
+  isCashier: boolean;
   onGoTo: (page: PharmacyPage) => void;
 }) {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -575,7 +714,7 @@ function PharmacyHome({
   const scopedItems = inScope(items);
   const scopedRequests = inScope(requests);
   const scopedDeliveries = inScope(deliveries);
-  const scopedSales = inScope(sales);
+  const scopedSales = inScope(sales.filter((sale) => !sale.reversedAt));
 
   const skuCount = scopedItems.length;
   const units = scopedItems.reduce((acc, entry) => acc + entry.qty, 0);
@@ -659,13 +798,15 @@ function PharmacyHome({
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[13.5px] font-medium text-purple-50/90">
-              {greeting}, {user.name.split(" ")[0]} 👋
+              {greeting}, {pharmacyName} 👋
             </p>
             <h1 className="mt-1.5 text-[24px] font-bold leading-tight tracking-tight text-white sm:text-[26px]">
               {pharmacyName}
             </h1>
             <p className="mt-1.5 max-w-xl text-[13.5px] leading-relaxed text-purple-50/90">
-              Your pharmacy at a glance — stock, requests and deliveries in one place.
+              {isCashier
+                ? "Your counter is ready — open the POS to ring up a customer."
+                : "Your pharmacy at a glance — stock, requests and deliveries in one place."}
             </p>
             {storeId !== "all" && (
               <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white">
@@ -686,14 +827,26 @@ function PharmacyHome({
                 Active
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => onGoTo("requests")}
-              className="inline-flex h-10 items-center gap-2 rounded-md bg-white px-4 text-[13.5px] font-semibold text-purple-700 shadow-[0_8px_20px_-8px_rgba(88,28,135,0.5)] transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-            >
-              <ClipboardList className="h-4 w-4" aria-hidden="true" />
-              Request stock
-            </button>
+            {isCashier ? (
+              <button
+                type="button"
+                onClick={() => onGoTo("pos")}
+                className="inline-flex h-12 items-center gap-2.5 rounded-lg bg-white px-5 text-[15px] font-bold text-purple-700 shadow-[0_10px_24px_-8px_rgba(88,28,135,0.55)] transition-transform hover:-translate-y-0.5 hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              >
+                <ShoppingCart className="h-[18px] w-[18px]" aria-hidden="true" />
+                Open POS
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onGoTo("requests")}
+                className="inline-flex h-10 items-center gap-2 rounded-md bg-white px-4 text-[13.5px] font-semibold text-purple-700 shadow-[0_8px_20px_-8px_rgba(88,28,135,0.5)] transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              >
+                <ClipboardList className="h-4 w-4" aria-hidden="true" />
+                Request stock
+              </button>
+            )}
           </div>
         </div>
       </motion.section>
@@ -772,7 +925,9 @@ function PharmacyHome({
           {attentionItems.length === 0 ? (
             <div className="flex min-h-[64px] items-center justify-center gap-2 px-4 py-5 text-[13.5px] text-slate-500 dark:text-slate-400">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden="true" />
-              All shelves are healthy — nothing needs attention right now.
+              {scopedItems.length === 0
+                ? "No stock recorded yet — add products to your catalogue to start tracking shelves."
+                : "All shelves are healthy — nothing needs attention right now."}
             </div>
           ) : (
             attentionItems.slice(0, 5).map((entry) => (
@@ -815,6 +970,12 @@ function PharmacyHome({
         </div>
         <div className={cn(pharmacyCardCls, "mt-4 p-5")}>
           <ul className="flex flex-col gap-4">
+            {activity.length === 0 && (
+              <li className="flex items-center gap-2 text-[13.5px] text-slate-500 dark:text-slate-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden="true" />
+                No stock requests or deliveries recorded yet.
+              </li>
+            )}
             {activity.map(({ kind, title, when }) => (
               <li key={`${kind}-${title}-${when}`} className="flex items-center gap-3">
                 <span
@@ -859,7 +1020,12 @@ export function PharmacyApp() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [page, setPage] = useState<PharmacyPage>("home");
-  const [user, setUser] = useState({ name: "Pharmacy Owner", email: "", initial: "P" });
+  const [user, setUser] = useState<{
+    name: string;
+    email: string;
+    initial: string;
+    role: PharmacyRole;
+  }>({ name: "Pharmacy Owner", email: "", initial: "P", role: "owner" });
   const [pharmacyName, setPharmacyName] = useState("My Pharmacy");
   const [pendingReview, setPendingReview] = useState(false);
   const [resolved, setResolved] = useState(false);
@@ -905,16 +1071,41 @@ export function PharmacyApp() {
             (r) => r.uid === current.uid || (email && r.email === email.toLowerCase())
           )
         : undefined;
-      if (active) {
-        setUser({
-          name,
-          email,
-          initial: (name[0] ?? "P").toUpperCase(),
-        });
-        setPharmacyName(registration?.pharmacyName ?? name);
-        setPendingReview(Boolean(registration));
-        setResolved(true);
+
+      // The registered name and role live on the Firestore user profile for
+      // accounts provisioned elsewhere — the local registry only knows this device.
+      let registeredName: string | undefined;
+      let role: PharmacyRole | undefined;
+      const db = getFirebaseDb();
+      if (db && current) {
+        try {
+          const snap = await getDoc(doc(db, "User", current.uid));
+          const data = snap.data() as
+            | { pharmacy_name?: string; role?: string; role_label?: string }
+            | undefined;
+          registeredName = data?.pharmacy_name?.trim() || undefined;
+          role = normalizeRole(data?.role ?? data?.role_label);
+        } catch {
+          /* rules or offline — fall back to the invitation/session */
+        }
       }
+      // A team invitation accepted on this device still knows its role even
+      // when the Firestore read is unavailable. Pharmacy owners are the default
+      // for accounts created before roles were stored.
+      role ??= normalizeRole(
+        current ? getInvitedAccountRole(current.uid, email) : null
+      );
+      if (!active) return;
+
+      setUser({
+        name,
+        email,
+        initial: (name[0] ?? "P").toUpperCase(),
+        role: role ?? "owner",
+      });
+      setPharmacyName(registration?.pharmacyName ?? registeredName ?? name);
+      setPendingReview(Boolean(registration));
+      setResolved(true);
     })();
 
     const prefersDark = window.localStorage.getItem("pulse-theme") === "dark";
@@ -938,9 +1129,15 @@ export function PharmacyApp() {
     void trackEvent("pharmacy_dashboard_view");
   }, [bouncing]);
 
+  // Keep the console on a page this role may actually open (e.g. after a
+  // role resolves or an invitation changes it).
+  useEffect(() => {
+    if (resolved && !canOpen(user.role, page)) setPage("home");
+  }, [resolved, user.role, page]);
+
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
-    if (bouncing || !user.email) return;
+    if (bouncing || !user.email || !canOpen(user.role, page)) return;
     recordAudit({
       title: `Viewed ${PAGE_AUDIT_TITLES[page]}`,
       action: "View",
@@ -948,7 +1145,7 @@ export function PharmacyApp() {
       actor: user.name,
       email: user.email,
     });
-  }, [page, user.email, user.name, bouncing]);
+  }, [page, user.email, user.name, user.role, bouncing]);
 
   const toggleDark = (on: boolean) => {
     setDark(on);
@@ -972,6 +1169,13 @@ export function PharmacyApp() {
       : stores.find((store) => store.id === activeStore)?.name ?? "";
 
   const goTo = (target: PharmacyPage) => {
+    if (!canOpen(user.role, target)) {
+      toast({
+        title: "Not available for your role",
+        description: `Your ${ROLE_META[user.role].label} role doesn't include this area.`,
+      });
+      return;
+    }
     setPage(target);
   };
 
@@ -1076,6 +1280,12 @@ export function PharmacyApp() {
     );
   }
 
+  // The tour only visits pages this role can actually open.
+  const tourSteps = PHARMACY_TOUR_STEPS.filter((step) => {
+    if (!step.page) return true;
+    return canOpen(user.role, step.page as PharmacyPage);
+  });
+
   return (
     <MotionConfig reducedMotion="user">
       <div className="flex min-h-dvh bg-[#f6f5fb] text-slate-900 dark:bg-[#0a0413] dark:text-white">
@@ -1175,12 +1385,14 @@ export function PharmacyApp() {
           >
             {page === "pos" ? (
               <PharmacyPOS storeId={activeStore} stores={stores} />
+            ) : page === "sales-report" ? (
+              <PharmacySalesReport storeId={activeStore} stores={stores} />
             ) : page === "catalogue" ? (
               <PharmacyCatalogue stores={stores} onSell={() => goTo("pos")} />
             ) : page === "orders" ? (
               <PharmacyPurchaseOrders storeId={activeStore} />
             ) : page === "inventory" ? (
-              <PharmacyInventory storeId={activeStore} />
+              <PharmacyInventory storeId={activeStore} onManageProducts={() => goTo("catalogue")} />
             ) : page === "movement" ? (
               <PharmacyStockMovement
                 storeId={activeStore}
@@ -1188,7 +1400,11 @@ export function PharmacyApp() {
                 actor={{ name: user.name, email: user.email }}
               />
             ) : page === "walkthrough" ? (
-              <PharmacyWalkthrough onGoTo={(target) => goTo(target as PharmacyPage)} onStartTour={() => setTourOpen(true)} />
+              <PharmacyWalkthrough
+                steps={tourSteps}
+                onGoTo={(target) => goTo(target as PharmacyPage)}
+                onStartTour={() => setTourOpen(true)}
+              />
             ) : page === "balance" ? (
               <PharmacyStockBalance storeId={activeStore} />
             ) : page === "requests" ? (
@@ -1202,7 +1418,7 @@ export function PharmacyApp() {
             ) : page === "users" ? (
               <PharmacyUserManagement stores={stores} pharmacyName={pharmacyName} />
             ) : page === "profile" ? (
-              <PharmacyProfile user={user} />
+              <PharmacyProfile user={user} roleLabel={ROLE_META[user.role].label} />
             ) : page === "settings" ? (
               <PharmacySettings
                 user={user}
@@ -1212,11 +1428,11 @@ export function PharmacyApp() {
               />
             ) : (
               <PharmacyHome
-                user={user}
                 pharmacyName={pharmacyName}
                 pendingReview={pendingReview}
                 storeId={activeStore}
                 storeName={activeStoreName}
+                isCashier={user.role === "cashier"}
                 onGoTo={goTo}
               />
             )}
@@ -1227,7 +1443,7 @@ export function PharmacyApp() {
       {/* Interactive walkthrough — an overlay, so it rides above every page */}
       {tourOpen && (
         <WalkthroughTour
-          steps={PHARMACY_TOUR_STEPS}
+          steps={tourSteps}
           portalLabel="Pharmacy portal"
           onNavigate={(target) => goTo(target as PharmacyPage)}
           onFinish={() => {

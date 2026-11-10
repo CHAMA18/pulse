@@ -9,6 +9,7 @@ import {
   Minus,
   Plus,
   Receipt,
+  RotateCcw,
   Search,
   SearchX,
   ShoppingCart,
@@ -24,10 +25,13 @@ import {
   formatZMW,
   loadCatalogue,
   loadInventory,
+  loadMovements,
   loadSales,
+  nextMovementId,
   nextId,
   resolveStoreId,
   saveInventory,
+  saveMovements,
   saveSales,
   stockForProduct,
   type CatalogueProduct,
@@ -35,6 +39,7 @@ import {
   type PharmacyStore,
   type POSPaymentMethod,
   type POSSale,
+  type POSSaleLine,
 } from "@/components/pharmacy/pharmacy-data";
 import {
   PageHeader,
@@ -45,12 +50,17 @@ import { recordAudit } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
+import { syncPharmacySales } from "@/lib/cloud/pharmacy-sales";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 /* ------------------------------------------------------------------ */
 /* Point of Sale — search, tap, charge                                 */
@@ -95,10 +105,15 @@ export function PharmacyPOS({
   const [method, setMethod] = useState<POSPaymentMethod>("cash");
   const [tendered, setTendered] = useState("");
   const [receipt, setReceipt] = useState<POSSale | null>(null);
+  const [saleToReverse, setSaleToReverse] = useState<POSSale | null>(null);
+  const [saleSearch, setSaleSearch] = useState("");
+  const [reversalReason, setReversalReason] = useState("");
+  const [refundHandled, setRefundHandled] = useState(false);
   const [actor, setActor] = useState({ name: "", email: "" });
   // Hides the mobile review bar once the payment panel itself is on screen.
   const [cartInView, setCartInView] = useState(false);
   const cartRef = useRef<HTMLElement>(null);
+  const didBackfillSales = useRef(false);
 
   // Restore the shelves, the catalogue, the day's sales + the identity.
   useEffect(() => {
@@ -130,6 +145,24 @@ export function PharmacyPOS({
       cancelAnimationFrame(raf);
     };
   }, []);
+
+  // Backfill this device's existing transactions and retry any earlier
+  // offline syncs whenever the counter has its local sales and store list.
+  useEffect(() => {
+    if (!hydrated || didBackfillSales.current) return;
+    didBackfillSales.current = true;
+    if (sales.length === 0) return;
+    const salesWithStoreNames = sales.map((sale) => ({
+      ...sale,
+      storeName:
+        sale.storeName ??
+        stores.find((store) => store.id === resolveStoreId(sale))?.name ??
+        "",
+    }));
+    void syncPharmacySales(salesWithStoreNames).catch(() => {
+      // Local POS remains available offline; a later visit retries the sync.
+    });
+  }, [hydrated, sales, stores]);
 
   // "/" anywhere jumps to the search box — the counter never waits for a mouse.
   useEffect(() => {
@@ -235,7 +268,7 @@ export function PharmacyPOS({
   const tenderedNum = Number.parseFloat(tendered) || 0;
   const changeDue = tenderedNum - total;
   const cashShort = method === "cash" && tenderedNum < total;
-  const canCharge = hydrated && cart.length > 0 && total > 0 && !cashShort;
+  const canCharge = hydrated && cart.length > 0 && total > 0 && !cashShort && Boolean(sellingStore);
 
   const quickTenders = useMemo(() => {
     if (total <= 0) return [];
@@ -248,11 +281,22 @@ export function PharmacyPOS({
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const todaysSales = sales.filter(
-    (sale) => sale.soldAt >= startOfToday.getTime() && resolveStoreId(sale) === sellingStoreId
+    (sale) => !sale.reversedAt && sale.soldAt >= startOfToday.getTime() && resolveStoreId(sale) === sellingStoreId
   );
   const todayItems = todaysSales.reduce((acc, sale) => acc + sale.lines.reduce((a, l) => a + l.qty, 0), 0);
   const todayRevenue = todaysSales.reduce((acc, sale) => acc + sale.total, 0);
   const avgBasket = todaysSales.length > 0 ? Math.round(todayRevenue / todaysSales.length) : 0;
+  const salesQuery = saleSearch.trim().toLowerCase();
+  const visibleSales = sales
+    .filter((sale) => scopeAll || resolveStoreId(sale) === sellingStoreId)
+    .filter((sale) =>
+      !salesQuery ||
+      sale.id.toLowerCase().includes(salesQuery) ||
+      sale.servedBy.toLowerCase().includes(salesQuery) ||
+      sale.lines.some((line) => line.name.toLowerCase().includes(salesQuery))
+    )
+    .sort((a, b) => b.soldAt - a.soldAt)
+    .slice(0, 12);
 
   const completeSale = () => {
     if (!canCharge || !sellingStore) return;
@@ -272,14 +316,18 @@ export function PharmacyPOS({
       ...(method === "cash" ? { tendered: tenderedNum, change: changeDue } : {}),
       soldAt: Date.now(),
       storeId: sellingStore.id,
+      storeName: sellingStore.name,
       servedBy: actor.name || "Front counter",
     };
 
     // Walk the shelves: take each line's quantity, preferring this counter's
     // store, then spilling to the other branches when the view pools stock.
     const next = items.map((row) => ({ ...row }));
+    const nextMovements = loadMovements();
+    const allocatedLines: POSSaleLine[] = [];
     for (const line of sale.lines) {
       let remaining = line.qty;
+      const stockAllocations: NonNullable<POSSaleLine["stockAllocations"]> = [];
       const rows = next
         .filter(
           (row) => row.name === line.name && (scopeAll || resolveStoreId(row) === sellingStoreId)
@@ -291,16 +339,53 @@ export function PharmacyPOS({
       for (const row of rows) {
         if (remaining <= 0) break;
         const take = Math.min(row.qty, remaining);
+        if (take <= 0) continue;
         row.qty -= take;
         remaining -= take;
+        const store = resolveStoreId(row);
+        stockAllocations.push({
+          inventoryItemId: row.id,
+          qty: take,
+          storeId: store,
+          category: row.category,
+          batch: row.batch,
+          expiry: row.expiry,
+          reorderLevel: row.reorderLevel,
+        });
+        nextMovements.push({
+          id: nextMovementId(nextMovements),
+          at: sale.soldAt,
+          type: "issue",
+          itemId: row.id,
+          productName: line.name,
+          batch: row.batch,
+          qty: -take,
+          fromStoreId: store,
+          reason: "POS sale",
+          note: sale.id,
+          actor: { name: sale.servedBy, email: actor.email },
+        });
       }
+      if (remaining > 0) {
+        toast({
+          title: "Stock changed before checkout",
+          description: `Only ${line.qty - remaining} ${line.name} could be allocated. Review the cart and try again.`,
+        });
+        return;
+      }
+      allocatedLines.push({ ...line, stockAllocations });
     }
+    sale.lines = allocatedLines;
     setItems(next);
     saveInventory(next);
+    saveMovements(nextMovements);
 
     const nextSales = [sale, ...sales];
     setSales(nextSales);
     saveSales(nextSales);
+    void syncPharmacySales([sale]).catch(() => {
+      // Local POS remains available offline; the next visit retries the sync.
+    });
 
     if (actor.email) {
       recordAudit({
@@ -315,6 +400,148 @@ export function PharmacyPOS({
 
     setReceipt(sale);
     clearSale();
+  };
+
+  const openReversal = (sale: POSSale) => {
+    setSaleToReverse(sale);
+    setReversalReason("");
+    setRefundHandled(false);
+  };
+
+  const closeReversal = () => {
+    setSaleToReverse(null);
+    setReversalReason("");
+    setRefundHandled(false);
+  };
+
+  const reverseSale = () => {
+    if (!saleToReverse || reversalReason.trim().length < 3 || !refundHandled) return;
+
+    const latestSales = loadSales();
+    const original = latestSales.find((sale) => sale.id === saleToReverse.id);
+    if (!original) {
+      setSales(latestSales);
+      closeReversal();
+      toast({
+        title: "Sale not found",
+        description: "Refresh the sales list and select the transaction again.",
+      });
+      return;
+    }
+    if (original.reversedAt) {
+      setSales(latestSales);
+      closeReversal();
+      toast({
+        title: "Sale already reversed",
+        description: "This sale has already been reversed and its stock returned.",
+      });
+      return;
+    }
+
+    const now = Date.now();
+    const nextItems = loadInventory().map((item) => ({ ...item }));
+    const nextMovements = loadMovements();
+    let unitsRestored = 0;
+    const addReturnMovement = (item: InventoryItem, qty: number, productName: string) => {
+      nextMovements.push({
+        id: nextMovementId(nextMovements),
+        at: now,
+        type: "return",
+        itemId: item.id,
+        productName,
+        batch: item.batch,
+        qty,
+        fromStoreId: resolveStoreId(item),
+        reason: "POS sale reversal",
+        note: `${original.id} · ${reversalReason.trim()}`,
+        actor: { name: actor.name || "Front counter", email: actor.email },
+      });
+      unitsRestored += qty;
+    };
+
+    for (const line of original.lines) {
+      const allocations = line.stockAllocations;
+      if (allocations?.length) {
+        for (const allocation of allocations) {
+          const stockIndex = nextItems.findIndex((item) => item.id === allocation.inventoryItemId);
+          let restoredItem: InventoryItem;
+          if (stockIndex >= 0) {
+            restoredItem = {
+              ...nextItems[stockIndex],
+              qty: nextItems[stockIndex].qty + allocation.qty,
+            };
+            nextItems[stockIndex] = restoredItem;
+          } else {
+            restoredItem = {
+              id: allocation.inventoryItemId,
+              name: line.name,
+              category: allocation.category,
+              batch: allocation.batch,
+              expiry: allocation.expiry,
+              qty: allocation.qty,
+              reorderLevel: allocation.reorderLevel,
+              unitPrice: line.unitPrice,
+              storeId: allocation.storeId,
+            };
+            nextItems.push(restoredItem);
+          }
+          addReturnMovement(restoredItem, allocation.qty, line.name);
+        }
+      } else {
+        // Older sales did not keep batch allocation details; return them to the sale's store.
+        const restoredItem: InventoryItem = {
+          id: nextId(nextItems, "inv"),
+          name: line.name,
+          category: catalogue.find((product) => product.id === line.productId)?.category ?? "Uncategorised",
+          batch: `REV-${original.id}`,
+          expiry: new Date(now + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          qty: line.qty,
+          reorderLevel: 5,
+          unitPrice: line.unitPrice,
+          storeId: resolveStoreId(original),
+        };
+        nextItems.push(restoredItem);
+        addReturnMovement(restoredItem, line.qty, line.name);
+      }
+    }
+
+    const reversedSale: POSSale = {
+      ...original,
+      reversedAt: now,
+      reversedBy: actor.name || "Front counter",
+      reversalReason: reversalReason.trim(),
+      refundHandled: true,
+    };
+    const nextSales = latestSales.map((sale) => (sale.id === original.id ? reversedSale : sale));
+    setItems(nextItems);
+    saveInventory(nextItems);
+    saveMovements(nextMovements);
+    setSales(nextSales);
+    saveSales(nextSales);
+    void syncPharmacySales([reversedSale]).catch(() => {
+      // Local POS remains available offline; the next visit retries the sync.
+    });
+
+    if (actor.email) {
+      recordAudit({
+        title: "POS Sale Reversed",
+        action: "Update",
+        detail: `${original.id} · ${formatZMW(original.total)} · ${unitsRestored} units returned · ${reversalReason.trim()}`,
+        actor: actor.name,
+        email: actor.email,
+      });
+    }
+    void trackEvent("pharmacy_pos_sale_reversed", {
+      sale: original.id,
+      total: original.total,
+      units: unitsRestored,
+      method: original.method,
+    });
+    closeReversal();
+    toast({
+      title: "Sale reversed",
+      description: `${unitsRestored} units returned to stock. The sale remains in history with its reversal reason.`,
+    });
   };
 
   const methodLabel = PAYMENT_METHODS.find((m) => m.id === method)?.label ?? "";
@@ -334,17 +561,26 @@ export function PharmacyPOS({
         subtitle="Search, tap, charge — a complete checkout in under two minutes"
         tourId="ph-pos"
         actions={
-          sellingStore ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-3 py-1.5 text-[12px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">
-              <Store className="h-3.5 w-3.5" aria-hidden="true" />
-              Selling at {sellingStore.name}
-            </span>
-          ) : undefined
+          <>
+            {sellingStore && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-3 py-1.5 text-[12px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">
+                <Store className="h-3.5 w-3.5" aria-hidden="true" />
+                Selling at {sellingStore.name}
+              </span>
+            )}
+          </>
         }
       />
       <h2 id="pharmacy-pos-title" className="sr-only">
         Point of Sale
       </h2>
+
+      {hydrated && stores.length === 0 && (
+        <div className="mt-5 flex items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+          <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          No store on this account yet — add one under Stores before taking payments.
+        </div>
+      )}
 
       {/* Today at this counter */}
       <div className={cn(pharmacyCardCls, "mt-5 grid grid-cols-2 gap-3 p-4 sm:grid-cols-4")}>
@@ -415,19 +651,32 @@ export function PharmacyPOS({
           {filtered.length === 0 ? (
             <div className={cn(pharmacyCardCls, "mt-3 flex min-h-[160px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center")}>
               <SearchX className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
-              <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
-                No products match {query.trim() ? `"${query.trim()}"` : "this filter"}.
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  setCategory("All");
-                }}
-                className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-              >
-                Clear search
-              </button>
+              {catalogue.length === 0 ? (
+                <>
+                  <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                    No products in the catalogue yet.
+                  </p>
+                  <p className="text-[12.5px] text-slate-400 dark:text-slate-500">
+                    Add your first product under Product Catalogue to start selling at the counter.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                    No products match {query.trim() ? `"${query.trim()}"` : "this filter"}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery("");
+                      setCategory("All");
+                    }}
+                    className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                  >
+                    Clear search
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
@@ -768,6 +1017,86 @@ export function PharmacyPOS({
         </div>
       )}
 
+      <section className="mt-8" aria-labelledby="pos-recent-sales-title">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
+            <Receipt className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div>
+            <h2 id="pos-recent-sales-title" className="text-[18px] font-bold tracking-tight text-slate-900 dark:text-white">
+              Recent sales
+            </h2>
+            <p className="text-[12.5px] text-slate-500 dark:text-slate-400">
+              Reverse an incorrect sale with a reason and return its stock to the recorded shelves.
+            </p>
+          </div>
+          <div className="relative ml-auto w-full sm:max-w-[260px]">
+            <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={saleSearch}
+              onChange={(event) => setSaleSearch(event.target.value)}
+              placeholder="Find a sale or product…"
+              aria-label="Search sales by ID, product, or cashier"
+              className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[12.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            />
+          </div>
+        </div>
+        <div className={cn(pharmacyCardCls, "overflow-hidden")}>
+          {visibleSales.length === 0 ? (
+            <p className="px-5 py-6 text-center text-[13px] text-slate-500 dark:text-slate-400">
+              {salesQuery ? "No sales match that search." : "Completed sales will appear here."}
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-white/5">
+              {visibleSales.map((sale) => {
+                const saleItemCount = sale.lines.reduce((sum, line) => sum + line.qty, 0);
+                return (
+                  <li key={sale.id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-4 sm:px-5">
+                    <div className="min-w-[170px] flex-1">
+                      <p className="text-[13.5px] font-bold text-slate-900 dark:text-white">{sale.id}</p>
+                      <p className="mt-0.5 text-[11.5px] text-slate-500 dark:text-slate-400">
+                        {new Date(sale.soldAt).toLocaleString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })} · {sale.servedBy}
+                      </p>
+                      {sale.reversedAt && (
+                        <p className="mt-1 text-[11.5px] text-rose-600 dark:text-rose-300">
+                          Reversed {new Date(sale.reversedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by {sale.reversedBy || "staff"} · {sale.reversalReason || "No reason recorded"}
+                        </p>
+                      )}
+                    </div>
+                    <div className="min-w-[100px] text-[12.5px] text-slate-500 dark:text-slate-400">
+                      {saleItemCount} item{saleItemCount === 1 ? "" : "s"} · {sale.method === "mobile" ? "Mobile money" : sale.method}
+                    </div>
+                    <p className="min-w-[84px] text-[14px] font-bold tabular-nums text-slate-900 dark:text-white">
+                      {formatZMW(sale.total)}
+                    </p>
+                    {sale.reversedAt ? (
+                      <span className="inline-flex h-8 items-center rounded-full bg-rose-100 px-3 text-[11.5px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
+                        Reversed
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openReversal(sale)}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-rose-200 bg-white px-3 text-[12.5px] font-semibold text-rose-700 transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 dark:border-rose-500/25 dark:bg-transparent dark:text-rose-300 dark:hover:bg-rose-500/10"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                        Reverse sale
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </section>
+
       {/* Receipt */}
       <Dialog open={receipt !== null} onOpenChange={(open) => !open && setReceipt(null)}>
         <DialogContent className="max-w-sm p-0 outline-none sm:max-w-sm">
@@ -875,6 +1204,76 @@ export function PharmacyPOS({
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={saleToReverse !== null}
+        onOpenChange={(open) => {
+          if (!open) closeReversal();
+        }}
+      >
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reverse sale</DialogTitle>
+            <DialogDescription>
+              This marks the POS sale reversed, returns its sold quantities to stock, and records the reason. Pulse does not send payment refunds; handle the cash refund or card/mobile void in your till or payment provider first.
+            </DialogDescription>
+          </DialogHeader>
+
+          {saleToReverse && (
+            <div className="grid gap-4">
+              <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-white/5">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[13px] font-bold text-slate-900 dark:text-white">{saleToReverse.id}</p>
+                  <p className="text-[14px] font-bold tabular-nums text-slate-900 dark:text-white">{formatZMW(saleToReverse.total)}</p>
+                </div>
+                <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">
+                  {saleToReverse.lines.map((line) => `${line.name} × ${line.qty}`).join(" · ")}
+                </p>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="pos-reversal-reason">Reason for reversal</Label>
+                <Textarea
+                  id="pos-reversal-reason"
+                  value={reversalReason}
+                  onChange={(event) => setReversalReason(event.target.value)}
+                  placeholder="e.g. Wrong product entered; customer payment returned"
+                  rows={3}
+                />
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                <input
+                  type="checkbox"
+                  checked={refundHandled}
+                  onChange={(event) => setRefundHandled(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-purple-600"
+                />
+                <span>I have completed the cash refund or card/mobile void outside Pulse.</span>
+              </label>
+            </div>
+          )}
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={closeReversal}
+              className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-[13px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-transparent dark:text-slate-300 dark:hover:bg-white/5"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={reverseSale}
+              disabled={reversalReason.trim().length < 3 || !refundHandled}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-rose-600 px-4 text-[13px] font-bold text-white transition-colors hover:bg-rose-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              Reverse and return stock
+            </button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

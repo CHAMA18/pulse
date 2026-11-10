@@ -5,6 +5,7 @@ import {
   ArrowLeftRight,
   Package,
   PackageX,
+  Plus,
   Search,
   SearchX,
   type LucideIcon,
@@ -18,6 +19,7 @@ import {
 } from "@/components/pharmacy/pharmacy-data";
 import {
   PageHeader,
+  brandBtnCls,
   pharmacyCardCls,
   stockStatusOf,
   type StockStatus,
@@ -50,7 +52,13 @@ function StatChip({ value, label }: { value: string; label: string }) {
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
+export function PharmacyInventory({
+  storeId = "all",
+  onManageProducts,
+}: {
+  storeId?: string;
+  onManageProducts?: () => void;
+}) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [query, setQuery] = useState("");
@@ -101,6 +109,16 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
         title="Inventory"
         subtitle="Stock on hand across your shelves — read-only; adjust under Stock Movement"
         tourId="ph-inventory"
+        actions={onManageProducts ? (
+          <button
+            type="button"
+            onClick={onManageProducts}
+            className={cn(brandBtnCls, "h-10 px-4 text-[13px] font-semibold")}
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add or import products
+          </button>
+        ) : undefined}
       />
       <h2 id="pharmacy-inventory-title" className="sr-only">
         Inventory
@@ -163,19 +181,38 @@ export function PharmacyInventory({ storeId = "all" }: { storeId?: string }) {
         {filtered.length === 0 ? (
           <div className="flex min-h-[140px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center">
             <FilterIcon className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
-            <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
-              No items match {query.trim() ? `"${query.trim()}"` : "this filter"}.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setQuery("");
-                setFilter("all");
-              }}
-              className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-            >
-              Clear search & filters
-            </button>
+            {visible.length === 0 ? (
+              <>
+                <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                  No stock recorded yet — add products with a price and opening quantity, or receive goods in.
+                </p>
+                {onManageProducts && (
+                  <button
+                    type="button"
+                    onClick={onManageProducts}
+                    className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                  >
+                    Add or import products
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                  No items match {query.trim() ? `"${query.trim()}"` : "this filter"}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setFilter("all");
+                  }}
+                  className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                >
+                  Clear search & filters
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

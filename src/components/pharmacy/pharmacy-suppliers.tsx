@@ -223,19 +223,28 @@ export function PharmacySuppliers({ onGoToRequests }: { onGoToRequests: () => vo
       {hydrated && filtered.length === 0 ? (
         <div className={cn(pharmacyCardCls, "mt-5 flex min-h-[160px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center")}>
           <EmptyIcon className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
-          <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
-            No suppliers match {query.trim() ? `"${query.trim()}"` : "this filter"}.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setQuery("");
-              setChip("All");
-            }}
-            className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-          >
-            Clear search & filters
-          </button>
+          {suppliers.length === 0 ? (
+            <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+              No suppliers in the directory yet — verified network partners appear here once they
+              join.
+            </p>
+          ) : (
+            <>
+              <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+                No suppliers match {query.trim() ? `"${query.trim()}"` : "this filter"}.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  setChip("All");
+                }}
+                className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+              >
+                Clear search & filters
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <motion.div

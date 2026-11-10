@@ -326,7 +326,8 @@ export function PharmacyStores({
       const store: PharmacyStore = {
         id: nextStoreId(stores),
         ...draft,
-        isMain: false,
+        // The account's first storefront becomes its main store immediately.
+        isMain: stores.length === 0,
         createdAt: Date.now(),
       };
       onStoresChange([...stores, store]);
@@ -472,8 +473,32 @@ export function PharmacyStores({
         animate="show"
         className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3"
       >
-        {stores.map((store) => {
-          const stats = statsFor(store.id);
+        {stores.length === 0 ? (
+          <div
+            className={cn(
+              pharmacyCardCls,
+              "col-span-full flex min-h-[190px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center"
+            )}
+          >
+            <Warehouse className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
+            <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
+              No stores on this account yet.
+            </p>
+            <p className="text-[12.5px] text-slate-400 dark:text-slate-500">
+              Add your first storefront to record stock, sales and requests against it.
+            </p>
+            <button
+              type="button"
+              onClick={openAdd}
+              className="mt-1 inline-flex h-9 items-center gap-1.5 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-3.5 text-[13px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add your first store
+            </button>
+          </div>
+        ) : (
+          stores.map((store) => {
+            const stats = statsFor(store.id);
           return (
             <motion.article
               key={store.id}
@@ -575,7 +600,8 @@ export function PharmacyStores({
               </p>
             </motion.article>
           );
-        })}
+          })
+        )}
       </motion.div>
 
       <p className="mt-3 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">

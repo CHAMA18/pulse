@@ -33,7 +33,7 @@ export const PULSE_TOUR_STEPS: WalkthroughStep[] = [
   {
     id: "pulse-nav",
     title: "One sidebar, three neighbourhoods",
-    body: "Main is the network overview. Admin keeps the record straight. Pulse Network is where pharmacies, stock and suppliers live.",
+    body: "Main is the network overview. Admin keeps the record straight. Pulse Network brings together pharmacy sales, pharmacies, the product catalogue, stock movements, stock visibility and suppliers.",
     target: "pulse-nav",
   },
   {
@@ -63,6 +63,13 @@ export const PULSE_TOUR_STEPS: WalkthroughStep[] = [
     page: "pharmacies",
     target: "pulse-pharmacies",
     body: "Every pharmacy on the network with its stores and onboarding state. Review new registrations and welcome them in.",
+  },
+  {
+    id: "pulse-sales",
+    title: "Sales Report — network POS activity",
+    page: "sales",
+    target: "pulse-sales",
+    body: "Review POS transactions from each pharmacy by date, cashier, store and payment method. Open a sale for its product lines, quantities, prices and reversal notes.",
   },
   {
     id: "pulse-stock",
@@ -95,6 +102,7 @@ const CHAPTER_ICONS: Record<string, LucideIcon> = {
   "pulse-audit": History,
   "pulse-users": UserCog,
   "pulse-pharmacies": LayoutGrid,
+  "pulse-sales": BarChart3,
   "pulse-stock": Eye,
   "pulse-suppliers": Store,
 };
@@ -102,11 +110,19 @@ const CHAPTER_ICONS: Record<string, LucideIcon> = {
 export function DashboardWalkthrough({
   onGoTo,
   onStartTour,
+  allowedPages,
 }: {
   onGoTo: (page: string) => void;
   onStartTour: () => void;
+  /** Hides chapters whose page the signed-in role cannot open. */
+  allowedPages?: (page: string) => boolean;
 }) {
-  const chapters = PULSE_TOUR_STEPS.filter((step) => step.id !== "pulse-welcome" && step.id !== "pulse-finish");
+  const chapters = PULSE_TOUR_STEPS.filter(
+    (step) =>
+      step.id !== "pulse-welcome" &&
+      step.id !== "pulse-finish" &&
+      (!step.page || !allowedPages || allowedPages(step.page))
+  );
 
   return (
     <div aria-labelledby="pulse-walkthrough-title">

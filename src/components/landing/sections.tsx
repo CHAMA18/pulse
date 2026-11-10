@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Activity,
@@ -9,12 +8,10 @@ import {
   BadgeCheck,
   ClipboardCheck,
   LayoutGrid,
-  MailCheck,
   ScanLine,
   ShieldCheck,
   ShoppingCart,
   Store,
-  Users,
   type LucideIcon,
 } from "lucide-react";
 import { PulseMark } from "@/components/login/pulse-logo";
@@ -218,33 +215,6 @@ function MiniLedger() {
   );
 }
 
-function MiniInvite() {
-  return (
-    <div className="mt-5 overflow-hidden rounded-xl border border-white/8">
-      <div className="flex items-center justify-between bg-gradient-to-r from-fuchsia-600 via-purple-600 to-purple-800 px-3 py-2">
-        <span className="flex items-center gap-1 text-[10.5px] font-bold text-white">
-          <span aria-hidden="true">∿</span> Pulse
-        </span>
-        <span className="font-mono text-[7px] uppercase tracking-[0.16em] text-white/70">
-          Pharmacy, in rhythm
-        </span>
-      </div>
-      <div className="space-y-1.5 bg-[#120a20]/80 p-3">
-        <p className="text-[10.5px] font-semibold text-white/85">
-          Join Chungu Chemist Lusaka
-        </p>
-        <p className="text-[9.5px] text-white/45">
-          Pharmacist · Cairo Road Main Store
-        </p>
-        <span className="btn-brand inline-flex items-center gap-1 rounded px-2 py-1 text-[9px] font-semibold text-white">
-          <MailCheck className="h-2.5 w-2.5" aria-hidden="true" />
-          Accept invitation
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function MiniStores() {
   const stores = [
     { name: "Cairo Road Main", on: true },
@@ -337,13 +307,6 @@ const CELLS: BentoCell[] = [
     visual: <MiniLedger />,
   },
   {
-    title: "The team, in rhythm",
-    body: "Branded invitations carry the role, the store access and your note — and every accept lands in the audit trail.",
-    Icon: Users,
-    span: "",
-    visual: <MiniInvite />,
-  },
-  {
     title: "One network, many shelves",
     body: "Create stores, declare the main shelf, and switch the whole console with one tap.",
     Icon: Store,
@@ -412,81 +375,6 @@ export function BentoFeatures() {
                 </p>
               ) : null}
             </motion.article>
-          ))}
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* StatsBand — animated counters                                       */
-/* ------------------------------------------------------------------ */
-
-const STATS: { value: number; suffix: string; prefix: string; label: string; decimals?: number }[] = [
-  { value: 16, suffix: "", prefix: "", label: "SKUs live in the demo console" },
-  { value: 120, prefix: "< ", suffix: "s", label: "from first tap to paid receipt" },
-  { value: 16, suffix: "", prefix: "", label: "guided walkthrough steps, both portals" },
-  { value: 72, suffix: " BPM", prefix: "", label: "the ambient heartbeat of the brand" },
-];
-
-function CountUp({ target, prefix, suffix }: { target: number; prefix: string; suffix: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [started, setStarted] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      ([entry]) => entry.isIntersecting && setStarted(true),
-      { threshold: 0.6 }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !started) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      el.textContent = `${prefix}${target}${suffix}`;
-      return;
-    }
-    const t0 = performance.now();
-    const dur = 1400;
-    let raf = 0;
-    const step = (now: number) => {
-      const x = Math.min(1, (now - t0) / dur);
-      el.textContent = `${prefix}${Math.round(target * (1 - Math.pow(1 - x, 3)))}${suffix}`;
-      if (x < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [started, target, prefix, suffix]);
-
-  return (
-    <span
-      ref={ref}
-      suppressHydrationWarning
-      className="font-mono text-[clamp(2.2rem,4vw,3.2rem)] font-bold leading-none tracking-tight text-white"
-    >
-      {`${prefix}${target}${suffix}`}
-    </span>
-  );
-}
-
-export function StatsBand() {
-  return (
-    <section aria-label="Pulse by the numbers" className="relative py-10 sm:py-14">
-      <div className="mx-auto w-full max-w-[1180px] px-5 sm:px-8 lg:px-12">
-        <Reveal className="grid grid-cols-2 gap-x-6 gap-y-10 rounded-3xl border border-white/10 bg-white/[0.03] px-6 py-10 backdrop-blur-sm sm:px-10 lg:grid-cols-4">
-          {STATS.map(({ value, suffix, prefix, label }) => (
-            <div key={label} className="text-center">
-              <CountUp target={value} prefix={prefix} suffix={suffix} />
-              <p className="mx-auto mt-3 max-w-[190px] text-[12px] leading-snug text-white/45">
-                {label}
-              </p>
-            </div>
           ))}
         </Reveal>
       </div>
@@ -632,76 +520,6 @@ export function PortalsShowcase() {
                   />
                 </Link>
               </article>
-            </Reveal>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Voices — from the demo world of the product                          */
-/* ------------------------------------------------------------------ */
-
-const VOICES = [
-  {
-    quote:
-      "The counter used to be a notebook and a hunch. Now the shelf, the receipt and the ledger are the same thing — a sale takes a minute and the stock is already true.",
-    name: "Chungu Chipimo Chama",
-    role: "Owner, Chungu Chemist Lusaka",
-    initials: "C",
-  },
-  {
-    quote:
-      "My invitation arrived in seconds with my role and my store already set. I accepted, set a password, and I was serving — no setup call, no waiting.",
-    name: "Bupe Mwansa",
-    role: "Pharmacist, Cairo Road Main Store",
-    initials: "B",
-  },
-  {
-    quote:
-      "Onboarding a new pharmacy is one review click. The welcome email, the team invites and the audit trail are already in rhythm before they open the door.",
-    name: "Duniya Kachepa",
-    role: "Network administration, Pulse",
-    initials: "D",
-  },
-];
-
-export function Voices() {
-  return (
-    <section aria-labelledby="voices-title" className="relative py-16 sm:py-24">
-      <div className="mx-auto w-full max-w-[1180px] px-5 sm:px-8 lg:px-12">
-        <SectionHead
-          eyebrow="From the network"
-          title={
-            <>
-              The people the pulse
-              <br />
-              <span className="text-brand-gradient">beats for.</span>
-            </>
-          }
-        />
-        <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-3">
-          {VOICES.map(({ quote, name, role, initials }, i) => (
-            <Reveal key={name} delay={i * 0.1}>
-              <figure className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.035] p-7 backdrop-blur-sm">
-                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6 text-fuchsia-400/60" fill="currentColor">
-                  <path d="M10 7H6a3 3 0 0 0-3 3v7h7v-7H7a3 3 0 0 1 3-3Zm11 0h-4a3 3 0 0 0-3 3v7h7v-7h-3a3 3 0 0 1 3-3Z" />
-                </svg>
-                <blockquote className="mt-4 flex-1 text-[14px] leading-relaxed text-white/70">
-                  “{quote}”
-                </blockquote>
-                <figcaption className="mt-6 flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-purple-700 text-[12px] font-bold text-white">
-                    {initials}
-                  </span>
-                  <span>
-                    <span className="block text-[13px] font-semibold text-white/85">{name}</span>
-                    <span className="block text-[11.5px] text-white/40">{role}</span>
-                  </span>
-                </figcaption>
-              </figure>
             </Reveal>
           ))}
         </div>

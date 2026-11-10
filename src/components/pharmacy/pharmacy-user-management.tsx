@@ -60,7 +60,7 @@ import {
 /* ------------------------------------------------------------------ */
 
 /** The roles on the Pharmacy side of the interface. */
-type PharmacyRole = "owner" | "manager" | "pharmacist" | "technician" | "cashier";
+export type PharmacyRole = "owner" | "manager" | "pharmacist" | "technician" | "cashier";
 type MemberStatus = "active" | "invited" | "suspended";
 
 type PharmacyMember = {
@@ -76,13 +76,14 @@ type PharmacyMember = {
   lastActive: number | null;
 };
 
-const STORAGE_KEY = "pulse.pharmacy-members.v1";
+// v2 excludes the locally fabricated roster that older builds persisted.
+const STORAGE_KEY = "pulse.pharmacy-members.v2";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DAY = 24 * 60 * 60 * 1000;
 
 const ROLE_OPTIONS: PharmacyRole[] = ["owner", "manager", "pharmacist", "technician", "cashier"];
 
-const ROLE_META: Record<PharmacyRole, { label: string; pill: string; blurb: string }> = {
+export const ROLE_META: Record<PharmacyRole, { label: string; pill: string; blurb: string }> = {
   owner: {
     label: "Owner",
     pill: "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
@@ -133,95 +134,23 @@ const ROLE_ACCESS: Record<PharmacyRole, boolean[]> = {
   cashier: [true, true, false, true, false, false, false, false, false, false, false],
 };
 
-/* ------------------------------------------------------------------ */
-/* Seed — mirrors the live pharmacy team                               */
-/* ------------------------------------------------------------------ */
-
-const SEED_MEMBERS: PharmacyMember[] = [
-  {
-    id: "mem-owner",
-    name: "Chungu Chama",
-    email: "chungu90@thestackone.com",
-    phone: "+260 97 000 2000",
-    role: "owner",
-    storeIds: ["all"],
-    status: "active",
-    invitedAt: null,
-    lastActive: Date.now() - 4 * 60 * 1000,
-  },
-  {
-    id: "mem-manager",
-    name: "Mutale Phiri",
-    email: "mutale.phiri@chamachungu.co.zm",
-    phone: "+260 96 774 5510",
-    role: "manager",
-    storeIds: ["all"],
-    status: "active",
-    invitedAt: null,
-    lastActive: Date.now() - 26 * 60 * 60 * 1000,
-  },
-  {
-    id: "mem-pharmacist",
-    name: "Bupe Mwansa",
-    email: "bupe.mwansa@chamachungu.co.zm",
-    phone: "+260 95 118 7742",
-    role: "pharmacist",
-    storeIds: ["st-main", "st-kabwata"],
-    status: "active",
-    invitedAt: null,
-    lastActive: Date.now() - 2 * 60 * 60 * 1000,
-  },
-  {
-    id: "mem-technician",
-    name: "Chanda Bwalya",
-    email: "chanda.bwalya@chamachungu.co.zm",
-    phone: "",
-    role: "technician",
-    storeIds: ["st-kabwata"],
-    status: "active",
-    invitedAt: null,
-    lastActive: Date.now() - 3 * DAY,
-  },
-  {
-    id: "mem-cashier",
-    name: "Naluwa Soko",
-    email: "naluwa.soko@chamachungu.co.zm",
-    phone: "",
-    role: "cashier",
-    storeIds: ["st-makeni"],
-    status: "active",
-    invitedAt: null,
-    lastActive: Date.now() - 5 * 60 * 60 * 1000,
-  },
-  {
-    id: "mem-invited",
-    name: "Konda Njikho",
-    email: "konda.njikho@chamachungu.co.zm",
-    phone: "+260 97 640 2213",
-    role: "pharmacist",
-    storeIds: ["st-main"],
-    status: "invited",
-    invitedAt: Date.now() - 2 * DAY,
-    lastActive: null,
-  },
-];
-
 function loadMembers(): PharmacyMember[] {
-  if (typeof window === "undefined") return SEED_MEMBERS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return SEED_MEMBERS;
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return SEED_MEMBERS;
+    if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (m): m is PharmacyMember =>
         !!m &&
         typeof m === "object" &&
         typeof (m as PharmacyMember).name === "string" &&
-        typeof (m as PharmacyMember).email === "string"
+        typeof (m as PharmacyMember).email === "string" &&
+        (m as PharmacyMember).status === "invited"
     );
   } catch {
-    return SEED_MEMBERS;
+    return [];
   }
 }
 
@@ -867,36 +796,6 @@ export function PharmacyUserManagement({
   /* ---------------- mutations ---------------- */
 
   const invite = (draft: InviteDraft) => {
-    const member: PharmacyMember = {
-      id: newId(),
-      name: draft.name,
-      email: draft.email,
-      phone: draft.phone,
-      role: draft.role,
-      storeIds: draft.storeIds,
-      status: "invited",
-      invitedAt: Date.now(),
-      lastActive: null,
-    };
-    setMembers((prev) => [...prev, member]);
-    toast({
-      title: "Invitation sent",
-      description: `${draft.name} (${draft.email}) was invited as ${articleFor(
-        ROLE_META[draft.role].label
-      )} ${ROLE_META[draft.role].label.toLowerCase()}.`,
-    });
-    audit(
-      "Team Member Invited",
-      `${draft.email} · ${ROLE_META[draft.role].label} · ${
-        draft.storeIds.includes("all")
-          ? "all stores"
-          : `${draft.storeIds.length} store${draft.storeIds.length === 1 ? "" : "s"}`
-      }`
-    );
-    void trackEvent("pharmacy_user_invited", { role: draft.role, stores: draft.storeIds.length });
-
-    // Trigger the sendTeamInvite cloud function — the branded email is
-    // rendered and delivered, then opened for a final look.
     const storeNames = draft.storeIds.includes("all")
       ? ["All stores"]
       : draft.storeIds.map(
@@ -912,28 +811,45 @@ export function PharmacyUserManagement({
       personalMessage: draft.message,
     })
       .then(({ messages }) => {
+        const member: PharmacyMember = {
+          id: newId(),
+          name: draft.name,
+          email: draft.email,
+          phone: draft.phone,
+          role: draft.role,
+          storeIds: draft.storeIds,
+          status: "invited",
+          invitedAt: Date.now(),
+          lastActive: null,
+        };
+        setMembers((prev) => [...prev, member]);
         setPreview(messages[0] ?? null);
+        toast({
+          title: "Invitation sent",
+          description: `${draft.name} (${draft.email}) was invited as ${articleFor(
+            ROLE_META[draft.role].label
+          )} ${ROLE_META[draft.role].label.toLowerCase()}. Their account is pending registration.`,
+        });
+        audit(
+          "Team Member Invited",
+          `${draft.email} · ${ROLE_META[draft.role].label} · ${
+            draft.storeIds.includes("all")
+              ? "all stores"
+              : `${draft.storeIds.length} store${draft.storeIds.length === 1 ? "" : "s"}`
+          }`
+        );
+        void trackEvent("pharmacy_user_invited", { role: draft.role, stores: draft.storeIds.length });
       })
       .catch((err: unknown) => {
         const code = err instanceof CloudFunctionError ? err.code : "unknown";
         toast({
-          title: "Email delivery failed",
-          description: `The cloud function rejected the invitation (${code}). The seat is still reserved — try again from the row menu.`,
+          title: "Invitation failed",
+          description: `No account was added because the invitation could not be sent (${code}).`,
         });
       });
   };
 
   const resendInvite = (member: PharmacyMember) => {
-    setMembers((prev) =>
-      prev.map((m) => (m.id === member.id ? { ...m, invitedAt: Date.now() } : m))
-    );
-    toast({
-      title: "Invitation re-sent",
-      description: `${member.email} received a fresh invite link.`,
-    });
-    audit("Team Invite Re-sent", `${member.email}`);
-    void trackEvent("pharmacy_user_invite_resent");
-
     void callCloudFunction("sendTeamInvite", {
       pharmacyName,
       inviterName: actor.name || "The team",
@@ -944,9 +860,18 @@ export function PharmacyUserManagement({
         ? ["All stores"]
         : member.storeIds.map((id) => stores.find((store) => store.id === id)?.name ?? "Store"),
     })
-      .then(({ messages }) => setPreview(messages[0] ?? null))
-      .catch(() => {
-        /* the toast above already told the user it went out */
+      .then(({ messages }) => {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === member.id ? { ...m, invitedAt: Date.now() } : m))
+        );
+        setPreview(messages[0] ?? null);
+        toast({ title: "Invitation re-sent", description: `${member.email} received a new invite link.` });
+        audit("Team Invite Re-sent", `${member.email}`);
+        void trackEvent("pharmacy_user_invite_resent");
+      })
+      .catch((err: unknown) => {
+        const code = err instanceof CloudFunctionError ? err.code : "unknown";
+        toast({ title: "Invitation failed", description: `The invitation could not be sent (${code}).` });
       });
   };
 
@@ -1035,6 +960,8 @@ export function PharmacyUserManagement({
           Re-send invitation
         </DropdownMenuItem>
       )}
+      {member.status !== "invited" && (
+        <>
       <DropdownMenuSub>
         <DropdownMenuSubTrigger>
           <UserRoundCog className="mr-2 h-4 w-4 text-slate-400" aria-hidden="true" />
@@ -1082,6 +1009,8 @@ export function PharmacyUserManagement({
         <UserMinus className="mr-2 h-4 w-4" aria-hidden="true" />
         Remove user
       </DropdownMenuItem>
+        </>
+      )}
     </DropdownMenuContent>
   );
 
@@ -1216,12 +1145,14 @@ export function PharmacyUserManagement({
           </span>
           <div>
             <p className="text-[15px] font-semibold text-slate-800 dark:text-white">
-              No members found
+              {members.length === 0 ? "No team members yet" : "No members found"}
             </p>
             <p className="mt-1 text-[13.5px] text-slate-500 dark:text-slate-400">
-              {query
-                ? `Nothing matches “${query}”. Try a different name or email.`
-                : "Adjust the role filters to see more of the team."}
+              {members.length === 0
+                ? "Invite your first colleague — only invitations you actually sent appear here."
+                : query
+                  ? `Nothing matches “${query}”. Try a different name or email.`
+                  : "Adjust the role filters to see more of the team."}
             </p>
           </div>
         </motion.div>

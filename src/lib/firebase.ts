@@ -302,6 +302,15 @@ function readInvitedAccounts(): InvitedAccount[] {
   }
 }
 
+/** Role carried by a team invitation accepted on this device, if any. */
+export function getInvitedAccountRole(uid: string, email: string): string | null {
+  const normalized = email.trim().toLowerCase();
+  const match = readInvitedAccounts().find(
+    (account) => account.uid === uid || (normalized && account.email === normalized)
+  );
+  return match?.role ?? null;
+}
+
 function recordInvitedAccount(entry: InvitedAccount): void {
   try {
     const accounts = readInvitedAccounts().filter((account) => account.uid !== entry.uid);
@@ -455,6 +464,7 @@ export async function registerPharmacyAccount(
         role: "owner",
         account_type: "Pharmacy",
         pharmacy_name: pharmacyName,
+        pharmacy_id: user.uid,
         approved_by_duniya: false, // pending Pulse network review
       });
       profileSaved = true;

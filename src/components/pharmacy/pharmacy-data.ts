@@ -1,13 +1,13 @@
 "use client";
 
-import { loadPharmacyList, savePharmacyList } from "@/components/pharmacy/pharmacy-shared";
+import { savePharmacyList } from "@/components/pharmacy/pharmacy-shared";
 
 /* ------------------------------------------------------------------ */
 /* Pharmacy portal data model                                          */
 /* ------------------------------------------------------------------ */
-/* The operational stores behind the Pharmacy portal console. Seeds    */
-/* mirror a live Zambian community pharmacy; edits persist to          */
-/* localStorage so the console keeps its state across reloads.         */
+/* The operational records behind the Pharmacy portal console. Every   */
+/* list is read from localStorage exactly as it was saved — no starter */
+/* inventories, stores, sales or supplier fixtures are injected.       */
 /* Inventory, requests and deliveries are recorded per store — the     */
 /* account's main store is the declared home of the application.       */
 
@@ -19,6 +19,7 @@ export const PHARMACY_STORES_KEY = "pulse.pharmacy-stores.v1";
 export const PHARMACY_CATALOGUE_KEY = "pulse.pharmacy-catalogue.v1";
 export const PHARMACY_SALES_KEY = "pulse.pharmacy-sales.v1";
 export const PHARMACY_PURCHASE_ORDERS_KEY = "pulse.pharmacy-purchase-orders.v1";
+export const PHARMACY_SUPPLIERS_KEY = "pulse.pharmacy-suppliers.v1";
 
 export type InventoryItem = {
   id: string;
@@ -107,6 +108,16 @@ export type POSSaleLine = {
   name: string;
   qty: number;
   unitPrice: number;
+  /** Shelf batches deducted at checkout, so a reversal can restore the exact stock. */
+  stockAllocations?: {
+    inventoryItemId: string;
+    qty: number;
+    storeId: string;
+    category: string;
+    batch: string;
+    expiry: string;
+    reorderLevel: number;
+  }[];
 };
 
 /** A completed sale at the Point of Sale counter. */
@@ -124,7 +135,15 @@ export type POSSale = {
   soldAt: number;
   /** The counter's store; legacy sales sit in the main store. */
   storeId?: string;
+  /** Store label copied onto the sale so network reports retain its context. */
+  storeName?: string;
   servedBy: string;
+  /** Reversals preserve the original receipt and record who, when and why. */
+  reversedAt?: number;
+  reversedBy?: string;
+  reversalReason?: string;
+  /** Confirms the actual tender refund or void was handled outside Pulse. */
+  refundHandled?: boolean;
 };
 
 export type PurchaseOrderStatus = "draft" | "sent" | "received" | "cancelled";
@@ -136,9 +155,6 @@ export type PurchaseOrderStatus = "draft" | "sent" | "received" | "cancelled";
 /* ------------------------------------------------------------------ */
 
 export const PHARMACY_MOVEMENTS_KEY = "pulse.pharmacy-movements.v1";
-
-const DAY = 24 * 60 * 60 * 1000;
-const HOUR = 60 * 60 * 1000;
 
 export type MovementType = "receipt" | "issue" | "transfer" | "adjustment" | "return";
 
@@ -156,10 +172,10 @@ export const MOVEMENT_TYPE_META: Record<
 /** Why a movement happened — keeps the ledger auditable. */
 export const MOVEMENT_REASONS: Record<MovementType, string[]> = {
   receipt: ["Supplier delivery", "Central hub restock", "Inter-branch receipt", "Other"],
-  issue: ["Dispensed to patient", "Damaged / broken", "Expired — write-off", "Other"],
+  issue: ["Dispensed to patient", "POS sale", "Damaged / broken", "Expired — write-off", "Other"],
   transfer: ["Store request fulfilment", "Rebalancing stock", "Other"],
   adjustment: ["Stock count correction", "Damaged — write-off", "Expired — write-off", "Theft / loss", "Other"],
-  return: ["Customer return — restock", "Supplier return", "Other"],
+  return: ["Customer return — restock", "POS sale reversal", "Supplier return", "Other"],
 };
 
 /**
@@ -185,112 +201,46 @@ export type StockMovement = {
   actor: { name: string; email: string };
 };
 
-/** The ledger every fresh console opens with — mirrors the seed shelves. */
-const SEED_MOVEMENTS: StockMovement[] = [
-  {
-    id: "MOV-5018",
-    at: Date.now() - 26 * HOUR,
-    type: "receipt",
-    itemId: "inv-004",
-    productName: "Ibuprofen 400mg (pack)",
-    batch: "IBU-2602-09",
-    qty: 24,
-    reason: "Supplier delivery",
-    note: "CarePlus invoice #8817",
-    actor: { name: "Chungu Chipimo", email: "chungu500@pulse.zm" },
-  },
-  {
-    id: "MOV-5017",
-    at: Date.now() - 2 * DAY,
-    type: "adjustment",
-    itemId: "inv-003",
-    productName: "Amoxicillin 250mg (caps)",
-    batch: "AMX-2603-22",
-    qty: -2,
-    reason: "Stock count correction",
-    note: "Monthly count — two caps damaged",
-    actor: { name: "Chungu Chipimo", email: "chungu500@pulse.zm" },
-  },
-  {
-    id: "MOV-5016",
-    at: Date.now() - 3 * DAY,
-    type: "transfer",
-    itemId: "inv-006",
-    productName: "ORS Sachet (20 ml)",
-    batch: "ORS-2605-03",
-    qty: -40,
-    fromStoreId: "st-main",
-    toStoreId: "st-makeni",
-    reason: "Store request fulfilment",
-    note: "Fills REQ-1040 for the clinic point",
-    actor: { name: "Chungu Chipimo", email: "chungu500@pulse.zm" },
-  },
-  {
-    id: "MOV-5015",
-    at: Date.now() - 5 * DAY,
-    type: "issue",
-    itemId: "inv-007",
-    productName: "Zinc Sulphate 20mg (pack)",
-    batch: "ZNS-2606-17",
-    qty: -6,
-    reason: "Expired — write-off",
-    actor: { name: "Front counter", email: "counter@pulse.zm" },
-  },
-  {
-    id: "MOV-5014",
-    at: Date.now() - 8 * DAY,
-    type: "return",
-    itemId: "inv-009",
-    productName: "Loratadine 10mg (pack)",
-    batch: "LRT-2607-05",
-    qty: 3,
-    reason: "Customer return — restock",
-    note: "Unopened, sealed packs",
-    actor: { name: "Front counter", email: "counter@pulse.zm" },
-  },
-];
+/* ------------------------------------------------------------------ */
+/* Storage helpers                                                     */
+/* ------------------------------------------------------------------ */
 
-export function loadMovements(): StockMovement[] {
-  return loadPharmacyList(PHARMACY_MOVEMENTS_KEY, SEED_MOVEMENTS);
+/**
+ * Rows an older build persisted from its demo fixtures. They are dropped on
+ * load so a device that once ran the seeded console doesn't keep replaying
+ * invented stock, sales or suppliers.
+ */
+const SEED_IDS = {
+  movements: new Set(["MOV-5014", "MOV-5015", "MOV-5016", "MOV-5017", "MOV-5018"]),
+  stores: new Set(["st-main", "st-kabwata", "st-makeni"]),
+  inventory: new Set(Array.from({ length: 16 }, (_, i) => `inv-${String(i + 1).padStart(3, "0")}`)),
+  requests: new Set(["REQ-1039", "REQ-1040", "REQ-1041", "REQ-1042"]),
+  deliveries: new Set(["DLV-2041", "DLV-2038", "DLV-2035"]),
+  suppliers: new Set(["sup-001", "sup-002", "sup-003", "sup-004", "sup-005", "sup-006"]),
+  catalogue: new Set(Array.from({ length: 16 }, (_, i) => `cat-${String(i + 1).padStart(3, "0")}`)),
+  sales: new Set(["SALE-2041", "SALE-2042", "SALE-2043", "SALE-2044"]),
+  purchaseOrders: new Set(["PO-3016", "PO-3017", "PO-3018"]),
+} satisfies Record<string, ReadonlySet<string>>;
+
+/** Reads only records that were actually saved — no demo fallback. */
+function loadStoredList<T>(key: string, seedIds?: ReadonlySet<string>): T[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as T[]).filter(
+      (entry) => !seedIds?.has(String((entry as { id?: unknown } | null)?.id ?? ""))
+    );
+  } catch {
+    return [];
+  }
 }
 
-export function saveMovements(movements: StockMovement[]): void {
-  savePharmacyList(PHARMACY_MOVEMENTS_KEY, movements);
-}
-
-/** Next sequential movement id ("MOV-5019"). */
-export function nextMovementId(movements: StockMovement[]): string {
-  const max = movements.reduce((acc, entry) => {
-    const n = Number.parseInt(entry.id.replace("MOV-", ""), 10);
-    return Number.isFinite(n) ? Math.max(acc, n) : acc;
-  }, 5000);
-  return `MOV-${max + 1}`;
-}
-
-/** One line on a purchase order. */
-export type PurchaseOrderLine = {
-  id: string;
-  name: string;
-  qty: number;
-  /** Unit cost in ZMW. */
-  unitCost: number;
-};
-
-/** An order raised to a network supplier. */
-export type PurchaseOrder = {
-  id: string;
-  supplier: string;
-  status: PurchaseOrderStatus;
-  createdAt: number;
-  /** ISO date (yyyy-mm-dd) the goods are expected. */
-  expectedAt?: string;
-  lines: PurchaseOrderLine[];
-  notes?: string;
-  /** Destination store; legacy orders land in the main store. */
-  storeId?: string;
-  sentAt?: number;
-  receivedAt?: number;
-};
+/* ------------------------------------------------------------------ */
+/* Settings — device preferences only                                  */
+/* ------------------------------------------------------------------ */
 
 export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
   lowStockAlerts: true,
@@ -338,40 +288,9 @@ export type PharmacyStore = {
   createdAt: number;
 };
 
-/** The stores every fresh account opens with — one main, two branches. */
-const SEED_STORES: PharmacyStore[] = [
-  {
-    id: "st-main",
-    name: "Cairo Road Main Store",
-    location: "Lusaka CBD",
-    address: "Plot 12, Cairo Road, Lusaka 10101",
-    phone: "+260 97 000 2000",
-    isMain: true,
-    createdAt: Date.now() - 400 * DAY,
-  },
-  {
-    id: "st-kabwata",
-    name: "Kabwata Branch",
-    location: "Kabwata, Lusaka",
-    address: "Shop 4, Kabwata Market Arcade, Lusaka 10109",
-    phone: "+260 96 411 0820",
-    isMain: false,
-    createdAt: Date.now() - 190 * DAY,
-  },
-  {
-    id: "st-makeni",
-    name: "Makeni Clinic Point",
-    location: "Makeni, Lusaka",
-    address: "Vineyard Clinic, Kafue Road, Makeni 10102",
-    phone: "+260 95 220 7731",
-    isMain: false,
-    createdAt: Date.now() - 30 * DAY,
-  },
-];
-
 /** Stores always carry a main — the first entry is promoted if none does. */
 export function loadStores(): PharmacyStore[] {
-  const stores = loadPharmacyList(PHARMACY_STORES_KEY, SEED_STORES);
+  const stores = loadStoredList<PharmacyStore>(PHARMACY_STORES_KEY, SEED_IDS.stores);
   if (!stores.some((store) => store.isMain)) {
     return stores.map((store, index) => (index === 0 ? { ...store, isMain: true } : store));
   }
@@ -392,7 +311,7 @@ export function mainStoreOf(stores: PharmacyStore[]): PharmacyStore | undefined 
   return stores.find((store) => store.isMain) ?? stores[0];
 }
 
-/** Next sequential store id ("st-4"). */
+/** Next sequential store id ("st-1"). */
 export function nextStoreId(stores: PharmacyStore[]): string {
   const max = stores.reduce((acc, store) => {
     const n = Number.parseInt(store.id.replace("st-", ""), 10);
@@ -401,111 +320,12 @@ export function nextStoreId(stores: PharmacyStore[]): string {
   return `st-${max + 1}`;
 }
 
-/** The shelves every fresh pharmacy console opens with. */
-const SEED_INVENTORY: InventoryItem[] = [
-  { id: "inv-001", name: "Coartem 20/60 (pack)", category: "Antimalarial", batch: "CTM-2601-14", expiry: "2027-01-31", qty: 46, reorderLevel: 20, unitPrice: 85 },
-  { id: "inv-002", name: "Paracetamol 500mg (pack)", category: "Analgesic", batch: "PCM-2512-07", expiry: "2026-12-31", qty: 120, reorderLevel: 40, unitPrice: 15, storeId: "st-kabwata" },
-  { id: "inv-003", name: "Amoxicillin 250mg (caps)", category: "Antibiotic", batch: "AMX-2603-22", expiry: "2027-03-31", qty: 18, reorderLevel: 25, unitPrice: 38 },
-  { id: "inv-004", name: "Ibuprofen 400mg (pack)", category: "Analgesic", batch: "IBU-2602-09", expiry: "2027-02-28", qty: 64, reorderLevel: 30, unitPrice: 22 },
-  { id: "inv-005", name: "Metronidazole 400mg (pack)", category: "Antibiotic", batch: "MTZ-2604-11", expiry: "2027-04-30", qty: 34, reorderLevel: 20, unitPrice: 26 },
-  { id: "inv-006", name: "ORS Sachet (20 ml)", category: "Rehydration", batch: "ORS-2605-03", expiry: "2027-05-31", qty: 150, reorderLevel: 60, unitPrice: 5, storeId: "st-makeni" },
-  { id: "inv-007", name: "Zinc Sulphate 20mg (pack)", category: "Supplement", batch: "ZNS-2606-17", expiry: "2027-06-30", qty: 0, reorderLevel: 24, unitPrice: 12 },
-  { id: "inv-008", name: "Ferrous Sulphate (pack)", category: "Supplement", batch: "FES-2511-28", expiry: "2026-11-30", qty: 40, reorderLevel: 18, unitPrice: 18 },
-  { id: "inv-009", name: "Loratadine 10mg (pack)", category: "Antihistamine", batch: "LRT-2607-05", expiry: "2027-07-31", qty: 52, reorderLevel: 20, unitPrice: 20 },
-  { id: "inv-010", name: "Surgical Face Masks (box)", category: "Consumable", batch: "MSK-2608-12", expiry: "2028-01-31", qty: 26, reorderLevel: 12, unitPrice: 90 },
-  { id: "inv-011", name: "Examination Gloves (box)", category: "Consumable", batch: "GLV-2609-19", expiry: "2028-02-29", qty: 9, reorderLevel: 12, unitPrice: 120 },
-  { id: "inv-012", name: "Vitamin C 500mg (pack)", category: "Supplement", batch: "VTC-2610-23", expiry: "2027-10-31", qty: 75, reorderLevel: 30, unitPrice: 25, storeId: "st-kabwata" },
-  { id: "inv-013", name: "Cough Syrup 100ml (bottle)", category: "Cold & Flu", batch: "CSY-2602-18", expiry: "2027-02-28", qty: 28, reorderLevel: 10, unitPrice: 32, storeId: "st-kabwata" },
-  { id: "inv-014", name: "Hand Sanitizer 250ml (bottle)", category: "Consumable", batch: "HSN-2607-22", expiry: "2027-07-31", qty: 42, reorderLevel: 15, unitPrice: 25 },
-  { id: "inv-015", name: "Vitamin D3 1000IU (pack)", category: "Supplement", batch: "VD3-2611-08", expiry: "2027-11-30", qty: 33, reorderLevel: 12, unitPrice: 45, storeId: "st-makeni" },
-  { id: "inv-016", name: "Sterile Gauze Roll (pack)", category: "First Aid", batch: "GAU-2701-30", expiry: "2028-01-31", qty: 55, reorderLevel: 20, unitPrice: 12 },
-];
-
-/** The request queue every fresh console opens with. */
-const SEED_REQUESTS: StockRequest[] = [
-  { id: "REQ-1039", item: "Examination Gloves (box)", qty: 12, priority: "routine", status: "pending", submittedAt: Date.now() - 5 * 60 * 60 * 1000 },
-  { id: "REQ-1040", item: "ORS Sachet (20 ml)", qty: 100, priority: "urgent", status: "dispatched", submittedAt: Date.now() - 1 * DAY, storeId: "st-kabwata" },
-  { id: "REQ-1041", item: "Amoxicillin 250mg (caps)", qty: 60, priority: "routine", status: "delivered", submittedAt: Date.now() - 6 * DAY },
-  { id: "REQ-1042", item: "Coartem 20/60 (pack)", qty: 40, priority: "routine", status: "approved", submittedAt: Date.now() - 2 * DAY, storeId: "st-makeni" },
-];
-
-/** Goods received every fresh console opens with. */
-const SEED_DELIVERIES: Delivery[] = [
-  { id: "DLV-2041", supplier: "Pulse Central Hub", items: "Amoxicillin 250mg × 60", units: 60, receivedAt: Date.now() - 6 * DAY, condition: "verified" },
-  { id: "DLV-2038", supplier: "MedTech Wholesalers", items: "Face masks × 20 · Gloves × 10", units: 30, receivedAt: Date.now() - 12 * DAY, condition: "verified", storeId: "st-kabwata" },
-  { id: "DLV-2035", supplier: "Pulse Central Hub", items: "Paracetamol 500mg × 100", units: 100, receivedAt: Date.now() - 20 * DAY, condition: "verified" },
-];
-
-/** The supplier network every fresh console opens with. */
-const SEED_SUPPLIERS: Supplier[] = [
-  {
-    id: "sup-001",
-    name: "Pulse Central Hub",
-    categories: ["Pharmaceuticals", "Supplements"],
-    leadTime: "1–2 days",
-    minOrder: 500,
-    rating: 4.9,
-    contact: "hub@pulse.network · +260 97 000 1000",
-    verified: true,
-  },
-  {
-    id: "sup-002",
-    name: "MedTech Wholesalers",
-    categories: ["Consumables", "Equipment"],
-    leadTime: "2–4 days",
-    minOrder: 800,
-    rating: 4.6,
-    contact: "orders@medtech.zm · +260 96 555 2100",
-    verified: true,
-  },
-  {
-    id: "sup-003",
-    name: "Zambia Pharma Distributors",
-    categories: ["Pharmaceuticals"],
-    leadTime: "3–5 days",
-    minOrder: 1200,
-    rating: 4.4,
-    contact: "sales@zpharma.zm · +260 95 414 7788",
-    verified: true,
-  },
-  {
-    id: "sup-004",
-    name: "CarePlus Medical Supplies",
-    categories: ["Consumables", "Pharmaceuticals"],
-    leadTime: "2–3 days",
-    minOrder: 650,
-    rating: 4.7,
-    contact: "hello@careplus.zm · +260 97 233 9090",
-    verified: true,
-  },
-  {
-    id: "sup-005",
-    name: "VitaWell Supplements Ltd",
-    categories: ["Supplements"],
-    leadTime: "4–6 days",
-    minOrder: 400,
-    rating: 4.2,
-    contact: "trade@vitawell.zm · +260 96 880 4411",
-    verified: false,
-  },
-  {
-    id: "sup-006",
-    name: "Lusaka Cold-Chain Logistics",
-    categories: ["Equipment", "Consumables"],
-    leadTime: "1–3 days",
-    minOrder: 950,
-    rating: 4.5,
-    contact: "dispatch@lcc.zm · +260 95 700 6262",
-    verified: true,
-  },
-];
-
-export function loadSuppliers(): Supplier[] {
-  return loadPharmacyList("pulse.pharmacy-suppliers.v1", SEED_SUPPLIERS);
-}
+/* ------------------------------------------------------------------ */
+/* Shelves, requests and deliveries                                    */
+/* ------------------------------------------------------------------ */
 
 export function loadInventory(): InventoryItem[] {
-  return loadPharmacyList(PHARMACY_INVENTORY_KEY, SEED_INVENTORY);
+  return loadStoredList<InventoryItem>(PHARMACY_INVENTORY_KEY, SEED_IDS.inventory);
 }
 
 export function saveInventory(items: InventoryItem[]): void {
@@ -513,7 +333,7 @@ export function saveInventory(items: InventoryItem[]): void {
 }
 
 export function loadStockRequests(): StockRequest[] {
-  return loadPharmacyList(PHARMACY_REQUESTS_KEY, SEED_REQUESTS);
+  return loadStoredList<StockRequest>(PHARMACY_REQUESTS_KEY, SEED_IDS.requests);
 }
 
 export function saveStockRequests(requests: StockRequest[]): void {
@@ -521,68 +341,28 @@ export function saveStockRequests(requests: StockRequest[]): void {
 }
 
 export function loadDeliveries(): Delivery[] {
-  return loadPharmacyList(PHARMACY_DELIVERIES_KEY, SEED_DELIVERIES);
+  return loadStoredList<Delivery>(PHARMACY_DELIVERIES_KEY, SEED_IDS.deliveries);
 }
 
 export function saveDeliveries(deliveries: Delivery[]): void {
   savePharmacyList(PHARMACY_DELIVERIES_KEY, deliveries);
 }
 
+/** The network supplier directory — saved partners only. */
+export function loadSuppliers(): Supplier[] {
+  return loadStoredList<Supplier>(PHARMACY_SUPPLIERS_KEY, SEED_IDS.suppliers);
+}
+
+export function saveSuppliers(suppliers: Supplier[]): void {
+  savePharmacyList(PHARMACY_SUPPLIERS_KEY, suppliers);
+}
+
 /* ------------------------------------------------------------------ */
 /* Catalogue — the master list of sellable products                    */
 /* ------------------------------------------------------------------ */
 
-const RX_CATEGORIES = new Set(["Antibiotic", "Antimalarial"]);
-
-/** Derives a catalogue unit ("pack", "box"…) from a product name's "(pack)" suffix. */
-function unitOf(name: string): string {
-  const match = name.match(/\(([^)]+)\)\s*$/);
-  return match ? match[1] : "unit";
-}
-
-const CATALOGUE_NOTES: Record<string, string> = {
-  "Coartem 20/60 (pack)": "Artemether/lumefantrine — first-line malaria treatment",
-  "Paracetamol 500mg (pack)": "Pain and fever relief, 16 tablets per pack",
-  "Amoxicillin 250mg (caps)": "Broad-spectrum antibiotic, 21 capsules",
-  "Ibuprofen 400mg (pack)": "Anti-inflammatory, 10 tablets",
-  "Metronidazole 400mg (pack)": "Antibacterial and antiprotozoal, 21 tablets",
-  "ORS Sachet (20 ml)": "Oral rehydration salts — mix with 1 L clean water",
-  "Zinc Sulphate 20mg (pack)": "Immune support and diarrhoea recovery",
-  "Ferrous Sulphate (pack)": "Iron supplementation for anaemia",
-  "Loratadine 10mg (pack)": "Non-drowsy allergy relief, 10 tablets",
-  "Surgical Face Masks (box)": "3-ply, 50 masks per box",
-  "Examination Gloves (box)": "Latex-free nitrile, 100 gloves per box",
-  "Vitamin C 500mg (pack)": "Daily immune support, 30 tablets",
-  "Cough Syrup 100ml (bottle)": "Soothing syrup for dry & chesty coughs",
-  "Hand Sanitizer 250ml (bottle)": "70% alcohol gel with aloe",
-  "Vitamin D3 1000IU (pack)": "Bone & immune support, 30 capsules",
-  "Sterile Gauze Roll (pack)": "Absorbent 10 cm roll for wound care",
-};
-
-/** The catalogue mirrors the shelves — one card per stocked product. */
-function buildSeedCatalogue(): CatalogueProduct[] {
-  return SEED_INVENTORY.map((item, index) => ({
-    id: `cat-${String(index + 1).padStart(3, "0")}`,
-    name: item.name,
-    category: item.category,
-    unit: unitOf(item.name),
-    price: item.unitPrice,
-    prescription: RX_CATEGORIES.has(item.category),
-    note: CATALOGUE_NOTES[item.name],
-    createdAt: Date.now() - (200 - index * 11) * DAY,
-  }));
-}
-
 export function loadCatalogue(): CatalogueProduct[] {
-  if (typeof window === "undefined") return buildSeedCatalogue();
-  try {
-    const raw = window.localStorage.getItem(PHARMACY_CATALOGUE_KEY);
-    if (!raw) return buildSeedCatalogue();
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as CatalogueProduct[]) : buildSeedCatalogue();
-  } catch {
-    return buildSeedCatalogue();
-  }
+  return loadStoredList<CatalogueProduct>(PHARMACY_CATALOGUE_KEY, SEED_IDS.catalogue);
 }
 
 export function saveCatalogue(products: CatalogueProduct[]): void {
@@ -600,81 +380,21 @@ export function stockForProduct(
     .reduce((acc, item) => acc + item.qty, 0);
 }
 
-/** Next sequential catalogue id ("cat-017"). */
+/** Next sequential catalogue id ("cat-1001") — clear of legacy demo rows. */
 export function nextCatalogueId(products: CatalogueProduct[]): string {
   const max = products.reduce((acc, product) => {
     const n = Number.parseInt(product.id.replace("cat-", ""), 10);
     return Number.isFinite(n) ? Math.max(acc, n) : acc;
-  }, 0);
-  return `cat-${String(max + 1).padStart(3, "0")}`;
+  }, 1000);
+  return `cat-${max + 1}`;
 }
 
 /* ------------------------------------------------------------------ */
 /* Point of Sale — completed counter sales                             */
 /* ------------------------------------------------------------------ */
 
-const SEED_SALES: POSSale[] = [
-  {
-    id: "SALE-2041",
-    lines: [
-      { productId: "cat-002", name: "Paracetamol 500mg (pack)", qty: 2, unitPrice: 15 },
-      { productId: "cat-009", name: "Loratadine 10mg (pack)", qty: 1, unitPrice: 20 },
-    ],
-    subtotal: 50,
-    discount: 0,
-    total: 50,
-    method: "cash",
-    tendered: 50,
-    change: 0,
-    soldAt: Date.now() - 9 * HOUR,
-    servedBy: "Front counter",
-  },
-  {
-    id: "SALE-2042",
-    lines: [
-      { productId: "cat-006", name: "ORS Sachet (20 ml)", qty: 3, unitPrice: 5 },
-      { productId: "cat-014", name: "Hand Sanitizer 250ml (bottle)", qty: 1, unitPrice: 25 },
-    ],
-    subtotal: 40,
-    discount: 0,
-    total: 40,
-    method: "mobile",
-    soldAt: Date.now() - 6 * HOUR,
-    servedBy: "Front counter",
-  },
-  {
-    id: "SALE-2043",
-    lines: [
-      { productId: "cat-004", name: "Ibuprofen 400mg (pack)", qty: 1, unitPrice: 22 },
-      { productId: "cat-016", name: "Sterile Gauze Roll (pack)", qty: 2, unitPrice: 12 },
-      { productId: "cat-012", name: "Vitamin C 500mg (pack)", qty: 1, unitPrice: 25 },
-    ],
-    subtotal: 71,
-    discount: 5,
-    total: 66,
-    method: "cash",
-    tendered: 100,
-    change: 34,
-    soldAt: Date.now() - 2 * HOUR,
-    servedBy: "Front counter",
-  },
-  {
-    id: "SALE-2044",
-    lines: [
-      { productId: "cat-002", name: "Paracetamol 500mg (pack)", qty: 1, unitPrice: 15 },
-      { productId: "cat-010", name: "Surgical Face Masks (box)", qty: 1, unitPrice: 90 },
-    ],
-    subtotal: 105,
-    discount: 0,
-    total: 105,
-    method: "card",
-    soldAt: Date.now() - 40 * 60 * 1000,
-    servedBy: "Front counter",
-  },
-];
-
 export function loadSales(): POSSale[] {
-  return loadPharmacyList(PHARMACY_SALES_KEY, SEED_SALES);
+  return loadStoredList<POSSale>(PHARMACY_SALES_KEY, SEED_IDS.sales);
 }
 
 export function saveSales(sales: POSSale[]): void {
@@ -682,53 +402,66 @@ export function saveSales(sales: POSSale[]): void {
 }
 
 /* ------------------------------------------------------------------ */
-/* Purchase orders — goods ordered from network suppliers              */
+/* Purchase orders — goods ordered from suppliers                      */
 /* ------------------------------------------------------------------ */
 
-const SEED_PURCHASE_ORDERS: PurchaseOrder[] = [
-  {
-    id: "PO-3018",
-    supplier: "Pulse Central Hub",
-    status: "sent",
-    createdAt: Date.now() - 2 * DAY,
-    expectedAt: new Date(Date.now() + 1 * DAY).toISOString().slice(0, 10),
-    lines: [
-      { id: "pol-1", name: "Amoxicillin 250mg (caps)", qty: 40, unitCost: 26 },
-      { id: "pol-2", name: "Examination Gloves (box)", qty: 15, unitCost: 92 },
-    ],
-    notes: "Replenish antibiotic shelf before the month-end rush.",
-  },
-  {
-    id: "PO-3017",
-    supplier: "CarePlus Medical Supplies",
-    status: "received",
-    createdAt: Date.now() - 9 * DAY,
-    expectedAt: new Date(Date.now() - 4 * DAY).toISOString().slice(0, 10),
-    lines: [
-      { id: "pol-1", name: "Surgical Face Masks (box)", qty: 12, unitCost: 70 },
-      { id: "pol-2", name: "Sterile Gauze Roll (pack)", qty: 30, unitCost: 8 },
-    ],
-    sentAt: Date.now() - 9 * DAY,
-    receivedAt: Date.now() - 4 * DAY,
-  },
-  {
-    id: "PO-3016",
-    supplier: "VitaWell Supplements Ltd",
-    status: "draft",
-    createdAt: Date.now() - 26 * HOUR,
-    expectedAt: new Date(Date.now() + 5 * DAY).toISOString().slice(0, 10),
-    lines: [{ id: "pol-1", name: "Vitamin D3 1000IU (pack)", qty: 20, unitCost: 31 }],
-    notes: "Awaiting confirmation of the wholesaler discount.",
-  },
-];
-
 export function loadPurchaseOrders(): PurchaseOrder[] {
-  return loadPharmacyList(PHARMACY_PURCHASE_ORDERS_KEY, SEED_PURCHASE_ORDERS);
+  return loadStoredList<PurchaseOrder>(PHARMACY_PURCHASE_ORDERS_KEY, SEED_IDS.purchaseOrders);
 }
 
 export function savePurchaseOrders(orders: PurchaseOrder[]): void {
   savePharmacyList(PHARMACY_PURCHASE_ORDERS_KEY, orders);
 }
+
+/** One line on a purchase order. */
+export type PurchaseOrderLine = {
+  id: string;
+  name: string;
+  qty: number;
+  /** Unit cost in ZMW. */
+  unitCost: number;
+};
+
+/** An order raised to a network supplier. */
+export type PurchaseOrder = {
+  id: string;
+  supplier: string;
+  status: PurchaseOrderStatus;
+  createdAt: number;
+  /** ISO date (yyyy-mm-dd) the goods are expected. */
+  expectedAt?: string;
+  lines: PurchaseOrderLine[];
+  notes?: string;
+  /** Destination store; legacy orders land in the main store. */
+  storeId?: string;
+  sentAt?: number;
+  receivedAt?: number;
+};
+
+/* ------------------------------------------------------------------ */
+/* Stock movement ledger                                               */
+/* ------------------------------------------------------------------ */
+
+export function loadMovements(): StockMovement[] {
+  return loadStoredList<StockMovement>(PHARMACY_MOVEMENTS_KEY, SEED_IDS.movements);
+}
+
+export function saveMovements(movements: StockMovement[]): void {
+  savePharmacyList(PHARMACY_MOVEMENTS_KEY, movements);
+}
+
+/** Next sequential movement id ("MOV-5001"). */
+export function nextMovementId(movements: StockMovement[]): string {
+  const max = movements.reduce((acc, entry) => {
+    const n = Number.parseInt(entry.id.replace("MOV-", ""), 10);
+    return Number.isFinite(n) ? Math.max(acc, n) : acc;
+  }, 5000);
+  return `MOV-${max + 1}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Formatting                                                          */
+/* ------------------------------------------------------------------ */
 
 /** "K 1,240" — the Kwacha format used across the pharmacy console. */
 export function formatZMW(amount: number): string {
@@ -740,7 +473,7 @@ export function formatDay(ts: number): string {
   return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** Next sequential id ("REQ-1043"). */
+/** Next sequential id ("REQ-1001"). */
 export function nextId(list: { id: string }[], prefix: string): string {
   const max = list.reduce((acc, entry) => {
     const n = Number.parseInt(entry.id.split("-")[1] ?? "0", 10);

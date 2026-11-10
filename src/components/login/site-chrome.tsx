@@ -5,9 +5,8 @@ import { PulseBackground } from "@/components/login/pulse-background";
 import { RELEASES_URL } from "@/components/login/download-buttons";
 
 /**
- * Shared page chrome for the marketing landing (/) and the dedicated
- * sign-in screen (/login): the aurora/canvas/grain atmosphere and the
- * site footer live here so both routes stay pixel-identical.
+ * Shared page chrome for the marketing landing (/) and sign-in screen
+ * (/login). The site footer is rendered on the landing page only.
  */
 
 /** Fixed, pointer-transparent backdrop — aurora fields, starfield, grain. */
@@ -71,7 +70,7 @@ export function SiteFooter() {
   return (
     <footer className="relative z-10 mt-20 border-t border-white/8">
       <div className="mx-auto w-full max-w-[1400px] px-5 py-12 sm:px-8 lg:px-12">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-3">
           {/* brand column */}
           <div className="col-span-2 md:col-span-1">
             <Link
@@ -139,26 +138,11 @@ export function SiteFooter() {
             </ul>
           </nav>
 
-          {/* network */}
-          <nav aria-label="Network">
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">
-              Network
-            </p>
-            <ul className="mt-4 space-y-2.5 text-[13px]">
-              <li><span className="text-white/50">Duniya Healthcare</span></li>
-              <li><span className="text-white/50">Lusaka, Zambia</span></li>
-              <li><span className="text-white/50">Privacy-first · Secured sessions</span></li>
-              <li><span className="text-white/50">72 BPM · Ambient</span></li>
-            </ul>
-          </nav>
         </div>
 
-        <div className="mt-12 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-white/8 pt-6">
+        <div className="mt-12 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-white/8 pt-6">
           <p className="text-[12px] text-white/35">
             © {year} Duniya Healthcare · Pulse
-          </p>
-          <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-white/30">
-            Pharmacy, in rhythm
           </p>
         </div>
       </div>

@@ -55,150 +55,22 @@ const STORAGE_KEY = "pulse.pharmacies.v1";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/* ------------------------------------------------------------------ */
-/* Seed — mirrors the live network console                             */
-/* ------------------------------------------------------------------ */
-
-/** The four pharmacies every fresh console opens with, exactly as shipped. */
-const SEED_HEAD: Pharmacy[] = [
-  {
-    id: "phm-seed-adesh",
-    name: "ADESHI PHARMACY LTD",
-    address: "KAMANGA EXTENSION. OFF NGWERERE ROAD, LUSAKA.",
-    ownerEmail: null,
-    registeredAt: null,
-    status: "active",
-  },
-  {
-    id: "phm-seed-apex",
-    name: "Apex Health Pharmacy",
-    address: "Salama Park Lusaka",
-    ownerEmail: "chungu20@thestackone.com",
-    registeredAt: null,
-    status: "active",
-  },
-  {
-    id: "phm-seed-ben",
-    name: "BEN Pharm",
-    address: "kabwe",
-    ownerEmail: "mvp@gmail.com",
-    registeredAt: null,
-    status: "active",
-  },
-  {
-    id: "phm-seed-care",
-    name: "care health pharmacy",
-    address: "3315 ibex hill",
-    ownerEmail: null,
-    registeredAt: null,
-    status: "active",
-  },
-];
-
-const NAME_PREFIXES = [
-  "MedPlus", "Grace", "Unity", "City", "Remedy", "GoodHealth", "Wellness",
-  "ZamCare", "LifeStream", "New Life", "Holy Family", "Green Cross",
-  "Sunrise", "Rainbow", "Baobab", "Kwacha", "Zambezi", "East Park",
-  "Woodlands", "Kabulonga", "Libala", "Matero", "Chilenje", "Northmead",
-  "Rhodes Park", "Manda Hill", "Arcades", "Avondale", "Chelstone", "Kalundu",
-] as const;
-
-const NAME_SUFFIXES = [
-  "Pharmacy", "Chemist", "Pharmacy Ltd", "Health Pharmacy",
-  "Pharmacies", "Drug Mart", "Community Pharmacy", "Dispensary",
-] as const;
-
-const PLACES: readonly (readonly [area: string, city: string])[] = [
-  ["Salama Park", "Lusaka"], ["Ibex Hill", "Lusaka"], ["Kabulonga", "Lusaka"],
-  ["Woodlands", "Lusaka"], ["Libala South", "Lusaka"], ["Matero", "Lusaka"],
-  ["Chilenje", "Lusaka"], ["Kalingalinga", "Lusaka"], ["Northmead", "Lusaka"],
-  ["Rhodes Park", "Lusaka"], ["Avondale", "Lusaka"], ["Chelstone", "Lusaka"],
-  ["Kalundu", "Lusaka"], ["Mtendere", "Lusaka"], ["Chawama", "Lusaka"],
-  ["Mandevu", "Lusaka"], ["Kanyama", "Lusaka"], ["John Laing", "Lusaka"],
-  ["Garden Compound", "Lusaka"], ["New Kasama", "Lusaka"],
-  ["Kansenshi", "Ndola"], ["Northrise", "Ndola"], ["Masala", "Ndola"],
-  ["Chipulukusu", "Ndola"], ["Nkana West", "Kitwe"], ["Parklands", "Kitwe"],
-  ["Riverside", "Kitwe"], ["Chimwemwe", "Kitwe"], ["Bucher", "Kitwe"],
-  ["Railway Avenue", "Kabwe"], ["Chowa", "Kabwe"], ["Katondo Street", "Kabwe"],
-  ["Maramba", "Livingstone"], ["Libuyu", "Livingstone"],
-  ["Helen Park", "Livingstone"], ["Nchanga", "Chingola"],
-  ["Chiwempala", "Chingola"], ["Itawa", "Ndola"], ["Kamakonde", "Solwezi"],
-  ["Town Centre", "Mongu"], ["Mwami Road", "Chipata"], ["Kapata", "Chipata"],
-  ["Bombwe", "Mazabuka"], ["Nanga", "Mazabuka"],
-] as const;
-
-const OWNER_FIRST = [
-  "chungu", "kabaso", "chanda", "mulenga", "bwalya", "natasha", "limbani",
-  "tasila", "kondwani", "maureen", "given", "bupe", "chilufya", "misozi",
-  "lweendo", "nkumbu", "sebastian", "wanga", "twaibu", "muyambango",
-] as const;
-
-const OWNER_LAST = [
-  "banda", "phiri", "mwanza", "tembo", "zungu", "chitundu", "moyo",
-  "nkole", "chirwa", "kapata", "mubanga", "kampata", "mwiinga", "siwale",
-] as const;
-
-const OWNER_DOMAINS = [
-  "gmail.com", "yahoo.com", "thestackone.com", "zamtel.zm",
-  "outlook.com", "zamnet.zm",
-] as const;
-
-const ADDRESS_STANDS = ["Shop", "Plot", "Stand", "House"] as const;
-
-function seedPharmacies(): Pharmacy[] {
-  const generated: Pharmacy[] = Array.from({ length: 101 }, (_, i) => {
-    const name = `${NAME_PREFIXES[i % NAME_PREFIXES.length]} ${
-      NAME_SUFFIXES[Math.floor(i / NAME_PREFIXES.length) % NAME_SUFFIXES.length]
-    }`;
-    const [area, city] = PLACES[i % PLACES.length];
-    const address = `${ADDRESS_STANDS[i % ADDRESS_STANDS.length]} ${
-      3 + ((i * 37) % 480)
-    }, ${area}, ${city}`;
-    const linked = i % 5 < 3;
-    const ownerEmail = linked
-      ? `${OWNER_FIRST[i % OWNER_FIRST.length]}.${
-          OWNER_LAST[(i * 3) % OWNER_LAST.length]
-        }@${OWNER_DOMAINS[(i * 7) % OWNER_DOMAINS.length]}`
-      : null;
-    return {
-      id: `phm-seed-${String(i).padStart(3, "0")}`,
-      name,
-      address,
-      ownerEmail,
-      registeredAt: null,
-      status: "active" as const,
-    };
-  });
-
-  const pending: Pharmacy[] = [
-    ["phm-pending-kapiri", "Kapiri Central Chemist", "Katondo Street, Kabwe"],
-    ["phm-pending-serenje", "Serenje Health Pharmacy", "Malole Road, Serenje"],
-    ["phm-pending-chinsali", "Chinsali Community Pharmacy", "Chinsali Town Centre, Chinsali"],
-  ].map(([id, name, address]) => ({
-    id,
-    name,
-    address,
-    ownerEmail: null,
-    registeredAt: null,
-    status: "pending" as const,
-  }));
-
-  return [...SEED_HEAD, ...generated, ...pending];
-}
-
 function loadPharmacies(): Pharmacy[] {
-  if (typeof window === "undefined") return seedPharmacies();
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedPharmacies();
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return seedPharmacies();
+    if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (p): p is Pharmacy =>
-        !!p && typeof p === "object" && typeof (p as Pharmacy).name === "string"
+        !!p &&
+        typeof p === "object" &&
+        typeof (p as Pharmacy).name === "string" &&
+        !/^(phm-seed-|phm-pending-)/.test(String((p as Pharmacy).id ?? ""))
     );
   } catch {
-    return seedPharmacies();
+    return [];
   }
 }
 
@@ -244,8 +116,6 @@ const cardCls =
 
 const TEMPLATE_CSV = [
   "name,address,owner_email,status",
-  'Example Pharmacy Ltd,"Plot 10, Cairo Road, Lusaka",owner@example.com,active',
-  'New Town Chemist,"Katondo Street, Kabwe",,pending',
 ].join("\n");
 
 function downloadTemplate() {
@@ -589,8 +459,8 @@ export function PulsePharmacies() {
   const refresh = () => {
     setPharmacies(loadPharmacies());
     toast({
-      title: "Network refreshed",
-      description: `${pharmacies.length} pharmacies re-synced from the registry.`,
+      title: "Registry reloaded",
+      description: `${pharmacies.length} saved pharmacy records loaded.`,
     });
     void trackEvent("pharmacies_refreshed");
   };
@@ -835,9 +705,11 @@ export function PulsePharmacies() {
                 ? `Nothing matches “${query}”. Try a different name, address, or owner email.`
                 : statusFilter === "pending"
                   ? "No pharmacies are awaiting approval right now."
-                  : statusFilter === "rejected"
+                : statusFilter === "rejected"
                     ? "No listings have been rejected."
-                    : "Adjust the status filter to see more of the network."}
+                    : pharmacies.length === 0
+                      ? "No pharmacy records have been added. Import a verified registry file to get started."
+                      : "Adjust the status filter to see more pharmacy records."}
             </p>
           </div>
         </motion.div>
