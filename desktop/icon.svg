@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pulse app icon">
+  <defs>
+    <linearGradient id="pulse-icon-bg" x1="40" y1="24" x2="472" y2="488" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e879f9"/>
+      <stop offset="0.48" stop-color="#b026ff"/>
+      <stop offset="1" stop-color="#5b21b6"/>
+    </linearGradient>
+    <radialGradient id="pulse-icon-glow" cx="0" cy="0" r="1" gradientTransform="translate(196 138) scale(330)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#pulse-icon-bg)"/>
+  <rect width="512" height="512" rx="116" fill="url(#pulse-icon-glow)"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="52,258 174,258 208,198 246,330 282,138 318,288 344,258 460,258" stroke-width="30"/>
+  </g>
+  <g fill="#ffffff" opacity="0.55">
+    <circle cx="52" cy="258" r="8"/>
+    <circle cx="460" cy="258" r="8"/>
+  </g>
+</svg>

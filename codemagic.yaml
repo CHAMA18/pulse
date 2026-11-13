@@ -1,0 +1,57 @@
+# Pulse desktop releases — signed installers are built on Codemagic's macOS
+# and Windows machines. Builds are triggered by the Codemagic REST API, so no
+# branch or tag triggers are defined here; the API passes the branch explicitly.
+workflows:
+  pulse_macos:
+    name: Pulse for macOS
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      node: lts
+      vars:
+        NEXT_EXPORT: "1"
+        NEXT_DESKTOP: "1"
+        NEXT_TELEMETRY_DISABLED: "1"
+    scripts:
+      - name: Install web dependencies
+        script: npm install --no-audit --no-fund
+      - name: Install desktop packaging tools
+        script: npm install --prefix desktop --include=dev --no-audit --no-fund
+      - name: Generate application icons
+        script: npm run desktop:icons
+      - name: Build static web export
+        script: npx next build
+      - name: Stage desktop assets
+        script: npm run desktop:stage
+      - name: Package macOS app
+        script: npm --prefix desktop run dist:mac
+    artifacts:
+      - desktop/release/*.dmg
+      - desktop/release/*.zip
+
+  pulse_windows:
+    name: Pulse for Windows
+    instance_type: windows_x2
+    max_build_duration: 90
+    environment:
+      node: lts
+      vars:
+        NEXT_EXPORT: "1"
+        NEXT_DESKTOP: "1"
+        NEXT_TELEMETRY_DISABLED: "1"
+    scripts:
+      - name: Install web dependencies
+        script: npm install --no-audit --no-fund
+      - name: Install desktop packaging tools
+        script: npm install --prefix desktop --include=dev --no-audit --no-fund
+      - name: Generate application icons
+        script: npm run desktop:icons
+      - name: Build static web export
+        script: npx next build
+      - name: Stage desktop assets
+        script: npm run desktop:stage
+      - name: Package Windows app
+        script: npm --prefix desktop run dist:win
+    artifacts:
+      - desktop/release/*.exe
+      - desktop/release/*.zip

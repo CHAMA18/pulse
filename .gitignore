@@ -20,6 +20,11 @@ node_modules
 # production
 /build
 
+# desktop packaging
+/desktop/app/
+/desktop/build/
+/desktop/release/
+
 # misc
 .DS_Store
 *.pem

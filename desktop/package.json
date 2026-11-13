@@ -1,0 +1,74 @@
+{
+  "name": "pulse-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pulse — Pharmacy Portal desktop application",
+  "main": "main.cjs",
+  "author": "Pulse",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dist:mac": "electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "dist:win": "electron-builder --win nsis zip --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "africa.pulse.desktop",
+    "productName": "Pulse",
+    "copyright": "Copyright © 2026 Pulse",
+    "electronVersion": "45.2.1",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "app/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.medical",
+      "identity": null,
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Pulse ${version}",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pulse"
+    },
+    "artifactName": "Pulse-${version}-${os}-${arch}.${ext}"
+  }
+}
