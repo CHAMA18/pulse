@@ -25,9 +25,9 @@ import {
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
-/* Pulse Stock Movements — the warehouse ledger. Quantities change      */
-/* here (and in Warehouse Catalogue receives/adjustments, same store),  */
-/* so the ledger and the shelves always agree.                          */
+/* Pulse Stock Movements — the warehouse ledger. Every quantity change  */
+/* is recorded here (the Warehouse Catalogue is read-only), so the      */
+/* ledger and the shelves always agree.                                 */
 /* ------------------------------------------------------------------ */
 
 const cardCls =

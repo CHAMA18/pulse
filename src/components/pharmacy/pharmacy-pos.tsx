@@ -402,6 +402,21 @@ export function PharmacyPOS({
         /* offline — the next visit re-mirrors the shelves */
       }
     })();
+    // A sale is what usually pushes a shelf under the trigger limit, so check
+    // the whole counter once here. One email covers every triggered item.
+    void (async () => {
+      try {
+        const { sendLowStockAlert } = await import("@/lib/cloud/low-stock-alerts");
+        const nameOf = new Map(stores.map((s) => [s.id, s.name]));
+        await sendLowStockAlert({
+          items: next,
+          stores,
+          storeNameOf: (row) => nameOf.get(resolveStoreId(row)) ?? "",
+        });
+      } catch {
+        /* alerts are best-effort — the next console visit retries */
+      }
+    })();
 
     const nextSales = [sale, ...sales];
     setSales(nextSales);

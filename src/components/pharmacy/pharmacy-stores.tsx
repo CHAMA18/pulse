@@ -12,6 +12,7 @@ import {
   Star,
   Store,
   Trash2,
+  TriangleAlert,
   Warehouse,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -19,6 +20,7 @@ import {
   formatZMW,
   loadDeliveries,
   loadInventory,
+  loadPharmacySettings,
   loadStockRequests,
   nextStoreId,
   resolveStoreId,
@@ -56,6 +58,8 @@ type StoreDraft = {
   location: string;
   address: string;
   phone: string;
+  /** Units that trigger this store's low-stock alert; undefined inherits the account limit. */
+  lowStockThreshold?: number;
 };
 
 function StoreDialog({
@@ -63,18 +67,22 @@ function StoreDialog({
   onOpenChange,
   stores,
   editing,
+  defaultLimit,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   stores: PharmacyStore[];
   editing: PharmacyStore | null;
+  /** Account-wide low-stock limit this store inherits when left blank. */
+  defaultLimit: number;
   onSaved: (draft: StoreDraft) => void;
 }) {
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
+  const [limit, setLimit] = useState("");
   const [errors, setErrors] = useState<{ name?: string; location?: string }>({});
 
   // Reopening starts from the store being edited (render-time reset).
@@ -86,6 +94,7 @@ function StoreDialog({
       setLocation(editing?.location ?? "");
       setAddress(editing?.address ?? "");
       setPhone(editing?.phone ?? "");
+      setLimit(editing?.lowStockThreshold === undefined ? "" : String(editing.lowStockThreshold));
       setErrors({});
     }
   }
@@ -111,6 +120,8 @@ function StoreDialog({
       location: cleanLocation,
       address: address.trim(),
       phone: phone.trim(),
+      lowStockThreshold:
+        limit.trim() === "" ? undefined : Math.max(0, Math.round(Number(limit) || 0)),
     });
     onOpenChange(false);
   };
@@ -198,6 +209,27 @@ function StoreDialog({
           </div>
 
           <div>
+            <label htmlFor="store-low-stock" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+              Low-stock trigger limit <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <input
+              id="store-low-stock"
+              type="number"
+              min={0}
+              step={1}
+              inputMode="numeric"
+              placeholder={`${defaultLimit} (account default)`}
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              className={cn(fieldCls, fieldState())}
+            />
+            <p className="mt-1.5 text-[11.5px] text-slate-400 dark:text-slate-500">
+              Units on hand that trigger this branch&rsquo;s alert email. Leave blank to use the
+              account-wide limit from Settings.
+            </p>
+          </div>
+
+          <div>
             <label htmlFor="store-phone" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
               Phone <span className="font-normal text-slate-400">(optional)</span>
             </label>
@@ -251,6 +283,7 @@ export function PharmacyStores({
   const [hydrated, setHydrated] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<PharmacyStore | null>(null);
+  const [defaultLimit, setDefaultLimit] = useState(10);
   const [actor, setActor] = useState({ name: "", email: "" });
 
   useEffect(() => {
@@ -273,6 +306,7 @@ export function PharmacyStores({
 
     const raf = requestAnimationFrame(() => {
       setInventory(loadInventory());
+      setDefaultLimit(loadPharmacySettings().lowStockThreshold);
       setHydrated(true);
     });
     return () => {
@@ -588,7 +622,21 @@ export function PharmacyStores({
                 </div>
               </dl>
 
-              <p className="mt-3.5 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">
+              <p
+                className={cn(
+                  "mt-3.5 flex items-center gap-1.5 text-[12px]",
+                  store.lowStockThreshold === undefined
+                    ? "text-slate-400 dark:text-slate-500"
+                    : "font-medium text-amber-600 dark:text-amber-400"
+                )}
+              >
+                <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {store.lowStockThreshold === undefined
+                  ? `Low-stock alert at the account limit (${defaultLimit} units)`
+                  : `Low-stock alert at ${store.lowStockThreshold} units`}
+              </p>
+
+              <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">
                 <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 {store.isMain
                   ? "Home of the application — requests default here"
@@ -615,6 +663,7 @@ export function PharmacyStores({
         onOpenChange={setDialogOpen}
         stores={stores}
         editing={editing}
+        defaultLimit={defaultLimit}
         onSaved={handleSaved}
       />
     </div>

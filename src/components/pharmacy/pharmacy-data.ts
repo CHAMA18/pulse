@@ -109,6 +109,13 @@ export type Supplier = {
 /** Portal preferences persisted per device. */
 export type PharmacySettings = {
   lowStockAlerts: boolean;
+  /**
+   * Units on hand at which the low-stock email fires. An item's own reorder
+   * level raises this when it is set higher, so nothing alerts late.
+   */
+  lowStockThreshold: number;
+  /** Where the low-stock email goes; empty means the signed-in user's email. */
+  lowStockAlertEmail: string;
   deliveryUpdates: boolean;
   requestStatus: boolean;
   weeklyDigest: boolean;
@@ -127,6 +134,11 @@ export type CatalogueProduct = {
   prescription: boolean;
   /** One-line note shown on the shelf card. */
   note?: string;
+  /**
+   * Units on hand that mark this product low. Carried onto the shelf rows
+   * booked from the catalogue so the bell and alert email use the same number.
+   */
+  lowStockTrigger?: number;
   createdAt: number;
 };
 
@@ -305,6 +317,8 @@ function loadStoredList<T>(key: string, seedIds?: ReadonlySet<string>): T[] {
 
 export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
   lowStockAlerts: true,
+  lowStockThreshold: 10,
+  lowStockAlertEmail: "",
   deliveryUpdates: true,
   requestStatus: true,
   weeklyDigest: false,
@@ -328,6 +342,16 @@ export function savePharmacySettings(settings: PharmacySettings): void {
   } catch {
     /* best-effort */
   }
+  notifyPharmacyChange("settings");
+}
+
+/**
+ * Tells live console chrome (the low-stock bell) that a locally stored list has
+ * changed, so it can re-read shelves without waiting for a navigation.
+ */
+export function notifyPharmacyChange(change: "inventory" | "settings" | "stores"): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("pulse:pharmacy-change", { detail: { change } }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -347,6 +371,11 @@ export type PharmacyStore = {
   /** The main store is the application's home storefront. */
   isMain: boolean;
   createdAt: number;
+  /**
+   * Units on hand that trigger this store's low-stock alert. Unset means the
+   * account-wide limit in Settings applies; branches can differ.
+   */
+  lowStockThreshold?: number;
 };
 
 /** Stores always carry a main — the first entry is promoted if none does. */
@@ -360,6 +389,7 @@ export function loadStores(): PharmacyStore[] {
 
 export function saveStores(stores: PharmacyStore[]): void {
   savePharmacyList(PHARMACY_STORES_KEY, stores);
+  notifyPharmacyChange("stores");
 }
 
 /** The store a stock record belongs to (legacy records live in the main store). */
@@ -391,6 +421,7 @@ export function loadInventory(): InventoryItem[] {
 
 export function saveInventory(items: InventoryItem[]): void {
   savePharmacyList(PHARMACY_INVENTORY_KEY, items);
+  notifyPharmacyChange("inventory");
 }
 
 export function loadStockRequests(): StockRequest[] {
@@ -466,6 +497,26 @@ export function loadSuppliers(): Supplier[] {
 
 export function saveSuppliers(suppliers: Supplier[]): void {
   savePharmacyList(PHARMACY_SUPPLIERS_KEY, suppliers);
+}
+
+/**
+ * Supplier names a purchase order can be raised against: the saved directory
+ * plus every supplier already used on an order or delivery, with the Pulse hub
+ * always available so the dropdown is never empty.
+ */
+export function supplierOptions(): string[] {
+  const names = new Set<string>();
+  for (const supplier of loadSuppliers()) {
+    if (supplier.name.trim()) names.add(supplier.name.trim());
+  }
+  for (const order of loadPurchaseOrders()) {
+    if (order.supplier.trim()) names.add(order.supplier.trim());
+  }
+  for (const delivery of loadDeliveries()) {
+    if (delivery.supplier.trim()) names.add(delivery.supplier.trim());
+  }
+  names.add("Pulse Central Hub");
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 /* ------------------------------------------------------------------ */
@@ -582,9 +633,9 @@ export function nextMovementId(movements: StockMovement[]): string {
 /* Formatting                                                          */
 /* ------------------------------------------------------------------ */
 
-/** "K 1,240" — the Kwacha format used across the pharmacy console. */
+/** "ZMW 1,240" — the Kwacha format used across the console and its reports. */
 export function formatZMW(amount: number): string {
-  return `K ${Math.round(amount).toLocaleString("en-US")}`;
+  return `ZMW ${Math.round(amount).toLocaleString("en-US")}`;
 }
 
 /** Short human date ("Jun 19"). */

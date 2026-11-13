@@ -1,9 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
-import { getFirebaseAuth } from "@/lib/firebase";
+import { getFirebaseAuth, getFirebaseDb } from "@/lib/firebase";
 
 type GuardState = "checking" | "authed" | "anonymous";
 
@@ -16,6 +16,7 @@ type GuardState = "checking" | "authed" | "anonymous";
  */
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [state, setState] = useState<GuardState>("checking");
 
   useEffect(() => {
@@ -38,18 +39,41 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         /* resolution failed — fall through to the currentUser check */
       }
       if (!active) return;
-      if (auth.currentUser) {
-        setState("authed");
-      } else {
+      if (!auth.currentUser) {
         setState("anonymous");
         router.replace("/login");
+        return;
       }
+
+      // A signed-in account still belongs to exactly one portal. A pharmacy
+      // login must never see the Pulse console, and vice versa — send it to
+      // the portal its profile names.
+      try {
+        const db = getFirebaseDb();
+        if (db) {
+          const { doc, getDoc } = await import("firebase/firestore");
+          const snap = await getDoc(doc(db, "User", auth.currentUser.uid));
+          const accountType = String(snap.data()?.account_type ?? "");
+          const onPulse = pathname.startsWith("/dashboard");
+          if (accountType === "Pharmacy" && onPulse) {
+            router.replace("/pharmacy");
+            return;
+          }
+          if (accountType === "Pulse" && pathname.startsWith("/pharmacy")) {
+            router.replace("/dashboard");
+            return;
+          }
+        }
+      } catch {
+        /* rules or offline — the page's own access checks still apply */
+      }
+      if (active) setState("authed");
     })();
 
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, pathname]);
 
   if (state !== "authed") {
     return (

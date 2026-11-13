@@ -24,7 +24,7 @@ function escapeHtml(value: unknown): string {
 }
 
 function money(value: number): string {
-  return `K ${Math.round(value).toLocaleString("en-US")}`;
+  return `ZMW ${Math.round(value).toLocaleString("en-US")}`;
 }
 
 function dateTime(value: number): string {

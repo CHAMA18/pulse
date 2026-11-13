@@ -711,7 +711,7 @@ export function RegisterDialog({
                 <p className="text-center text-[12px] leading-relaxed text-slate-400">
                   {invited
                     ? "By accepting you agree to the Pulse terms of service. Your role and access are set by your inviter."
-                    : "Your pharmacy joins the Pulse network pending review. By registering you agree to the Pulse terms of service."}
+                    : "Your pharmacy goes live on the Pulse network right away. By registering you agree to the Pulse terms of service."}
                 </p>
               </form>
             </motion.div>

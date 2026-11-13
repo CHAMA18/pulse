@@ -412,27 +412,46 @@ export function PulsePharmacies() {
           query(collection(db, "User"), where("account_type", "==", "Pharmacy"))
         );
         if (!active) return;
-        const remote: Pharmacy[] = snap.docs.map((entry) => {
-          const data = entry.data() as {
-            pharmacy_name?: string;
-            pharmacy_id?: string;
-            email?: string;
-            approved_by_duniya?: boolean;
-          };
-          return {
-            id: data.pharmacy_id ?? entry.id,
-            uid: entry.id,
-            name: data.pharmacy_name?.trim() || "Unnamed pharmacy",
-            address: "",
-            ownerEmail: data.email ?? null,
-            registeredAt: null,
-            status: data.approved_by_duniya ? "active" : "pending",
-          };
-        });
+        const remote: Pharmacy[] = snap.docs
+          // Owners are the pharmacy accounts; invited team members share their
+          // pharmacy's name and would otherwise appear as extra listings.
+          .filter((entry) => String(entry.data().role ?? "").toLowerCase() === "owner")
+          .map((entry) => {
+            const data = entry.data() as {
+              pharmacy_name?: string;
+              pharmacy_id?: string;
+              email?: string;
+              approved_by_duniya?: boolean;
+              created_time?: { toMillis?: () => number; seconds?: number };
+            };
+            const created = data.created_time;
+            const registeredAt =
+              typeof created?.toMillis === "function"
+                ? created.toMillis()
+                : typeof created?.seconds === "number"
+                  ? created.seconds * 1000
+                  : null;
+            return {
+              id: data.pharmacy_id ?? entry.id,
+              uid: entry.id,
+              name: data.pharmacy_name?.trim() || "Unnamed pharmacy",
+              address: "",
+              ownerEmail: data.email ?? null,
+              registeredAt,
+              // Self-registration is auto-approved, so only an explicit hold is
+              // pending here — a registration shows up as Active immediately.
+              status: data.approved_by_duniya === false ? "pending" : "active",
+            };
+          });
         if (remote.length === 0) return;
         setPharmacies((prev) => {
           const byEmail = new Map(remote.map((p) => [(p.ownerEmail ?? "").toLowerCase(), p]));
-          const merged = prev.map((p) => byEmail.get((p.ownerEmail ?? "").toLowerCase()) ?? p);
+          // Drop registry-backed rows the network no longer returns (removed
+          // accounts, or staff seats that used to be listed as pharmacies).
+          const fresh = prev.filter(
+            (p) => !p.uid || byEmail.has((p.ownerEmail ?? "").toLowerCase())
+          );
+          const merged = fresh.map((p) => byEmail.get((p.ownerEmail ?? "").toLowerCase()) ?? p);
           const known = new Set(merged.map((p) => (p.ownerEmail ?? "").toLowerCase()));
           return [...merged, ...remote.filter((p) => !known.has((p.ownerEmail ?? "").toLowerCase()))];
         });

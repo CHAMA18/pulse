@@ -294,6 +294,7 @@ export function PharmacyCatalogue({
     price: "",
     prescription: false,
     openingStock: "",
+    lowStockTrigger: "",
     storeId: "",
     note: "",
   });
@@ -366,7 +367,7 @@ export function PharmacyCatalogue({
       : 0;
 
   const resetForm = () => {
-    setForm({ name: "", category: "", unit: "pack", price: "", prescription: false, openingStock: "", storeId: "", note: "" });
+    setForm({ name: "", category: "", unit: "pack", price: "", prescription: false, openingStock: "", lowStockTrigger: "", storeId: "", note: "" });
   };
 
   const resetImport = () => {
@@ -419,6 +420,17 @@ export function PharmacyCatalogue({
     form.unit.trim().length > 0 &&
     Number(form.price) > 0;
 
+  // Live trigger preview for the add dialog: an explicit number wins, a blank
+  // field follows the same "quarter of opening stock, minimum 5" rule the
+  // shelf row will use.
+  const draftOpeningQty = Math.max(0, Math.round(Number(form.openingStock) || 0));
+  const autoTrigger = Math.max(5, Math.round(draftOpeningQty * 0.25));
+  const draftTrigger =
+    form.lowStockTrigger.trim() === ""
+      ? autoTrigger
+      : Math.max(0, Math.round(Number(form.lowStockTrigger) || 0));
+  const triggerBelowOpening = draftOpeningQty > 0 && draftTrigger > draftOpeningQty;
+
   const addProduct = () => {
     if (!canSubmit) return;
     const name = form.name.trim();
@@ -430,6 +442,15 @@ export function PharmacyCatalogue({
       return;
     }
 
+    // Blank trigger means "one quarter of the opening stock, minimum 5" — but
+    // an explicit number is kept on the product so future bookings inherit it.
+    const explicitTrigger =
+      form.lowStockTrigger.trim() === ""
+        ? undefined
+        : Math.max(0, Math.round(Number(form.lowStockTrigger) || 0));
+    const openingQty = hasStores ? Math.max(0, Math.round(Number(form.openingStock) || 0)) : 0;
+    const reorderLevel = explicitTrigger ?? Math.max(5, Math.round(openingQty * 0.25));
+
     const product: CatalogueProduct = {
       id: nextCatalogueId(products),
       name,
@@ -438,6 +459,7 @@ export function PharmacyCatalogue({
       price: Number(form.price),
       prescription: form.prescription,
       note: form.note.trim() || undefined,
+      ...(explicitTrigger !== undefined ? { lowStockTrigger: explicitTrigger } : {}),
       createdAt: Date.now(),
     };
     const nextProducts = [...products, product];
@@ -445,7 +467,6 @@ export function PharmacyCatalogue({
     saveCatalogue(nextProducts);
 
     // Opening stock lands on the chosen store's shelves as a fresh batch.
-    const openingQty = hasStores ? Math.max(0, Math.round(Number(form.openingStock) || 0)) : 0;
     if (openingQty > 0) {
       const nextItems: InventoryItem[] = [
         ...items,
@@ -456,7 +477,7 @@ export function PharmacyCatalogue({
           batch: `NEW-${new Date().getFullYear()}-${String(items.length + 1).padStart(2, "0")}`,
           expiry: new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
           qty: openingQty,
-          reorderLevel: Math.max(5, Math.round(openingQty * 0.25)),
+          reorderLevel,
           unitPrice: product.price,
           storeId: (form.storeId || mainStore?.id) as string,
           productId: product.id,
@@ -870,6 +891,45 @@ export function PharmacyCatalogue({
                   placeholder={hasStores ? "0" : "Add a store first"}
                 />
               </div>
+            </div>
+            <div className="grid gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="cat-trigger">Low stock trigger</Label>
+                  <FieldHint label="Low stock trigger">
+                    Units on hand that mark this shelf low — the bell, the Stock Balance badge and
+                    the low-stock email all use it. Leave blank to use a quarter of the opening
+                    stock (minimum 5). Set 0 to only flag the shelf once it is sold out.
+                  </FieldHint>
+                </div>
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-400">
+                  {form.lowStockTrigger.trim() === "" ? `Auto · ${autoTrigger}` : `Alerts at ≤ ${draftTrigger}`}
+                </span>
+              </div>
+              <Input
+                id="cat-trigger"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                value={form.lowStockTrigger}
+                onChange={(e) => setForm({ ...form, lowStockTrigger: e.target.value })}
+                placeholder={`${autoTrigger} units`}
+                aria-describedby="cat-trigger-note"
+              />
+              <p
+                id="cat-trigger-note"
+                className={cn(
+                  "text-[11.5px] leading-snug",
+                  triggerBelowOpening
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-slate-400 dark:text-slate-500"
+                )}
+              >
+                {triggerBelowOpening
+                  ? `Opening stock (${draftOpeningQty}) is already at or below this trigger — the shelf will flag low as soon as it is added.`
+                  : `This shelf will raise a low-stock alert at ${draftTrigger} ${draftTrigger === 1 ? "unit" : "units"} and below.`}
+              </p>
             </div>
             <div className="grid gap-1.5">
               <div className="flex items-center gap-1.5">

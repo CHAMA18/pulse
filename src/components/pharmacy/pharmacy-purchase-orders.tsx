@@ -21,15 +21,14 @@ import {
   loadCatalogue,
   loadDeliveries,
   loadPurchaseOrders,
-  loadSuppliers,
   nextId,
   resolveStoreId,
   saveDeliveries,
   savePurchaseOrders,
+  supplierOptions,
   type CatalogueProduct,
   type PurchaseOrder,
   type PurchaseOrderStatus,
-  type Supplier,
 } from "@/components/pharmacy/pharmacy-data";
 import {
   PageHeader,
@@ -63,6 +62,9 @@ import { Textarea } from "@/components/ui/textarea";
 /* ------------------------------------------------------------------ */
 /* Purchase Orders                                                     */
 /* ------------------------------------------------------------------ */
+/* Sentinel for the dropdown's "type a new supplier" escape hatch.     */
+const OTHER_SUPPLIER = "__other-supplier";
+
 /* Raise orders to network suppliers, send them, and mark them         */
 /* received — receiving files a delivery record automatically so the   */
 /* Deliveries page and audit trail stay honest.                        */
@@ -101,7 +103,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
   const { toast } = useToast();
 
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierNames, setSupplierNames] = useState<string[]>([]);
   const [catalogue, setCatalogue] = useState<CatalogueProduct[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>("all");
@@ -111,6 +113,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
 
   // Create form
   const [supplier, setSupplier] = useState("");
+  const [customSupplier, setCustomSupplier] = useState(false);
   const [expectedAt, setExpectedAt] = useState("");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([{ key: 1, productId: "", qty: "", unitCost: "" }]);
@@ -135,7 +138,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
 
     const raf = requestAnimationFrame(() => {
       setOrders(loadPurchaseOrders());
-      setSuppliers(loadSuppliers());
+      setSupplierNames(supplierOptions());
       setCatalogue(loadCatalogue());
       setHydrated(true);
     });
@@ -168,6 +171,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
 
   const resetForm = () => {
     setSupplier("");
+    setCustomSupplier(false);
     setExpectedAt("");
     setNotes("");
     setLines([{ key: 1, productId: "", qty: "", unitCost: "" }]);
@@ -320,7 +324,8 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
             type="button"
             onClick={() => {
               setCreateOpen(true);
-              setSupplier(suppliers[0]?.name ?? "");
+              setCustomSupplier(false);
+              setSupplier(supplierNames[0] ?? "");
               setExpectedAt(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
             }}
             className={cn(brandBtnCls, "h-10 px-4 text-[13.5px] font-semibold")}
@@ -614,27 +619,42 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label htmlFor="po-supplier">Supplier</Label>
-                {suppliers.length > 0 ? (
-                  <Select value={supplier} onValueChange={setSupplier}>
-                    <SelectTrigger id="po-supplier" className="w-full">
-                      <SelectValue placeholder="Choose a supplier" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((entry) => (
-                        <SelectItem key={entry.id} value={entry.name}>
-                          {entry.name}
-                          {entry.verified ? " ✓" : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
+                <Select
+                  value={customSupplier ? "" : supplier}
+                  onValueChange={(value) => {
+                    if (value === OTHER_SUPPLIER) {
+                      setCustomSupplier(true);
+                      setSupplier("");
+                      return;
+                    }
+                    setCustomSupplier(false);
+                    setSupplier(value);
+                  }}
+                >
+                  <SelectTrigger id="po-supplier" className="w-full">
+                    <SelectValue placeholder="Choose a supplier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {supplierNames.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={OTHER_SUPPLIER}>Other supplier…</SelectItem>
+                  </SelectContent>
+                </Select>
+                {customSupplier ? (
                   <Input
-                    id="po-supplier"
                     value={supplier}
                     onChange={(e) => setSupplier(e.target.value)}
-                    placeholder="e.g. Pulse Central Hub"
+                    placeholder="Supplier name"
+                    aria-label="Supplier name"
+                    autoFocus
                   />
+                ) : (
+                  <p className="text-[11.5px] text-slate-400 dark:text-slate-500">
+                    Saved suppliers and those already on your orders and deliveries.
+                  </p>
                 )}
               </div>
               <div className="grid gap-1.5">

@@ -23,6 +23,7 @@ import { defineSecret } from "firebase-functions/params";
 import { createHash, randomUUID } from "crypto";
 import * as admin from "firebase-admin";
 import {
+  lowStockAlertEmail,
   pharmacyWelcomeEmail,
   pulseAdminInviteEmail,
   teamInviteEmail,
@@ -831,6 +832,114 @@ export const listNetworkInventory = onCall(async (request) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* sendLowStockAlert — one consolidated low-stock email per trigger     */
+/* ------------------------------------------------------------------ */
+/* The pharmacy console posts every item that reached its trigger limit */
+/* after a stock change; this sends them as a single message and then   */
+/* throttles repeats so a busy counter cannot flood the inbox.          */
+
+/** Repeats for the same pharmacy are held to one alert per window. */
+const LOW_STOCK_ALERT_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+export const sendLowStockAlert = onCall({ secrets: [resendApiKey] }, async (request) => {
+  const actor = await requirePharmacyActor(request);
+
+  const triggerLimit = Math.max(0, Math.round(Number(request.data?.triggerLimit) || 0));
+  const rawItems: unknown[] = Array.isArray(request.data?.items) ? request.data.items : [];
+
+  const items = rawItems
+    .slice(0, 100)
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const raw = entry as Record<string, unknown>;
+      const name = String(raw.name ?? "").trim().slice(0, 200);
+      if (!name) return null;
+      return {
+        name,
+        category: String(raw.category ?? "General").trim().slice(0, 120) || "General",
+        batch: String(raw.batch ?? "").trim().slice(0, 120),
+        qty: Math.max(0, Math.round(Number(raw.qty) || 0)),
+        reorderLevel: Math.max(0, Math.round(Number(raw.reorderLevel) || 0)),
+        storeName: String(raw.storeName ?? "").trim().slice(0, 160),
+        // The store's own limit (or the account default) that this shelf crossed.
+        triggerLimit: Math.max(0, Math.round(Number(raw.triggerLimit) || triggerLimit)),
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((a, b) => a.qty - b.qty || a.name.localeCompare(b.name));
+
+  if (items.length === 0) return { sent: false, reason: "no-triggers" };
+
+  // Configured mailboxes win (comma/semicolon separated); otherwise the person
+  // who triggered the alert gets it. Ten addresses is plenty for one branch list.
+  const requested = String(request.data?.email ?? "")
+    .split(/[,;\s]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => EMAIL_RE.test(entry));
+  const fallback = String(actor.email ?? "").trim().toLowerCase();
+  const recipients = Array.from(new Set(requested.length > 0 ? requested : [fallback].filter(Boolean))).slice(0, 10);
+  if (recipients.length === 0) return { sent: false, reason: "no-recipient" };
+
+  const stateRef = db
+    .collection("LowStockAlert")
+    .doc(createHash("sha256").update(String(actor.pharmacyId ?? recipients[0])).digest("hex"));
+
+  const now = Date.now();
+  const state = await stateRef.get();
+  const lastSentAt = Number(state.data()?.lastSentAt ?? 0);
+  if (lastSentAt > 0 && now - lastSentAt < LOW_STOCK_ALERT_WINDOW_MS) {
+    return {
+      sent: false,
+      reason: "throttled",
+      nextEligibleAt: new Date(lastSentAt + LOW_STOCK_ALERT_WINDOW_MS).toISOString(),
+    };
+  }
+
+  const pharmacyName = String(
+    request.data?.pharmacyName ?? state.data()?.pharmacyName ?? "Your pharmacy"
+  ).trim();
+
+  const content = lowStockAlertEmail({
+    pharmacyName,
+    items,
+    consoleUrl: APP_URL,
+    triggeredAt: new Date(now).toLocaleString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Africa/Lusaka",
+    }),
+  });
+
+  const messageId = await deliver(
+    "sendLowStockAlert",
+    recipients,
+    content,
+    `${items.length} item(s) at or below their trigger limit`
+  );
+
+  await stateRef.set(
+    {
+      pharmacyId: actor.pharmacyId ?? null,
+      pharmacyName,
+      recipients,
+      triggerLimit,
+      itemCount: items.length,
+      lastSentAt: now,
+      lastSentAtIso: new Date(now).toISOString(),
+      lastSignature: createHash("sha256")
+        .update(items.map((item) => `${item.name}:${item.qty}`).join("|"))
+        .digest("hex"),
+    },
+    { merge: true }
+  );
+
+  return { sent: true, messageId, recipients, itemCount: items.length };
+});
+
+/* ------------------------------------------------------------------ */
 /* getInvitation — public lookup for the accept link                  */
 /* ------------------------------------------------------------------ */
 
@@ -948,7 +1057,9 @@ export const acceptInvitation = onCall(async (request) => {
           account_type: "Pharmacy",
           pharmacy_name: data.pharmacyName ?? null,
           pharmacy_id: data.pharmacyId ?? null,
-          approved_by_duniya: false,
+          // A staff seat is approved by its pharmacy, not the network — the
+          // network listing belongs to the owner's account only.
+          approved_by_duniya: true,
           access_revoked: false,
         },
         { merge: true }

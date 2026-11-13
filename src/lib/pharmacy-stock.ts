@@ -100,6 +100,46 @@ export function nextRequestStatus(
   return REQUEST_TRANSITIONS[current]?.[action] ?? null;
 }
 
+/**
+ * The quantity at which an item counts as low: the pharmacy's configured
+ * trigger limit, raised by the item's own reorder level when that is higher
+ * (a shelf flagged to reorder at 40 must not wait for the global 10).
+ */
+export function lowStockLimitFor(item: Pick<ShelfItem, "reorderLevel">, triggerLimit: number): number {
+  const configured = Math.max(0, Math.round(Number(triggerLimit) || 0));
+  const reorder = Math.max(0, Math.round(Number(item.reorderLevel) || 0));
+  return Math.max(configured, reorder);
+}
+
+/**
+ * The trigger limit for a store: its own setting when it has one, otherwise
+ * the account-wide default. Branches keep different reorder rhythms.
+ */
+export function storeLowStockLimit(
+  store: { lowStockThreshold?: number } | undefined,
+  defaultLimit: number
+): number {
+  const own = Number(store?.lowStockThreshold);
+  if (Number.isFinite(own) && own >= 0 && store?.lowStockThreshold !== undefined) {
+    return Math.round(own);
+  }
+  return Math.max(0, Math.round(Number(defaultLimit) || 0));
+}
+
+/**
+ * Items that have reached the low-stock trigger, worst first. Pass a number for
+ * one account-wide limit, or a resolver when each store carries its own.
+ */
+export function triggeredLowStock<T extends ShelfItem>(
+  items: T[],
+  triggerLimit: number | ((_item: T) => number)
+): T[] {
+  const limitOf = typeof triggerLimit === "function" ? triggerLimit : () => triggerLimit;
+  return items
+    .filter((item) => item.qty <= lowStockLimitFor(item, limitOf(item)))
+    .sort((a, b) => a.qty - b.qty || a.name.localeCompare(b.name));
+}
+
 /** True when a sale containing prescription items may be charged. */
 export function canChargePrescription(input: {
   hasPrescriptionItems: boolean;

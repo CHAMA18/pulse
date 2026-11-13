@@ -111,9 +111,10 @@ export function PharmacyProfile({
         email,
         uid,
         registeredAt: registration ? new Date(registration.at).getTime() : null,
+        // Self-registration is auto-approved; only an explicit hold stays pending.
         approved:
           registration !== undefined
-            ? Boolean(firestoreProfile?.approved_by_duniya) // self-registered → pending until approved
+            ? (firestoreProfile?.approved_by_duniya ?? true)
             : (firestoreProfile?.approved_by_duniya ?? null),
         source: registration ? "registration" : firestoreProfile ? "firestore" : "session",
       });

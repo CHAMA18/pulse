@@ -18,6 +18,7 @@ import {
 import { PageHeader, pharmacyCardCls } from "@/components/pharmacy/pharmacy-shared";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 
 type SettingsSectionProps = {
   icon: LucideIcon;
@@ -92,6 +93,8 @@ export function PharmacySettings({
 }) {
   const [prefs, setPrefs] = useState<Settings>({
     lowStockAlerts: true,
+    lowStockThreshold: 10,
+    lowStockAlertEmail: "",
     deliveryUpdates: true,
     requestStatus: true,
     weeklyDigest: false,
@@ -148,12 +151,58 @@ export function PharmacySettings({
           description="What the portal keeps you posted about"
         >
           <div className="divide-y divide-slate-100 dark:divide-white/5">
-            <ToggleRow
-              label="Low stock alerts"
-              hint="Ping when an item falls to its reorder level."
-              checked={prefs.lowStockAlerts}
-              onChange={(on) => update({ lowStockAlerts: on })}
-            />
+            <div>
+              <ToggleRow
+                label="Low stock alerts"
+                hint="Email one consolidated alert when items reach the trigger limit."
+                checked={prefs.lowStockAlerts}
+                onChange={(on) => update({ lowStockAlerts: on })}
+              />
+              {prefs.lowStockAlerts && (
+                <div className="mb-3 grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-3.5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] dark:bg-white/5">
+                  <label className="block min-w-0">
+                    <span className="block text-[11px] font-bold uppercase tracking-[0.09em] text-slate-500 dark:text-slate-400">
+                      Trigger limit
+                    </span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      value={String(prefs.lowStockThreshold)}
+                      onChange={(event) => {
+                        const next = Math.max(0, Math.round(Number(event.target.value) || 0));
+                        update({ lowStockThreshold: next });
+                      }}
+                      aria-label="Low stock trigger limit in units"
+                      className="mt-1.5"
+                    />                      <span className="mt-1 block text-[11.5px] leading-snug text-slate-400 dark:text-slate-500">
+                      Units on hand that trigger the alert. A store can set its own limit on the
+                      Stores page, and items whose reorder level is higher alert at that level
+                      instead.
+                    </span>
+                  </label>
+                  <label className="block min-w-0">
+                    <span className="block text-[11px] font-bold uppercase tracking-[0.09em] text-slate-500 dark:text-slate-400">
+                      Send alerts to
+                    </span>
+                    <Input
+                      type="text"
+                      inputMode="email"
+                      value={prefs.lowStockAlertEmail}
+                      placeholder={user.email || "you@pharmacy.com, owner@pharmacy.com"}
+                      onChange={(event) => update({ lowStockAlertEmail: event.target.value })}
+                      aria-label="Low stock alert email addresses"
+                      className="mt-1.5"
+                    />
+                    <span className="mt-1 block text-[11.5px] leading-snug text-slate-400 dark:text-slate-500">
+                      One email lists every triggered item and goes to each address — separate
+                      several with commas. Leave blank to use your sign-in email.
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
             <ToggleRow
               label="Delivery updates"
               hint="Confirmations when goods are verified and received."

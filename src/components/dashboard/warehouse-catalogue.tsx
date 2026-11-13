@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { PackagePlus, Search, Trash2, Warehouse } from "lucide-react";
+import { PackagePlus, Search, Warehouse } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
@@ -116,18 +116,6 @@ export function WarehouseCatalogue() {
     toast({ title: "Added to warehouse", description: `${name} × ${qty} is on the hub shelves — receipt recorded in Stock Movements.` });
   };
 
-  const adjust = (item: WarehouseItem, delta: number) => {
-    if (item.qty + delta < 0) return;
-    recordMovement(item, delta, "Stock count correction");
-    persist(items.map((row) => (row.id === item.id ? { ...row, qty: row.qty + delta } : row)));
-  };
-
-  const remove = (item: WarehouseItem) => {
-    if (item.qty > 0) recordMovement(item, -item.qty, "Removed from warehouse catalogue");
-    persist(items.filter((row) => row.id !== item.id));
-    toast({ title: "Removed", description: `${item.name} left the warehouse catalogue.` });
-  };
-
   return (
     <div className="space-y-7" data-tour="pulse-warehouse">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -176,15 +164,14 @@ export function WarehouseCatalogue() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-[13.5px]">
+            <table className="w-full min-w-[620px] text-left text-[13.5px]">
               <thead>
                 <tr className="border-y border-slate-100 text-[11.5px] uppercase tracking-[0.12em] text-slate-400 dark:border-white/5">
                   <th className="px-5 py-3 font-semibold">Product</th>
                   <th className="px-3 py-3 font-semibold">Batch</th>
                   <th className="px-3 py-3 font-semibold">Expiry</th>
                   <th className="px-3 py-3 text-right font-semibold">Qty</th>
-                  <th className="px-3 py-3 text-right font-semibold">Value</th>
-                  <th className="px-5 py-3 text-right font-semibold">Adjust</th>
+                  <th className="px-5 py-3 text-right font-semibold">Value</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
@@ -202,16 +189,7 @@ export function WarehouseCatalogue() {
                         <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Low</span>
                       )}
                     </td>
-                    <td className="px-3 py-3 text-right tabular-nums">ZMW {Math.round(item.qty * item.unitPrice).toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right">
-                      <span className="inline-flex gap-1.5">
-                        <button type="button" onClick={() => adjust(item, -1)} aria-label={`Remove one ${item.name}`} className="h-8 w-8 rounded-md border border-slate-200 text-[14px] font-bold dark:border-white/10">−</button>
-                        <button type="button" onClick={() => adjust(item, 1)} aria-label={`Add one ${item.name}`} className="h-8 w-8 rounded-md border border-slate-200 text-[14px] font-bold dark:border-white/10">+</button>
-                        <button type="button" onClick={() => remove(item)} aria-label={`Remove ${item.name}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 text-rose-600 dark:border-rose-500/30 dark:text-rose-300">
-                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                      </span>
-                    </td>
+                    <td className="px-5 py-3 text-right tabular-nums">ZMW {Math.round(item.qty * item.unitPrice).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -221,7 +199,8 @@ export function WarehouseCatalogue() {
       </div>
 
       <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[12px] text-slate-400 dark:text-slate-500">
-        Warehouse stock is Pulse&apos;s own hub inventory. Pharmacy shelves live under Pharmacies Inventory.
+        Warehouse quantities are read-only here — adjustments are recorded in Stock Movement so the
+        ledger stays auditable. Pharmacy shelves live under Pharmacies Inventory.
       </motion.p>
 
       <Dialog open={receiveOpen} onOpenChange={setReceiveOpen}>

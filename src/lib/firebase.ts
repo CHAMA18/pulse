@@ -5,7 +5,15 @@ import {
   logEvent,
   type Analytics,
 } from "firebase/analytics";
-import { getAuth, GoogleAuthProvider, createUserWithEmailAndPassword, updateProfile, type Auth, type User } from "firebase/auth";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+  type Auth,
+  type User,
+} from "firebase/auth";
 import {
   doc,
   getDoc,
@@ -421,9 +429,9 @@ export type PharmacyRegistrationResult = {
  *  2. Sets the auth display name to the owner's name.
  *  3. Writes a `User/{uid}` profile in the exact shape the Pulse pharmacy
  *     app reads (`account_type: "Pharmacy"`, `role: "owner"`,
- *     `pharmacy_name`, `approved_by_duniya: false` — pending network
- *     review), so the same account works in the pharmacy app once
- *     provisioned there.
+ *     `pharmacy_name`, `approved_by_duniya: true` — self-registration is
+ *     auto-approved, so the account is live on the Pulse network right
+ *     away), so the same account works in the pharmacy app immediately.
  *
  * The Firestore write is best-effort: security rules or an outage must not
  * lose an already-created Auth account, so failures fall back to the local
@@ -465,7 +473,7 @@ export async function registerPharmacyAccount(
         account_type: "Pharmacy",
         pharmacy_name: pharmacyName,
         pharmacy_id: user.uid,
-        approved_by_duniya: false, // pending Pulse network review
+        approved_by_duniya: true, // self-registration is auto-approved
       });
       profileSaved = true;
     } catch {
@@ -488,6 +496,22 @@ export async function registerPharmacyAccount(
     at: new Date().toISOString(),
   });
   return registration;
+}
+
+/**
+ * Emails a Firebase password-reset link to an existing account. Used by the
+ * Pulse console when an Owner/Admin triggers a reset for a user.
+ */
+export async function sendPasswordResetLink(email: string): Promise<void> {
+  const auth = getFirebaseAuth();
+  if (!auth) {
+    throw new FirebaseError("auth/unavailable", "Authentication isn't available right now.");
+  }
+  const address = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+    throw new FirebaseError("auth/invalid-email", "That email address doesn't look right.");
+  }
+  await sendPasswordResetEmail(auth, address);
 }
 
 const AUTH_ERROR_COPY: Record<string, string> = {

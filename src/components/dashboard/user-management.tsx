@@ -5,6 +5,7 @@ import {
   CircleCheck,
   CirclePause,
   Clock,
+  KeyRound,
   MoreHorizontal,
   RotateCw,
   Search,
@@ -19,7 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { trackEvent } from "@/lib/firebase";
+import { describeAuthError, sendPasswordResetLink, trackEvent } from "@/lib/firebase";
 import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
 import {
   callCloudFunction,
@@ -417,6 +418,8 @@ export function UserManagement({
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [savingUid, setSavingUid] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<PulseUser | null>(null);
+  const [resetTarget, setResetTarget] = useState<PulseUser | null>(null);
+  const [resetting, setResetting] = useState(false);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
@@ -643,6 +646,29 @@ export function UserManagement({
       });
   };
 
+  /** Owners and Admins can email a reset link to an active console user. */
+  const canResetPassword = (user: PulseUser) =>
+    canManage && user.status === "active" && user.id !== currentUid;
+
+  const triggerPasswordReset = async () => {
+    const user = resetTarget;
+    if (!user) return;
+    setResetting(true);
+    try {
+      await sendPasswordResetLink(user.email);
+      setResetTarget(null);
+      toast({
+        title: "Password reset sent",
+        description: `${user.name} will get a reset link at ${user.email}.`,
+      });
+      void trackEvent("pulse_user_password_reset", { role: user.role });
+    } catch (err) {
+      toast({ title: "Reset failed", description: describeAuthError(err) });
+    } finally {
+      setResetting(false);
+    }
+  };
+
   /* ---------------- render ---------------- */
 
   const filterChips: { id: RoleFilter; label: string }[] = [
@@ -655,7 +681,8 @@ export function UserManagement({
     if (user.status === "invited") return true;
     return (
       user.source === "profile" &&
-      (canChangePulseRole(role, currentUid, user.id, user.role) ||
+      (canResetPassword(user) ||
+        canChangePulseRole(role, currentUid, user.id, user.role) ||
         canRemovePulseUser(role, currentUid, user.id, user.role))
     );
   };
@@ -683,7 +710,8 @@ export function UserManagement({
 
     const canEditRole = canChangePulseRole(role, currentUid, user.id, user.role);
     const canRemove = canRemovePulseUser(role, currentUid, user.id, user.role);
-    if (!canEditRole && !canRemove) return null;
+    const canReset = canResetPassword(user);
+    if (!canEditRole && !canRemove && !canReset) return null;
 
     return (
       <DropdownMenuContent align="end" className="w-52">
@@ -696,6 +724,15 @@ export function UserManagement({
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {canReset && (
+          <DropdownMenuItem
+            disabled={resetting}
+            onClick={() => setResetTarget(user)}
+          >
+            <KeyRound className="mr-2 h-4 w-4 text-purple-500" aria-hidden="true" />
+            Send password reset
+          </DropdownMenuItem>
+        )}
         {canEditRole && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger disabled={savingUid === user.id}>
@@ -1063,6 +1100,45 @@ export function UserManagement({
             >
               <UserMinus className="h-4 w-4" aria-hidden="true" />
               {savingUid === removeTarget?.id ? "Removing…" : "Remove user"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={resetTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !resetting) setResetTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Send a password reset to {resetTarget?.name}?</DialogTitle>
+            <DialogDescription>
+              They get a secure link from Pulse to set a new password. Nothing changes until
+              they use it — their current password keeps working until then.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl bg-purple-50 px-4 py-3 text-[13px] text-purple-800 dark:bg-purple-500/10 dark:text-purple-200">
+            {resetTarget?.email} · {resetTarget ? ROLE_META[resetTarget.role].label : ""}
+          </div>
+          <DialogFooter className="gap-2">
+            <button
+              type="button"
+              onClick={() => setResetTarget(null)}
+              disabled={resetting}
+              className="h-10 rounded-md border border-slate-200 px-4 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void triggerPasswordReset()}
+              disabled={resetting}
+              className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] disabled:opacity-60"
+            >
+              <KeyRound className="h-4 w-4" aria-hidden="true" />
+              {resetting ? "Sending…" : "Send reset link"}
             </button>
           </DialogFooter>
         </DialogContent>

@@ -461,3 +461,163 @@ export function pulseAdminInviteEmail(params: {
     ].join("\n"),
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Low stock alert — one consolidated email per trigger                 */
+/* ------------------------------------------------------------------ */
+
+export type LowStockAlertItem = {
+  name: string;
+  category: string;
+  batch: string;
+  qty: number;
+  reorderLevel: number;
+  storeName?: string;
+  /** The store's effective trigger limit for this shelf. */
+  triggerLimit: number;
+};
+
+export type LowStockAlertParams = {
+  pharmacyName: string;
+  /** Every item that reached the trigger, worst first. */
+  items: LowStockAlertItem[];
+  consoleUrl: string;
+  /** Human-readable time the alert fired. */
+  triggeredAt: string;
+};
+
+function alertItemRows(items: LowStockAlertItem[]): string {
+  return items
+    .map((item, index) => {
+      const out = item.qty <= 0;
+      const border = index === items.length - 1 ? "none" : `1px solid ${BORDER}`;
+      const meta = [item.category, item.batch ? `Batch ${item.batch}` : "", item.storeName ?? ""]
+        .filter(Boolean)
+        .join(" · ");
+      return `<tr>
+  <td style="padding:12px 0;border-bottom:${border};font-family:${FONT};">
+    <div style="font-size:13.5px;font-weight:700;line-height:1.35;color:${INK};">${esc(item.name)}</div>
+    <div style="padding-top:2px;font-size:11.5px;line-height:1.5;color:${MUTED};">${esc(meta)}</div>
+  </td>
+  <td align="right" style="padding:12px 0 12px 10px;border-bottom:${border};font-family:${FONT};white-space:nowrap;">
+    <span style="font-size:14px;font-weight:800;color:${out ? "#b91c1c" : "#b45309"};">${esc(String(item.qty))}</span>
+    <span style="font-size:11px;color:${FAINT};"> / ${esc(String(Math.max(0, item.triggerLimit)))}</span>
+  </td>
+  <td align="right" style="padding:12px 0 12px 10px;border-bottom:${border};font-family:${FONT};">
+    <span style="display:inline-block;border-radius:999px;padding:3px 8px;font-size:8.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;background-color:${out ? "#fef2f2" : "#fffbeb"};color:${out ? "#b91c1c" : "#92400e"};border:1px solid ${out ? "#fecaca" : "#fde68a"};">${out ? "Out" : "Low"}</span>
+  </td>
+</tr>`;
+    })
+    .join("");
+}
+
+export function lowStockAlertEmail(params: LowStockAlertParams): EmailContent {
+  const items = params.items;
+  const count = items.length;
+  const outCount = items.filter((item) => item.qty <= 0).length;
+  const heading =
+    count === 1 ? "1 item reached the low-stock limit" : `${count} items reached the low-stock limit`;
+  // One limit across the whole alert (single store) reads differently from
+  // branches with their own limits.
+  const limits = Array.from(new Set(items.map((item) => item.triggerLimit)));
+  const singleLimit = limits.length === 1 ? limits[0] : null;
+  const limitClause =
+    singleLimit !== null ? `the ${singleLimit}-unit trigger limit` : "their store's trigger limit";
+  const preheader = `${params.pharmacyName}: ${count} item${count === 1 ? "" : "s"} at or below ${limitClause}.${outCount ? ` ${outCount} out of stock.` : ""}`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light only" />
+<title>${esc(heading)}</title>
+<style>
+  body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+  table, td { mso-table-lspace:0pt !important; mso-table-rspace:0pt !important; border-collapse:collapse !important; }
+  img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+  @media only screen and (max-width:620px) {
+    .wrap { width:100% !important; max-width:100% !important; }
+    .pad { padding-left:24px !important; padding-right:24px !important; }
+    .h1 { font-size:26px !important; line-height:1.2 !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:${CANVAS};-webkit-font-smoothing:antialiased;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${esc(preheader)}&#8203;&zwnj;&nbsp;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CANVAS}" style="background-color:${CANVAS};">
+<tr><td align="center" style="padding:36px 12px;">
+  <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" class="wrap" style="width:640px;max-width:100%;background-color:#ffffff;border:1px solid ${BORDER};border-radius:20px;overflow:hidden;">
+    ${masthead()}
+    <tr><td class="pad" style="padding:32px 40px 0;font-family:${FONT};color:${INK};">
+      <p style="margin:0;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:${BRAND_PURPLE};">Low stock alert</p>
+      <h1 class="h1" style="margin:14px 0 0;font-family:${FONT};font-size:30px;line-height:1.18;font-weight:800;letter-spacing:-0.8px;color:${INK};">${esc(heading)}</h1>
+      <p style="margin:15px 0 0;font-size:15px;line-height:1.7;color:${MUTED};">
+        <strong style="color:${INK};">${esc(params.pharmacyName)}</strong> has shelves at or below
+        ${
+          singleLimit !== null
+            ? `the <strong style="color:${INK};">${esc(String(singleLimit))}-unit</strong> trigger limit`
+            : `<strong style="color:${INK};">their store&rsquo;s trigger limit</strong>`
+        }.
+        Reorder the lines below to keep the counter stocked.
+      </p>
+    </td></tr>
+    <tr><td class="pad" style="padding:26px 40px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="padding:0 0 8px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">Item</td>
+          <td align="right" style="padding:0 0 8px 10px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">On hand</td>
+          <td align="right" style="padding:0 0 8px 10px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">Status</td>
+        </tr>
+        ${alertItemRows(items)}
+      </table>
+    </td></tr>
+    <tr><td class="pad" align="center" style="padding:28px 40px 0;">
+      ${cta(params.consoleUrl, "Open stock balance")}
+      <p style="margin:14px 0 0;font-family:${FONT};font-size:12.5px;line-height:1.65;color:${MUTED};">
+        Raised ${esc(params.triggeredAt)}. One alert covers every item that crossed the limit.
+      </p>
+    </td></tr>
+    <tr><td class="pad" style="padding:26px 40px 0;"><div style="height:1px;background-color:${BORDER};font-size:0;line-height:0;">&nbsp;</div></td></tr>
+    <tr><td class="pad" style="padding:18px 40px 28px;font-family:${FONT};">
+      <p style="margin:0;font-size:12px;line-height:1.7;color:${MUTED};">
+        You are receiving this because low-stock alerts are on for
+        <strong style="color:${INK};">${esc(params.pharmacyName)}</strong>. Adjust the trigger limit or turn alerts off in Settings.
+      </p>
+      <p style="margin:14px 0 0;font-size:9px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#a39cb0;">Pulse &middot; Pharmacy intelligence, delivered</p>
+    </td></tr>
+  </table>
+</td></tr>
+</table>
+</body>
+</html>`;
+
+  const text = [
+    `Low stock alert — ${params.pharmacyName}`,
+    "",
+    `${count} item${count === 1 ? "" : "s"} at or below ${limitClause}:`,
+    "",
+    ...items.map(
+      (item) =>
+        `- ${item.name} (${[item.category, item.batch ? `batch ${item.batch}` : "", item.storeName ?? ""]
+          .filter(Boolean)
+          .join(", ")}) — ${item.qty} on hand, limit ${Math.max(0, item.triggerLimit)}`
+    ),
+    "",
+    `Open stock balance: ${params.consoleUrl}`,
+    "",
+    `Raised ${params.triggeredAt}.`,
+    "Adjust the trigger limit or turn alerts off in Settings.",
+    "",
+    "— Pulse · Pharmacy intelligence, delivered",
+  ].join("\n");
+
+  return {
+    subject:
+      count === 1
+        ? `Low stock: ${items[0]?.name ?? "1 item"} in ${params.pharmacyName}`
+        : `Low stock: ${count} items in ${params.pharmacyName}`,
+    html,
+    text,
+  };
+}

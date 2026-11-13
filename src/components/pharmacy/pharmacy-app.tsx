@@ -67,6 +67,7 @@ import {
   formatZMW,
   loadDeliveries,
   loadInventory,
+  loadPharmacySettings,
   loadPurchaseOrders,
   loadSales,
   loadStockRequests,
@@ -86,6 +87,7 @@ import {
   pharmacyCardCls,
   StatusPill,
 } from "@/components/pharmacy/pharmacy-shared";
+import { lowStockLimitFor, storeLowStockLimit, triggeredLowStock } from "@/lib/pharmacy-stock";
 import { recordAudit } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -679,6 +681,7 @@ function PharmacyHome({
   pendingReview,
   storeId,
   storeName,
+  stores,
   isCashier,
   onGoTo,
 }: {
@@ -688,6 +691,8 @@ function PharmacyHome({
   storeId: string;
   /** Display name of the scoped store ("" for all stores). */
   storeName: string;
+  /** Every storefront — each may carry its own low-stock trigger limit. */
+  stores: PharmacyStore[];
   isCashier: boolean;
   onGoTo: (page: PharmacyPage) => void;
 }) {
@@ -728,7 +733,18 @@ function PharmacyHome({
   const units = scopedItems.reduce((acc, entry) => acc + entry.qty, 0);
   const value = scopedItems.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
   const pendingCount = scopedRequests.filter((r) => r.status === "pending").length;
-  const attentionItems = scopedItems.filter((entry) => entry.qty <= entry.reorderLevel);
+  // One rule for the bell, the stat card and the email: a shelf is low when it
+  // reaches its store's trigger limit (or its own reorder level, if higher).
+  const alertPrefs = loadPharmacySettings();
+  const alertLimitFor = (entry: InventoryItem) =>
+    lowStockLimitFor(
+      entry,
+      storeLowStockLimit(
+        stores.find((store) => store.id === resolveStoreId(entry)),
+        alertPrefs.lowStockThreshold
+      )
+    );
+  const attentionItems = triggeredLowStock(scopedItems, alertLimitFor);
 
   const STAT_CARDS: {
     id: string;
@@ -1047,6 +1063,7 @@ export function PharmacyApp() {
   const [bouncing, setBouncing] = useState(false);
   const [stores, setStores] = useState<PharmacyStore[]>([]);
   const [activeStore, setActiveStore] = useState("all");
+  const [attentionItems, setAttentionItems] = useState<InventoryItem[]>([]);
   // Interactive walkthrough — lives at shell level so it survives page switches.
   const [tourOpen, setTourOpen] = useState(false);
 
@@ -1146,7 +1163,9 @@ export function PharmacyApp() {
         role: role ?? "cashier",
       });
       setPharmacyName(registration?.pharmacyName ?? registeredName ?? name);
-      setPendingReview(approved === false || Boolean(registration));
+      // Registration is auto-approved on the Pulse network; only an explicit
+      // hold (approved_by_duniya === false) keeps the console in review.
+      setPendingReview(approved === false);
       setStores(loadStores());
       // Mirror the shelves to the Pulse network stock picture (best-effort;
       // the local console keeps working offline and the next visit retries).
@@ -1163,6 +1182,24 @@ export function PharmacyApp() {
           );
         } catch {
           /* offline — retried on the next visit */
+        }
+      })();
+      // One consolidated low-stock email per trigger window, after the same
+      // shelves have been mirrored above. Alerts are off in Settings, silent
+      // here and retried on the next visit.
+      void (async () => {
+        try {
+          const { sendLowStockAlert } = await import("@/lib/cloud/low-stock-alerts");
+          const storesNow = loadStores();
+          const nameOf = new Map(storesNow.map((s) => [s.id, s.name]));
+          await sendLowStockAlert({
+            items: loadInventory(),
+            stores: storesNow,
+            pharmacyName: registration?.pharmacyName ?? registeredName ?? name,
+            storeNameOf: (item) => nameOf.get(item.storeId ?? "st-main") ?? "",
+          });
+        } catch {
+          /* offline — the next visit retries */
         }
       })();
       setResolved(true);
@@ -1194,6 +1231,38 @@ export function PharmacyApp() {
   useEffect(() => {
     if (resolved && !canOpen(user.role, page)) setPage("home");
   }, [resolved, user.role, page]);
+
+  // The header bell uses the same trigger rule as the alert email, scoped to
+  // the store the console is viewing. It re-reads shelves whenever a sale,
+  // receipt, adjustment, store edit or settings save touches local data, so the
+  // badge is current without waiting for a navigation.
+  useEffect(() => {
+    if (!resolved) return;
+    const refresh = () => {
+      const prefs = loadPharmacySettings();
+      const shelves = loadInventory().filter(
+        (entry) => activeStore === "all" || resolveStoreId(entry) === activeStore
+      );
+      const limitFor = (entry: InventoryItem) =>
+        lowStockLimitFor(
+          entry,
+          storeLowStockLimit(
+            stores.find((store) => store.id === resolveStoreId(entry)),
+            prefs.lowStockThreshold
+          )
+        );
+      setAttentionItems(triggeredLowStock(shelves, limitFor));
+    };
+    const raf = requestAnimationFrame(refresh);
+    const onLocalChange = () => refresh();
+    window.addEventListener("pulse:pharmacy-change", onLocalChange);
+    window.addEventListener("storage", onLocalChange);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pulse:pharmacy-change", onLocalChange);
+      window.removeEventListener("storage", onLocalChange);
+    };
+  }, [stores, activeStore, resolved]);
 
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
@@ -1432,16 +1501,92 @@ export function PharmacyApp() {
               >
                 <Search className="h-[18px] w-[18px]" />
               </button>
-              <button
-                type="button"
-                aria-label="Notifications"
-                onClick={() =>
-                  toast({ title: "You're all caught up", description: "No new notifications." })
-                }
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-100/70 text-purple-600 transition-colors hover:bg-purple-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:bg-purple-500/15 dark:text-purple-400 dark:hover:bg-purple-500/25"
-              >
-                <Bell className="h-[18px] w-[18px]" />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={
+                      attentionItems.length > 0
+                        ? `Notifications: ${attentionItems.length} low-stock item${attentionItems.length === 1 ? "" : "s"}`
+                        : "Notifications"
+                    }
+                    className="relative flex h-10 w-10 items-center justify-center rounded-full bg-purple-100/70 text-purple-600 transition-colors hover:bg-purple-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:bg-purple-500/15 dark:text-purple-400 dark:hover:bg-purple-500/25"
+                  >
+                    <Bell className="h-[18px] w-[18px]" />
+                    {resolved && attentionItems.length > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9.5px] font-bold leading-none text-white ring-2 ring-white dark:ring-slate-900"
+                      >
+                        {attentionItems.length > 9 ? "9+" : attentionItems.length}
+                      </span>
+                    )}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[19rem]">
+                  <DropdownMenuLabel className="flex items-center justify-between gap-2">
+                    <span>Low stock</span>
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                      {attentionItems.length} item{attentionItems.length === 1 ? "" : "s"} at the trigger limit
+                    </span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {attentionItems.length === 0 ? (
+                    <div className="px-3 py-6 text-center">
+                      <p className="text-[12.5px] font-semibold text-slate-700 dark:text-slate-200">
+                        You're all caught up
+                      </p>
+                      <p className="mt-0.5 text-[11.5px] text-slate-400 dark:text-slate-500">
+                        Every shelf is above its trigger limit.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {attentionItems.slice(0, 6).map((entry) => {
+                        const storeName =
+                          stores.find((store) => store.id === resolveStoreId(entry))?.name ?? "";
+                        return (
+                          <DropdownMenuItem
+                            key={entry.id}
+                            onClick={() => goTo("balance")}
+                            className="items-start gap-2.5"
+                          >
+                            <TriangleAlert
+                              className="mt-0.5 h-4 w-4 shrink-0 text-amber-500"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[12.5px] font-semibold text-slate-800 dark:text-slate-100">
+                                {entry.name}
+                              </span>
+                              <span className="block truncate text-[11px] text-slate-500 dark:text-slate-400">
+                                {[storeName, entry.batch ? `Batch ${entry.batch}` : ""]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </span>
+                            </span>
+                            <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-bold tabular-nums text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                              {entry.qty}
+                            </span>
+                          </DropdownMenuItem>
+                        );
+                      })}
+                      {attentionItems.length > 6 && (
+                        <p className="px-3 py-1.5 text-[11.5px] text-slate-500 dark:text-slate-400">
+                          +{attentionItems.length - 6} more in Stock Balance
+                        </p>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => goTo("balance")}
+                        className="font-semibold text-purple-600 focus:text-purple-700 dark:text-purple-400"
+                      >
+                        Open Stock Balance
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1529,6 +1674,7 @@ export function PharmacyApp() {
                 pendingReview={pendingReview}
                 storeId={activeStore}
                 storeName={activeStoreName}
+                stores={stores}
                 isCashier={user.role === "cashier"}
                 onGoTo={goTo}
               />
