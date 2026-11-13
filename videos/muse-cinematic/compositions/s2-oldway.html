@@ -1,0 +1,53 @@
+<template>
+<style>
+  #root { position:absolute; inset:0; overflow:hidden; background:#0C0C0E; font-family:Inter, sans-serif; color:#F2EDE3; }
+  .s2-vignette { position:absolute; inset:0; background:radial-gradient(ellipse 90% 80% at 42% 38%, transparent 55%, rgba(0,0,0,0.42) 100%); pointer-events:none; }
+  .s2-ghost { position:absolute; left:30px; bottom:6px; font-family:Montserrat, sans-serif; font-weight:800; font-size:190px; letter-spacing:-0.04em; color:rgba(242,237,227,0.035); line-height:1; pointer-events:none; }
+  .s2-wrap { position:absolute; inset:0; padding:64px 96px; display:flex; flex-direction:column; }
+  .s2-kicker { font-family:"JetBrains Mono", monospace; font-size:20px; letter-spacing:0.18em; color:#8A8578; }
+  .s2-h { font-family:Montserrat, sans-serif; font-weight:800; font-size:92px; letter-spacing:-0.02em; line-height:0.98; margin-top:14px; max-width:1500px; }
+  .s2-h em { font-style:normal; color:#FF5A1F; }
+  .s2-grid { margin-top:44px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px; }
+  .s2-tab { background:#17171A; border:2px solid #2A2A2E; border-radius:14px; padding:22px 24px; min-height:150px; }
+  .s2-tab .t { font-family:"JetBrains Mono", monospace; font-size:19px; color:#8A8578; letter-spacing:0.08em; }
+  .s2-tab .b { font-size:30px; font-weight:600; margin-top:10px; line-height:1.25; }
+  .s2-clock { font-family:"JetBrains Mono", monospace; font-size:44px; color:#F2EDE3; }
+  .s2-wipe { position:absolute; left:0; right:0; top:0; height:6px; background:#F2EDE3; transform-origin:left center; }
+</style>
+<div id="root" data-composition-id="s2-oldway" data-width="1920" data-height="1080">
+  <div class="s2-ghost" data-layout-ignore="true">BEFORE</div>
+  <div id="s2-clip" class="clip" data-start="0" data-duration="4" data-track-index="1" style="position:absolute; inset:0;">
+    <div class="s2-wrap">
+      <div class="s2-kicker" id="s2-kicker">THE OLD WAY</div>
+      <div class="s2-h" id="s2-h">Fourteen tabs.<br/>Zero <em>shipped.</em></div>
+      <div class="s2-grid">
+        <div class="s2-tab" id="s2-t1"><div class="t">TAB 07 — TICKETS</div><div class="b">“Can we launch Friday?”</div></div>
+        <div class="s2-tab" id="s2-t2"><div class="t">TAB 11 — DOCS</div><div class="b">Spec v9 — final_final</div></div>
+        <div class="s2-tab" id="s2-t3"><div class="t">CLOCK</div><div class="s2-clock" id="s2-clock">23:47</div></div>
+        <div class="s2-tab" id="s2-t4"><div class="t">TAB 03 — CHAT</div><div class="b">“Any update on this?”</div></div>
+        <div class="s2-tab" id="s2-t5"><div class="t">TAB 09 — CI</div><div class="b" style="color:#FF5A1F">Build failed — again</div></div>
+        <div class="s2-tab" id="s2-t6"><div class="t">TAB 14 — INBOX</div><div class="b">212 unread</div></div>
+      </div>
+    </div>
+    <div class="s2-wipe" id="s2-wipe"></div>
+  </div>
+  <div class="s2-vignette" data-layout-ignore="true"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true });
+  tl.fromTo("#s2-kicker", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.3, ease: "power4.out" }, 0.04);
+  tl.fromTo("#s2-h", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.4, ease: "expo.out" }, 0.16);
+  const tabs = ["#s2-t1","#s2-t2","#s2-t3","#s2-t4","#s2-t5","#s2-t6"];
+  tabs.forEach((s, i) => {
+    tl.fromTo(s, { y: 34, opacity: 0, rotation: i % 2 ? 0.6 : -0.6 }, { y: 0, opacity: 1, rotation: 0, duration: 0.5, ease: "expo.out" }, 0.5 + i * 0.09);
+  });
+  // churn: small judder that then freezes — deterministic offsets, no loops
+  tabs.forEach((s, i) => {
+    tl.to(s, { x: i % 2 ? 5 : -5, duration: 0.09, ease: "power1.inOut" }, 1.9 + i * 0.05);
+    tl.to(s, { x: 0, duration: 0.09, ease: "power1.inOut" }, 2.15 + i * 0.05);
+  });
+  tl.fromTo("#s2-wipe", { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power3.inOut" }, 3.35);
+  tl.to("#s2-clip .s2-wrap", { opacity: 0.12, duration: 0.4, ease: "power2.in" }, 3.45);
+  window.__timelines["s2-oldway"] = tl;
+</script>
+</template>

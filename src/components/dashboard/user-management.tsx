@@ -547,7 +547,7 @@ export function UserManagement({
 
   const changeRole = async (user: PulseUser, nextRole: UserRole) => {
     if (user.role === nextRole) return;
-    if (!canChangePulseRole(role, currentUid, user.id)) return;
+    if (!canChangePulseRole(role, currentUid, user.id, user.role)) return;
     setSavingUid(user.id);
     try {
       await updatePulseConsoleUserRole(user.id, nextRole);
@@ -574,7 +574,7 @@ export function UserManagement({
 
   const confirmRemoveUser = async () => {
     const user = removeTarget;
-    if (!user || !canRemovePulseUser(role, currentUid, user.id)) return;
+    if (!user || !canRemovePulseUser(role, currentUid, user.id, user.role)) return;
     setSavingUid(user.id);
     try {
       await removePulseConsoleUser(user.id);
@@ -655,8 +655,8 @@ export function UserManagement({
     if (user.status === "invited") return true;
     return (
       user.source === "profile" &&
-      (canChangePulseRole(role, currentUid, user.id) ||
-        canRemovePulseUser(role, currentUid, user.id))
+      (canChangePulseRole(role, currentUid, user.id, user.role) ||
+        canRemovePulseUser(role, currentUid, user.id, user.role))
     );
   };
 
@@ -681,8 +681,8 @@ export function UserManagement({
       );
     }
 
-    const canEditRole = canChangePulseRole(role, currentUid, user.id);
-    const canRemove = canRemovePulseUser(role, currentUid, user.id);
+    const canEditRole = canChangePulseRole(role, currentUid, user.id, user.role);
+    const canRemove = canRemovePulseUser(role, currentUid, user.id, user.role);
     if (!canEditRole && !canRemove) return null;
 
     return (
@@ -796,25 +796,25 @@ export function UserManagement({
           value={String(stats.owners)}
           label="Owners"
           icon={ShieldCheck}
-          tile="bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400"
+          tile="bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
         />
         <StatCard
           value={String(stats.active)}
           label="Active"
           icon={CircleCheck}
-          tile="bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+          tile="bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
         />
         <StatCard
           value={String(stats.invited)}
           label="Pending invitations"
           icon={Clock}
-          tile="bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
+          tile="bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
         />
         <StatCard
           value={String(stats.suspended)}
           label="Suspended"
           icon={CirclePause}
-          tile="bg-rose-100 text-rose-500 dark:bg-rose-500/15 dark:text-rose-400"
+          tile="bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400"
         />
       </div>
 
@@ -867,29 +867,6 @@ export function UserManagement({
           </div>
         </div>
       </motion.section>
-
-      {directoryError && (
-        <motion.div
-          variants={item}
-          role="alert"
-          className={cn(
-            cardCls,
-            "mt-6 flex flex-wrap items-center gap-3 border border-amber-200/70 px-4 py-3 text-[13.5px] text-amber-800 dark:border-amber-400/20 dark:text-amber-200"
-          )}
-        >
-          <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 flex-1">
-            Console accounts couldn&apos;t be loaded. {directoryError}
-          </span>
-          <button
-            type="button"
-            onClick={() => void refreshDirectory()}
-            className="h-8 rounded-md border border-amber-300/70 px-3 text-[12.5px] font-semibold transition-colors hover:bg-amber-50 dark:border-amber-300/30 dark:hover:bg-white/5"
-          >
-            Retry
-          </button>
-        </motion.div>
-      )}
 
       {/* — Directory — */}
       {loadingDirectory && users.length === 0 ? (

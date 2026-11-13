@@ -459,6 +459,7 @@ export function PharmacyCatalogue({
           reorderLevel: Math.max(5, Math.round(openingQty * 0.25)),
           unitPrice: product.price,
           storeId: (form.storeId || mainStore?.id) as string,
+          productId: product.id,
         },
       ];
       setItems(nextItems);
@@ -525,6 +526,7 @@ export function PharmacyCatalogue({
           reorderLevel: Math.max(5, Math.round(row.quantity * 0.25)),
           unitPrice: row.price,
           storeId: destinationStoreId,
+          productId: product.id,
         });
         stockLinesAdded += 1;
         unitsAdded += row.quantity;

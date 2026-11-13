@@ -1,0 +1,62 @@
+<template>
+<style>
+  #root { position:absolute; inset:0; overflow:hidden; background:#0C0C0E; font-family:Inter, sans-serif; color:#F2EDE3; }
+  .s4-vignette { position:absolute; inset:0; background:radial-gradient(ellipse 90% 80% at 42% 38%, transparent 55%, rgba(0,0,0,0.42) 100%); pointer-events:none; }
+  .s4-ghost { position:absolute; right:30px; top:16px; font-family:Montserrat, sans-serif; font-weight:800; font-size:170px; color:rgba(242,237,227,0.035); line-height:1; pointer-events:none; }
+  .s4-wrap { position:absolute; inset:0; padding:64px 96px; display:flex; gap:36px; align-items:stretch; }
+  .s4-left { width:560px; flex:none; display:flex; flex-direction:column; justify-content:center; }
+  .s4-kicker { font-family:"JetBrains Mono", monospace; font-size:20px; letter-spacing:0.18em; color:#8A8578; }
+  .s4-h { font-family:Montserrat, sans-serif; font-weight:800; font-size:88px; letter-spacing:-0.02em; line-height:0.98; margin-top:16px; }
+  .s4-h em { font-style:normal; color:#FF5A1F; }
+  .s4-p { margin-top:22px; font-size:30px; line-height:1.45; color:#CFC9BB; max-width:480px; }
+  .s4-term { flex:1; background:#131316; border:2px solid #2A2A2E; border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(242,237,227,0.14); overflow:hidden; display:flex; flex-direction:column; }
+  .s4-bar { height:54px; background:#1A1A1E; border-bottom:2px solid #2A2A2E; display:flex; align-items:center; gap:10px; padding:0 20px; font-family:"JetBrains Mono", monospace; font-size:19px; color:#8A8578; }
+  .s4-body { padding:30px 32px; font-family:"JetBrains Mono", monospace; font-size:27px; line-height:1.7; }
+  .s4-prompt { color:#F2EDE3; }
+  .s4-prompt .who { color:#FF5A1F; }
+  .s4-caret { display:inline-block; width:14px; height:28px; background:#FF5A1F; vertical-align:-4px; margin-left:4px; }
+  .s4-log { margin-top:24px; color:#8A8578; font-size:24px; line-height:1.75; }
+  .s4-log b { color:#F2EDE3; font-weight:600; }
+  .s4-ok { color:#7ED07A; }
+</style>
+<div id="root" data-composition-id="s4-describe" data-width="1920" data-height="1080">
+  <div class="s4-ghost" data-layout-ignore="true">01</div>
+  <div id="s4-clip" class="clip" data-start="0" data-duration="5" data-track-index="1" style="position:absolute; inset:0;">
+    <div class="s4-wrap">
+      <div class="s4-left">
+        <div class="s4-kicker" id="s4-kicker">STEP ONE — DESCRIBE</div>
+        <div class="s4-h" id="s4-h">Say it<br/>once<em>.</em></div>
+        <div class="s4-p" id="s4-p">One sentence is the brief, the spec and the ticket. Muse plans before it types.</div>
+      </div>
+      <div class="s4-term" id="s4-term">
+        <div class="s4-bar"><span style="width:12px;height:12px;border-radius:50%;background:#3A3A40;display:inline-block"></span> muse — pulse</div>
+        <div class="s4-body">
+          <div class="s4-prompt"><span class="who">you ›</span> <span id="s4-typed"></span><span class="s4-caret" id="s4-caret"></span></div>
+          <div class="s4-log">
+            <div id="s4-l1">→ Reading the codebase — 142 files</div>
+            <div id="s4-l2">→ Plan: <b>auth · catalogue · orders · delivery</b></div>
+            <div id="s4-l3">→ Design tokens locked — <span class="s4-ok">ready to build</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="s4-vignette" data-layout-ignore="true"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true });
+  tl.fromTo("#s4-kicker", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.3, ease: "power4.out" }, 0.04);
+  tl.fromTo("#s4-h", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.4, ease: "expo.out" }, 0.16);
+  tl.fromTo("#s4-p", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, 0.42);
+  tl.fromTo("#s4-term", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "expo.out" }, 0.32);
+  const sentence = "Build a pharmacy that never sleeps";
+  const typed = document.getElementById("s4-typed");
+  const counter = { n: 0 };
+  tl.to(counter, { n: sentence.length, duration: 1.5, ease: "power1.inOut", onUpdate: () => { typed.textContent = sentence.slice(0, Math.round(counter.n)); } }, 0.9);
+  tl.fromTo("#s4-caret", { opacity: 1 }, { opacity: 0, duration: 0.3, ease: "power2.out" }, 2.5);
+  tl.fromTo("#s4-l1", { x: -18, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "expo.out" }, 2.6);
+  tl.fromTo("#s4-l2", { x: -18, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "expo.out" }, 3.15);
+  tl.fromTo("#s4-l3", { x: -18, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "expo.out" }, 3.7);
+  window.__timelines["s4-describe"] = tl;
+</script>
+</template>

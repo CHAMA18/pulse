@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
+import { PulseBeatMark } from "@/components/login/pulse-logo";
 import {
   acceptInvitation,
   callCloudFunction,
@@ -399,6 +400,10 @@ export function RegisterDialog({
               transition={{ duration: 0.25, ease: "easeOut" }}
             >
               <DialogHeader className="space-y-1.5 text-center sm:text-center">
+                {/* The beating Pulse mark crowns the form — the network, alive. */}
+                <div className="flex justify-center pb-1 pt-1" aria-hidden="true">
+                  <PulseBeatMark className="h-[68px] w-[68px]" />
+                </div>
                 <DialogTitle className="text-[24px] font-semibold tracking-tight text-slate-900">
                   {invited ? "Accept your invitation" : "Register your pharmacy"}
                 </DialogTitle>

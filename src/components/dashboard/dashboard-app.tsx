@@ -5,6 +5,7 @@ import {
   ArrowDownLeft,
   ArrowLeftRight,
   Bell,
+  Building2,
   Calculator,
   CheckCircle2,
   ChevronDown,
@@ -46,8 +47,10 @@ import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-vis
 import { UserManagement } from "@/components/dashboard/user-management";
 import { AuditLogs } from "@/components/dashboard/audit-logs";
 import { PharmacySalesReport } from "@/components/dashboard/pharmacy-sales-report";
-import { PharmacyCatalogue } from "@/components/pharmacy/pharmacy-catalogue";
-import { PharmacyStockMovement } from "@/components/pharmacy/pharmacy-stock-movement";
+import { listNetworkPharmacySales } from "@/lib/cloud/pharmacy-sales";
+import { PharmaciesInventory } from "@/components/dashboard/pharmacies-inventory";
+import { WarehouseCatalogue } from "@/components/dashboard/warehouse-catalogue";
+import { WarehouseMovements } from "@/components/dashboard/warehouse-movements";
 import {
   formatDay,
   loadDeliveries,
@@ -199,7 +202,8 @@ const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   users: "User Management",
   pharmacies: "Pulse Pharmacies",
   sales: "Sales Report",
-  catalogue: "Product Catalogue",
+  catalogue: "Warehouse Catalogue",
+  inventory: "Pharmacies Inventory",
   movement: "Stock Movement",
   stock: "Stock Balance Visibility",
   suppliers: "Supplier Management",
@@ -216,11 +220,12 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
-    section: "Pulse Network",
+    section: "Pulse",
     items: [
       { label: "Pulse Pharmacies", page: "pharmacies", icon: LayoutGrid },
       { label: "Sales Report", page: "sales", icon: Receipt },
-      { label: "Product Catalogue", page: "catalogue", icon: PackageSearch },
+      { label: "Warehouse Catalogue", page: "catalogue", icon: PackageSearch },
+      { label: "Pharmacies Inventory", page: "inventory", icon: Building2 },
       { label: "Stock Movement", page: "movement", icon: ArrowLeftRight },
       { label: "Stock Balance Visibility", page: "stock", icon: Eye },
       { label: "Supplier Management", page: "suppliers", icon: Store },
@@ -553,6 +558,89 @@ function SidebarContent({
 /* Dashboard app shell                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Central-administration view: live network sales for every registered
+ * pharmacy (including pharmacies with no sales yet), from the same callable
+ * that feeds the full Sales Report. Owners/Admins only — the server enforces
+ * it, and Staff never mounts this section.
+ */
+function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) {
+  const [rows, setRows] = useState<
+    { id: string; name: string; transactions: number; revenue: number }[] | null
+  >(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const page = await listNetworkPharmacySales({ limit: 200 });
+        if (!active) return;
+        const groups = new Map<string, { id: string; name: string; transactions: number; revenue: number }>();
+        for (const pharmacy of page.pharmacies) {
+          groups.set(pharmacy.id, { id: pharmacy.id, name: pharmacy.name, transactions: 0, revenue: 0 });
+        }
+        for (const sale of page.sales) {
+          if (sale.reversedAt) continue;
+          const current = groups.get(sale.pharmacyId) ?? {
+            id: sale.pharmacyId,
+            name: sale.pharmacyName,
+            transactions: 0,
+            revenue: 0,
+          };
+          current.transactions += 1;
+          current.revenue += sale.total;
+          groups.set(sale.pharmacyId, current);
+        }
+        setRows([...groups.values()].sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name)));
+      } catch {
+        if (active) setFailed(true);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <motion.section variants={item} aria-labelledby="network-sales">
+      <SectionHeader icon={Receipt} title="Network Sales by Pharmacy" subtitle="Every registered pharmacy, live from the central sales feed" />
+      <div className={cn(cardCls, "mt-4 p-5")}>
+        {failed ? (
+          <p className="text-[13.5px] text-slate-500 dark:text-slate-400">
+            Network sales are unavailable right now. Open the full Sales Report to retry.
+          </p>
+        ) : rows === null ? (
+          <p className="text-[13.5px] text-slate-500 dark:text-slate-400">Loading network sales…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-[13.5px] text-slate-500 dark:text-slate-400">
+            No pharmacies are registered on the network yet.
+          </p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-slate-100 dark:divide-white/10">
+            {rows.map((pharmacy) => (
+              <li key={pharmacy.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 first:pt-0 last:pb-0">
+                <span className="text-[14px] font-semibold text-slate-900 dark:text-white">{pharmacy.name}</span>
+                <span className="text-[12.5px] text-slate-500 dark:text-slate-400">
+                  {pharmacy.transactions} sale{pharmacy.transactions === 1 ? "" : "s"}
+                </span>
+                <span className="ml-auto text-[14px] font-bold tabular-nums">{compactZMW(pharmacy.revenue)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button
+          type="button"
+          onClick={onOpenReport}
+          className="mt-4 inline-flex h-9 items-center rounded-md border border-slate-200 px-3.5 text-[13px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+        >
+          Open full Sales Report
+        </button>
+      </div>
+    </motion.section>
+  );
+}
+
 export function DashboardApp() {
   const { toast } = useToast();
   const router = useRouter();
@@ -561,6 +649,8 @@ export function DashboardApp() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [page, setPage] = useState<DashboardPage>("home");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [user, setUser] = useState({
     uid: "",
     name: "Pulse User",
@@ -833,11 +923,48 @@ export function DashboardApp() {
               <Menu className="h-5 w-5" />
             </button>
 
-            <div className="ml-auto flex items-center gap-2.5">
+            <div className="relative ml-auto flex items-center gap-2.5">
+              {searchOpen && (
+                <div className="absolute right-12 top-0 z-30 w-64">
+                  <input
+                    autoFocus
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setSearchOpen(false);
+                      if (e.key === "Enter") {
+                        const first = NAV_SECTIONS.flatMap((s) => s.items).find((item) =>
+                          item.label.toLowerCase().includes(searchQuery.trim().toLowerCase())
+                        );
+                        if (first) {
+                          onNavClick(first.page);
+                          setSearchOpen(false);
+                          setSearchQuery("");
+                        }
+                      }
+                    }}
+                    placeholder="Jump to a page…"
+                    aria-label="Jump to a page"
+                    className="h-10 w-full rounded-full border border-slate-200 bg-white px-4 text-[13px] shadow-lg outline-none focus:border-purple-400 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                  {searchQuery.trim() && (
+                    <ul className="mt-1.5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-white/10 dark:bg-slate-900">
+                      {NAV_SECTIONS.flatMap((s) => s.items)
+                        .filter((item) => item.label.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+                        .slice(0, 6)
+                        .map((item) => (
+                          <li key={item.label}>
+                            <button type="button" onClick={() => { onNavClick(item.page); setSearchOpen(false); setSearchQuery(""); }} className="w-full px-4 py-2 text-left text-[13px] text-slate-700 hover:bg-purple-50 dark:text-slate-200 dark:hover:bg-white/5">{item.label}</button>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 aria-label="Search"
-                onClick={() => toast({ title: "Search", description: "Search is coming soon." })}
+                onClick={() => setSearchOpen((open) => !open)}
                 className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:text-slate-400 dark:hover:bg-white/10"
               >
                 <Search className="h-[18px] w-[18px]" />
@@ -899,13 +1026,11 @@ export function DashboardApp() {
             ) : page === "stock" ? (
               <StockBalanceVisibility />
             ) : page === "catalogue" ? (
-              <PharmacyCatalogue stores={networkStores} />
+              <WarehouseCatalogue />
+            ) : page === "inventory" ? (
+              <PharmaciesInventory />
             ) : page === "movement" ? (
-              <PharmacyStockMovement
-                storeId="all"
-                stores={networkStores}
-                actor={{ name: user.name, email: user.email }}
-              />
+              <WarehouseMovements actor={{ name: user.name, email: user.email }} />
             ) : page === "users" ? (
               <UserManagement role={user.role} currentUid={user.uid} />
             ) : page === "audit" ? (
@@ -942,6 +1067,13 @@ export function DashboardApp() {
                 </motion.div>
               ))}
             </div>
+
+            {/* Central administration: network sales for every registered pharmacy */}
+            {canOpenPulsePage(user.role, "sales") && (
+              <div className="mt-9">
+                <NetworkSalesByPharmacy onOpenReport={() => onNavClick("sales")} />
+              </div>
+            )}
 
             {/* Inventory Health + Movement Pulse — stacked, not side by side */}
             <div className="mt-9 grid grid-cols-1 gap-y-6">

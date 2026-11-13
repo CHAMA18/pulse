@@ -1,7 +1,26 @@
 "use client";
 
 import { type LucideIcon } from "lucide-react";
+import { scopedStorageKey } from "@/lib/pharmacy-stock";
 import { cn } from "@/lib/utils";
+
+/** localStorage key holding the active pharmacy id — the tenant scope for all pharmacy data. */
+export const PHARMACY_SCOPE_KEY = "pulse.active-pharmacy.v1";
+
+/** The active pharmacy id, or null before identity resolves. */
+export function activePharmacyScope(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(PHARMACY_SCOPE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** A base storage key scoped to the active pharmacy, so accounts never share shelves. */
+export function scopedPharmacyKey(base: string): string {
+  return scopedStorageKey(base, activePharmacyScope());
+}
 
 /* ------------------------------------------------------------------ */
 /* Shared bits for the Pharmacy portal console                          */
@@ -72,6 +91,11 @@ const STATUS_PILLS: Record<string, string> = {
   urgent: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
   routine: "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300",
   verified: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+  draft: "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300",
+  sent: "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
+  received: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+  "in-transit": "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
+  failed: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
 };
 
 export function StatusPill({ status, label }: { status: string; label?: string }) {
@@ -100,11 +124,11 @@ export function stockStatusOf(qty: number, reorderLevel: number): StockStatus {
 /* localStorage store helpers                                          */
 /* ------------------------------------------------------------------ */
 
-/** Persists a list to localStorage (best-effort). */
+/** Persists a list to localStorage (best-effort), scoped to the active pharmacy. */
 export function savePharmacyList<T>(key: string, list: T[]): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(key, JSON.stringify(list));
+    window.localStorage.setItem(scopedPharmacyKey(key), JSON.stringify(list));
   } catch {
     /* storage full or unavailable — persistence is best-effort */
   }

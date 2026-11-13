@@ -46,6 +46,8 @@ type Pharmacy = {
   ownerEmail: string | null; // null → "Owner not linked"
   registeredAt: number | null;
   status: PharmacyStatus;
+  /** Firestore User uid when this row came from the network registry. */
+  uid?: string;
 };
 
 type StatusFilter = "all" | "active" | "pending" | "rejected";
@@ -394,6 +396,54 @@ export function PulsePharmacies() {
     });
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  // Network registry: pharmacies that registered through Firebase live on
+  // their Firestore User profile — merge them in so a registration created
+  // in the Pharmacy portal is visible (and approvable) here, on any device.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const { getFirebaseDb } = await import("@/lib/firebase");
+        const db = getFirebaseDb();
+        if (!db) return;
+        const { collection, getDocs, query, where } = await import("firebase/firestore");
+        const snap = await getDocs(
+          query(collection(db, "User"), where("account_type", "==", "Pharmacy"))
+        );
+        if (!active) return;
+        const remote: Pharmacy[] = snap.docs.map((entry) => {
+          const data = entry.data() as {
+            pharmacy_name?: string;
+            pharmacy_id?: string;
+            email?: string;
+            approved_by_duniya?: boolean;
+          };
+          return {
+            id: data.pharmacy_id ?? entry.id,
+            uid: entry.id,
+            name: data.pharmacy_name?.trim() || "Unnamed pharmacy",
+            address: "",
+            ownerEmail: data.email ?? null,
+            registeredAt: null,
+            status: data.approved_by_duniya ? "active" : "pending",
+          };
+        });
+        if (remote.length === 0) return;
+        setPharmacies((prev) => {
+          const byEmail = new Map(remote.map((p) => [(p.ownerEmail ?? "").toLowerCase(), p]));
+          const merged = prev.map((p) => byEmail.get((p.ownerEmail ?? "").toLowerCase()) ?? p);
+          const known = new Set(merged.map((p) => (p.ownerEmail ?? "").toLowerCase()));
+          return [...merged, ...remote.filter((p) => !known.has((p.ownerEmail ?? "").toLowerCase()))];
+        });
+      } catch {
+        /* offline or rules — the local registry remains the fallback */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -436,6 +486,23 @@ export function PulsePharmacies() {
     setPharmacies((prev) =>
       prev.map((p) => (p.id === pharmacy.id ? { ...p, status } : p))
     );
+    // Registry-backed rows write through to Firestore, so approval is seen
+    // by the pharmacy itself (approved_by_duniya) on its next sign-in.
+    if (pharmacy.uid) {
+      void (async () => {
+        try {
+          const { getFirebaseDb } = await import("@/lib/firebase");
+          const db = getFirebaseDb();
+          if (!db) return;
+          const { doc, updateDoc } = await import("firebase/firestore");
+          await updateDoc(doc(db, "User", pharmacy.uid!), {
+            approved_by_duniya: status === "active",
+          });
+        } catch {
+          /* best-effort — local status still reflects the decision here */
+        }
+      })();
+    }
     setDetails((d) => (d && d.id === pharmacy.id ? { ...d, status } : d));
     const verb =
       status === "active" ? "approved" : status === "pending" ? "reset" : "rejected";

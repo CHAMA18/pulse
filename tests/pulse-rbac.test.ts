@@ -17,6 +17,7 @@ const ADMIN_PAGES: PulsePage[] = ["audit", "users", "sales", "catalogue", "movem
 const STAFF_PAGES: PulsePage[] = [
   "home",
   "pharmacies",
+  "inventory",
   "stock",
   "suppliers",
   "walkthrough",
@@ -52,7 +53,7 @@ test("Admin can open every Pulse console page", () => {
   }
 });
 
-test("Staff gets exactly the five permitted pages", () => {
+test("Staff gets exactly the six permitted pages", () => {
   const allowed = ALL_PULSE_PAGES.filter((page) => canOpenPulsePage("staff", page));
   assert.deepEqual(allowed, STAFF_PAGES);
   assert.deepEqual([...PULSE_ROLE_PAGES.staff], STAFF_PAGES);
@@ -64,24 +65,32 @@ test("Staff is denied every admin-only console page", () => {
   }
 });
 
-test("only Owners can manage console users", () => {
+test("Owners and Admins can manage console users, Staff cannot", () => {
   assert.equal(canManageConsoleUsers("owner"), true);
-  assert.equal(canManageConsoleUsers("admin"), false);
+  assert.equal(canManageConsoleUsers("admin"), true);
   assert.equal(canManageConsoleUsers("staff"), false);
 });
 
-test("role changes are Owner-only and never apply to the Owner's own row", () => {
-  assert.equal(canChangePulseRole("owner", "owner-1", "staff-1"), true);
-  assert.equal(canChangePulseRole("owner", "owner-1", "owner-1"), false);
-  assert.equal(canChangePulseRole("admin", "admin-1", "staff-1"), false);
-  assert.equal(canChangePulseRole("staff", "staff-1", "staff-2"), false);
+test("role changes: managers edit non-Owners, never themselves or an Owner", () => {
+  assert.equal(canChangePulseRole("owner", "owner-1", "staff-1", "staff"), true);
+  assert.equal(canChangePulseRole("owner", "owner-1", "owner-1", "owner"), false);
+  assert.equal(canChangePulseRole("owner", "owner-1", "owner-2", "owner"), true);
+  assert.equal(canChangePulseRole("admin", "admin-1", "staff-1", "staff"), true);
+  assert.equal(canChangePulseRole("admin", "admin-1", "admin-2", "admin"), true);
+  assert.equal(canChangePulseRole("admin", "admin-1", "owner-1", "owner"), false);
+  assert.equal(canChangePulseRole("admin", "admin-1", "admin-1", "admin"), false);
+  assert.equal(canChangePulseRole("staff", "staff-1", "staff-2", "staff"), false);
 });
 
-test("removals are Owner-only and never apply to the Owner's own row", () => {
-  assert.equal(canRemovePulseUser("owner", "owner-1", "staff-1"), true);
-  assert.equal(canRemovePulseUser("owner", "owner-1", "owner-1"), false);
-  assert.equal(canRemovePulseUser("admin", "admin-1", "staff-1"), false);
-  assert.equal(canRemovePulseUser("staff", "staff-1", "staff-2"), false);
+test("removals: Admins delete other registered users, but never Owners or themselves", () => {
+  assert.equal(canRemovePulseUser("owner", "owner-1", "staff-1", "staff"), true);
+  assert.equal(canRemovePulseUser("owner", "owner-1", "owner-1", "owner"), false);
+  assert.equal(canRemovePulseUser("owner", "owner-1", "owner-2", "owner"), true);
+  assert.equal(canRemovePulseUser("admin", "admin-1", "staff-1", "staff"), true);
+  assert.equal(canRemovePulseUser("admin", "admin-1", "admin-2", "admin"), true);
+  assert.equal(canRemovePulseUser("admin", "admin-1", "owner-1", "owner"), false);
+  assert.equal(canRemovePulseUser("admin", "admin-1", "admin-1", "admin"), false);
+  assert.equal(canRemovePulseUser("staff", "staff-1", "staff-2", "staff"), false);
 });
 
 test("only Owners may hand out the Owner role", () => {

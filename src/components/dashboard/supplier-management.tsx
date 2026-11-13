@@ -86,18 +86,51 @@ const CATEGORIES = [
 
 function loadSuppliers(): Supplier[] {
   if (typeof window === "undefined") return [];
+  let own: Supplier[] = [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (s): s is Supplier =>
-        !!s && typeof s === "object" && typeof (s as Supplier).name === "string"
-    );
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        own = parsed.filter(
+          (s): s is Supplier =>
+            !!s && typeof s === "object" && typeof (s as Supplier).name === "string"
+        );
+      }
+    }
   } catch {
-    return [];
+    own = [];
   }
+  // Pharmacy-portal directory: same suppliers, pharmacy shape — map them in
+  // so a partner added at the counter exists here too (one directory).
+  try {
+    const scope = window.localStorage.getItem("pulse.active-pharmacy.v1");
+    const rawPh = window.localStorage.getItem(
+      scope ? `pulse.pharmacy-suppliers.v1:${scope}` : "pulse.pharmacy-suppliers.v1"
+    );
+    const ph: unknown = rawPh ? JSON.parse(rawPh) : [];
+    if (Array.isArray(ph)) {
+      const mapped: Supplier[] = (ph as { id: string; name: string; categories?: string[]; leadTime?: string; contact?: string; verified?: boolean }[])
+        .filter((s) => s && typeof s.name === "string")
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          contact: s.contact ?? "",
+          email: "",
+          category: (s.categories ?? []).join(", ") || "Pharmaceuticals",
+          leadDays: Number.parseInt(String(s.leadTime ?? "2"), 10) || 2,
+          productsLinked: 0,
+          catalogueValue: 0,
+          active: s.verified !== false,
+          addedAt: 0,
+        }));
+      const known = new Set(own.map((s) => s.name.toLowerCase()));
+      return [...own, ...mapped.filter((s) => !known.has(s.name.toLowerCase()))];
+    }
+  } catch {
+    /* pharmacy directory unavailable */
+  }
+  return own;
 }
 
 function newId(): string {

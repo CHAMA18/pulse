@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  creditReceivedLines,
+  DEFAULT_STORE_ID,
   formatDay,
   loadStockRequests,
   nextId,
@@ -19,6 +21,7 @@ import {
   type RequestStatus,
   type StockRequest,
 } from "@/components/pharmacy/pharmacy-data";
+import { nextRequestStatus, type StockRequestAction } from "@/lib/pharmacy-stock";
 import {
   PageHeader,
   pharmacyCardCls,
@@ -359,6 +362,37 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
     persist([request, ...requests]);
   };
 
+  /** Hub lifecycle: approve → dispatch → deliver. Delivery credits the shelf. */
+  const onHubAction = (request: StockRequest, action: StockRequestAction) => {
+    const next = nextRequestStatus(request.status, action);
+    if (!next) return;
+    persist(requests.map((r) => (r.id === request.id ? { ...r, status: next } : r)));
+    if (next === "delivered") {
+      const credited = creditReceivedLines(
+        [{ name: request.item, qty: request.qty }],
+        request.storeId ?? DEFAULT_STORE_ID,
+        actor,
+        "Central hub restock"
+      );
+      toast({
+        title: "Request delivered",
+        description: `${credited} units of ${request.item} are now on the shelf.`,
+      });
+    } else {
+      toast({ title: `Request ${next}`, description: `${request.id} · ${request.item}` });
+    }
+    if (actor.email) {
+      recordAudit({
+        title: `Stock Request ${next}`,
+        action: "Update",
+        detail: `${request.id} · ${request.item} × ${request.qty}`,
+        actor: actor.name,
+        email: actor.email,
+      });
+    }
+    void trackEvent("pharmacy_stock_request_transition", { request: request.id, to: next });
+  };
+
   const onCancel = (request: StockRequest) => {
     persist(requests.map((r) => (r.id === request.id ? { ...r, status: "cancelled" } : r)));
     toast({
@@ -460,16 +494,27 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
                       <StatusPill status={request.status} />
                     </td>
                     <td className="px-5 py-3 text-right">
-                      {request.status === "pending" && (
-                        <button
-                          type="button"
-                          onClick={() => onCancel(request)}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 px-2.5 py-1.5 text-[12px] font-semibold text-rose-600 transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
-                        >
-                          <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                          Cancel
-                        </button>
-                      )}
+                      <span className="inline-flex flex-wrap justify-end gap-1.5">
+                        {request.status === "pending" && (
+                          <button type="button" onClick={() => onHubAction(request, "approve")} className="inline-flex items-center rounded-md border border-violet-200 px-2.5 py-1.5 text-[12px] font-semibold text-violet-600 transition-colors hover:bg-violet-50 dark:border-violet-500/30 dark:text-violet-300 dark:hover:bg-violet-500/10">Hub: approve</button>
+                        )}
+                        {request.status === "approved" && (
+                          <button type="button" onClick={() => onHubAction(request, "dispatch")} className="inline-flex items-center rounded-md border border-purple-200 px-2.5 py-1.5 text-[12px] font-semibold text-purple-600 transition-colors hover:bg-purple-50 dark:border-purple-500/30 dark:text-purple-300 dark:hover:bg-purple-500/10">Hub: dispatch</button>
+                        )}
+                        {request.status === "dispatched" && (
+                          <button type="button" onClick={() => onHubAction(request, "deliver")} className="inline-flex items-center rounded-md border border-emerald-200 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-50 dark:border-emerald-500/30 dark:text-emerald-300 dark:hover:bg-emerald-500/10">Deliver to shelf</button>
+                        )}
+                        {(request.status === "pending" || request.status === "approved") && (
+                          <button
+                            type="button"
+                            onClick={() => onCancel(request)}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 px-2.5 py-1.5 text-[12px] font-semibold text-rose-600 transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
+                          >
+                            <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            Cancel
+                          </button>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 ))}

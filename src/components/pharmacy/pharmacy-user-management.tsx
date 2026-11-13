@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { PharmacyStore } from "@/components/pharmacy/pharmacy-data";
-import { PageHeader, pharmacyCardCls } from "@/components/pharmacy/pharmacy-shared";
+import { PageHeader, pharmacyCardCls, scopedPharmacyKey } from "@/components/pharmacy/pharmacy-shared";
 import { EmailPreviewDialog } from "@/components/cloud/email-preview-dialog";
 import {
   callCloudFunction,
@@ -137,7 +137,7 @@ const ROLE_ACCESS: Record<PharmacyRole, boolean[]> = {
 function loadMembers(): PharmacyMember[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedPharmacyKey(STORAGE_KEY));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -757,7 +757,7 @@ export function PharmacyUserManagement({
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
+      window.localStorage.setItem(scopedPharmacyKey(STORAGE_KEY), JSON.stringify(members));
     } catch {
       /* storage full or unavailable — in-memory state still works */
     }
@@ -875,9 +875,27 @@ export function PharmacyUserManagement({
       });
   };
 
+  /** Writes a team change through to the member's Firestore profile, so it
+      is enforced at their next sign-in on any device (not just listed here). */
+  const syncMemberToFirestore = (email: string, patch: Record<string, unknown>) => {
+    void (async () => {
+      try {
+        const { getFirebaseDb } = await import("@/lib/firebase");
+        const db = getFirebaseDb();
+        if (!db || !email) return;
+        const { collection, getDocs, query, where, doc, updateDoc } = await import("firebase/firestore");
+        const snap = await getDocs(query(collection(db, "User"), where("email", "==", email.toLowerCase())));
+        await Promise.all(snap.docs.map((entry) => updateDoc(doc(db, "User", entry.id), patch)));
+      } catch {
+        /* offline or rules — local roster still reflects the change */
+      }
+    })();
+  };
+
   const changeRole = (member: PharmacyMember, role: PharmacyRole) => {
     if (member.role === role) return;
     setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, role } : m)));
+    syncMemberToFirestore(member.email, { role, role_label: ROLE_META[role].label });
     toast({
       title: "Role updated",
       description: `${member.name} is now ${articleFor(ROLE_META[role].label)} ${ROLE_META[
@@ -901,6 +919,7 @@ export function PharmacyUserManagement({
     }
     const next: MemberStatus = member.status === "suspended" ? "active" : "suspended";
     setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, status: next } : m)));
+    syncMemberToFirestore(member.email, { access_revoked: next === "suspended" });
     toast({
       title: next === "suspended" ? "Account suspended" : "Account reactivated",
       description:
@@ -924,6 +943,7 @@ export function PharmacyUserManagement({
       return;
     }
     setMembers((prev) => prev.filter((m) => m.id !== member.id));
+    syncMemberToFirestore(member.email, { access_revoked: true });
     toast({
       title: "User removed",
       description: `${member.name} no longer has access to this pharmacy.`,

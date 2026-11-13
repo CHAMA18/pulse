@@ -19,6 +19,17 @@ export type AuditEvent = {
 };
 
 export const AUDIT_STORAGE_KEY = "pulse.audit.v1";
+
+/** Audit trails are per-pharmacy: scoped to the active pharmacy when one is set. */
+function auditKey(): string {
+  if (typeof window === "undefined") return AUDIT_STORAGE_KEY;
+  try {
+    const scope = window.localStorage.getItem("pulse.active-pharmacy.v1");
+    return scope ? `${AUDIT_STORAGE_KEY}:${scope}` : AUDIT_STORAGE_KEY;
+  } catch {
+    return AUDIT_STORAGE_KEY;
+  }
+}
 export const AUDIT_EVENT_NAME = "pulse:audit";
 const AUDIT_CAP = 500;
 
@@ -58,7 +69,7 @@ function humanizeLegacyTitle(title: string): string {
 export function loadAuditEvents(): AuditEvent[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(AUDIT_STORAGE_KEY);
+    const raw = window.localStorage.getItem(auditKey());
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -72,7 +83,7 @@ export function loadAuditEvents(): AuditEvent[] {
       });
     if (migrated) {
       try {
-        window.localStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(events));
+        window.localStorage.setItem(auditKey(), JSON.stringify(events));
       } catch {
         /* best-effort — the in-memory copy is already clean */
       }
@@ -104,7 +115,7 @@ export function recordAudit(event: {
       ts: Date.now(),
     };
     window.localStorage.setItem(
-      AUDIT_STORAGE_KEY,
+      auditKey(),
       JSON.stringify([entry, ...events].slice(0, AUDIT_CAP))
     );
     window.dispatchEvent(new CustomEvent(AUDIT_EVENT_NAME));

@@ -10,6 +10,7 @@ export type PulsePage =
   | "pharmacies"
   | "sales"
   | "catalogue"
+  | "inventory"
   | "movement"
   | "stock"
   | "users"
@@ -41,6 +42,7 @@ export const ALL_PULSE_PAGES: readonly PulsePage[] = [
   "pharmacies",
   "sales",
   "catalogue",
+  "inventory",
   "movement",
   "stock",
   "suppliers",
@@ -58,6 +60,7 @@ export const PULSE_ROLE_PAGES: Record<PulseRole, ReadonlySet<PulsePage>> = {
   staff: new Set<PulsePage>([
     "home",
     "pharmacies",
+    "inventory",
     "stock",
     "suppliers",
     "walkthrough",
@@ -79,27 +82,34 @@ export function normalizePulseRole(
   return undefined;
 }
 
-/** Only an Owner may change roles or remove another console account. */
+/** Owners and Admins manage console accounts; Staff may not. */
 export function canManageConsoleUsers(role: PulseRole): boolean {
-  return role === "owner";
+  return role === "owner" || role === "admin";
 }
 
-/** Owners may edit anyone but themselves; Admins and Staff may edit nobody. */
+/**
+ * Owners may edit anyone but themselves. Admins may edit anyone but
+ * themselves and other Owners — an Owner's row is Owner-only territory.
+ */
 export function canChangePulseRole(
   actorRole: PulseRole,
   actorUid: string,
-  targetUid: string
+  targetUid: string,
+  targetRole?: PulseRole
 ): boolean {
-  return canManageConsoleUsers(actorRole) && !!actorUid && actorUid !== targetUid;
+  if (!canManageConsoleUsers(actorRole) || !actorUid || actorUid === targetUid) return false;
+  return actorRole === "owner" || targetRole !== "owner";
 }
 
-/** Owners may remove anyone but themselves; Admins and Staff may remove nobody. */
+/** Owners may remove anyone but themselves; Admins anyone but themselves and Owners. */
 export function canRemovePulseUser(
   actorRole: PulseRole,
   actorUid: string,
-  targetUid: string
+  targetUid: string,
+  targetRole?: PulseRole
 ): boolean {
-  return canManageConsoleUsers(actorRole) && !!actorUid && actorUid !== targetUid;
+  if (!canManageConsoleUsers(actorRole) || !actorUid || actorUid === targetUid) return false;
+  return actorRole === "owner" || targetRole !== "owner";
 }
 
 /**

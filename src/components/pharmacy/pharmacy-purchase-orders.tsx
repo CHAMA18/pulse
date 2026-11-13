@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  creditReceivedLines,
+  DEFAULT_STORE_ID,
   formatDay,
   formatZMW,
   loadCatalogue,
@@ -210,9 +212,10 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
         name: line.product.name,
         qty: line.qty,
         unitCost: line.unitCost,
+        productId: line.product.id,
       })),
       notes: notes.trim() || undefined,
-      storeId: storeId === "all" ? undefined : storeId,
+      storeId: storeId === "all" ? DEFAULT_STORE_ID : storeId,
       ...(status === "sent" ? { sentAt: now } : {}),
     };
   };
@@ -268,9 +271,16 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
     toast({ title: `${order.id} sent`, description: `${order.supplier} will confirm the delivery window.` });
   };
 
-  /** Receiving: sent → received, and a delivery record is filed automatically. */
+  /** Receiving: sent → received, goods credited to the shelves, delivery filed. */
   const receiveOrder = (order: PurchaseOrder) => {
     updateOrder(order.id, { status: "received", receivedAt: Date.now() }, "Purchase Order Received");
+    const targetStore = order.storeId ?? DEFAULT_STORE_ID;
+    const credited = creditReceivedLines(
+      order.lines.map((line) => ({ name: line.name, qty: line.qty, unitCost: line.unitCost, productId: line.productId })),
+      targetStore,
+      actor,
+      "Supplier delivery"
+    );
     const deliveries = loadDeliveries();
     const delivery = {
       id: nextId(deliveries, "DLV"),
@@ -279,13 +289,13 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
       units: order.lines.reduce((acc, line) => acc + line.qty, 0),
       receivedAt: Date.now(),
       condition: "verified" as const,
-      storeId: storeId === "all" ? undefined : storeId,
+      storeId: targetStore,
     };
     saveDeliveries([delivery, ...deliveries]);
     void trackEvent("pharmacy_po_received", { order: order.id, units: delivery.units });
     toast({
       title: `${order.id} received`,
-      description: `${delivery.units} units filed as delivery ${delivery.id}.`,
+      description: `${credited} units are now on the shelf (delivery ${delivery.id}).`,
     });
   };
 

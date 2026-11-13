@@ -51,6 +51,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
 import { syncPharmacySales } from "@/lib/cloud/pharmacy-sales";
+import { canChargePrescription } from "@/lib/pharmacy-stock";
 import {
   Dialog,
   DialogContent,
@@ -109,6 +110,9 @@ export function PharmacyPOS({
   const [saleSearch, setSaleSearch] = useState("");
   const [reversalReason, setReversalReason] = useState("");
   const [refundHandled, setRefundHandled] = useState(false);
+  const [patientName, setPatientName] = useState("");
+  const [prescriptionRef, setPrescriptionRef] = useState("");
+  const [prescriptionVerified, setPrescriptionVerified] = useState(false);
   const [actor, setActor] = useState({ name: "", email: "" });
   // Hides the mobile review bar once the payment panel itself is on screen.
   const [cartInView, setCartInView] = useState(false);
@@ -202,7 +206,8 @@ export function PharmacyPOS({
    * while a scoped counter sells only that store's shelves.
    */
   const scopeAll = storeId === "all";
-  const stockOf = (name: string) => stockForProduct(name, items, scopeAll ? "all" : sellingStoreId);
+  const stockOf = (name: string, productId?: string) =>
+    stockForProduct(name, items, scopeAll ? "all" : sellingStoreId, productId);
 
   const categories = useMemo(
     () => ["All", ...Array.from(new Set(catalogue.map((product) => product.category))).sort()],
@@ -220,7 +225,7 @@ export function PharmacyPOS({
 
   const addToCart = (product: CatalogueProduct) => {
     if (!hydrated) return;
-    const available = stockOf(product.name);
+    const available = stockOf(product.name, product.id);
     const inCart = cart.find((line) => line.product.id === product.id)?.qty ?? 0;
     if (inCart >= available) {
       toast({
@@ -245,7 +250,7 @@ export function PharmacyPOS({
       prev
         .map((line) => {
           if (line.product.id !== productId) return line;
-          const available = stockOf(line.product.name);
+          const available = stockOf(line.product.name, line.product.id);
           return { ...line, qty: Math.max(0, Math.min(qty, available)) };
         })
         .filter((line) => line.qty > 0)
@@ -260,6 +265,9 @@ export function PharmacyPOS({
     setCart([]);
     setDiscountPct(0);
     setTendered("");
+    setPatientName("");
+    setPrescriptionRef("");
+    setPrescriptionVerified(false);
   };
 
   const subtotal = cart.reduce((acc, line) => acc + line.qty * line.product.price, 0);
@@ -268,7 +276,9 @@ export function PharmacyPOS({
   const tenderedNum = Number.parseFloat(tendered) || 0;
   const changeDue = tenderedNum - total;
   const cashShort = method === "cash" && tenderedNum < total;
-  const canCharge = hydrated && cart.length > 0 && total > 0 && !cashShort && Boolean(sellingStore);
+  const hasRxItems = cart.some((line) => line.product.prescription);
+  const rxReady = canChargePrescription({ hasPrescriptionItems: hasRxItems, patientName, prescriptionVerified });
+  const canCharge = hydrated && cart.length > 0 && total > 0 && !cashShort && rxReady && Boolean(sellingStore);
 
   const quickTenders = useMemo(() => {
     if (total <= 0) return [];
@@ -318,6 +328,8 @@ export function PharmacyPOS({
       storeId: sellingStore.id,
       storeName: sellingStore.name,
       servedBy: actor.name || "Front counter",
+      ...(patientName.trim() ? { patientName: patientName.trim() } : {}),
+      ...(hasRxItems && prescriptionRef.trim() ? { prescriptionRef: prescriptionRef.trim() } : {}),
     };
 
     // Walk the shelves: take each line's quantity, preferring this counter's
@@ -330,7 +342,7 @@ export function PharmacyPOS({
       const stockAllocations: NonNullable<POSSaleLine["stockAllocations"]> = [];
       const rows = next
         .filter(
-          (row) => row.name === line.name && (scopeAll || resolveStoreId(row) === sellingStoreId)
+          (row) => (row.productId ? row.productId === line.productId : row.name === line.name) && (scopeAll || resolveStoreId(row) === sellingStoreId)
         )
         .sort(
           (a, b) =>
@@ -379,6 +391,17 @@ export function PharmacyPOS({
     setItems(next);
     saveInventory(next);
     saveMovements(nextMovements);
+    void (async () => {
+      try {
+        const { syncPharmacyInventory } = await import("@/lib/cloud/pharmacy-inventory");
+        const nameOf = new Map(stores.map((s) => [s.id, s.name]));
+        await syncPharmacyInventory(
+          next.map((row) => ({ ...row, storeName: nameOf.get(resolveStoreId(row)) ?? "" }))
+        );
+      } catch {
+        /* offline — the next visit re-mirrors the shelves */
+      }
+    })();
 
     const nextSales = [sale, ...sales];
     setSales(nextSales);
@@ -681,7 +704,7 @@ export function PharmacyPOS({
           ) : (
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
               {filtered.map((product) => {
-                const stock = stockOf(product.name);
+                const stock = stockOf(product.name, product.id);
                 const out = stock <= 0;
                 const low = !out && stock <= 10;
                 const inCart = cart.find((line) => line.product.id === product.id)?.qty ?? 0;
@@ -960,6 +983,46 @@ export function PharmacyPOS({
                       )}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Patient + prescription capture — required before charging Rx items */}
+              {cart.length > 0 && (
+                <div className="mt-4 flex flex-col gap-2">
+                  <input
+                    type="text"
+                    value={patientName}
+                    onChange={(e) => setPatientName(e.target.value)}
+                    placeholder={hasRxItems ? "Patient name (required — prescription sale)" : "Patient name (optional)"}
+                    aria-label="Patient name"
+                    className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[13.5px] outline-none placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                  />
+                  {hasRxItems && (
+                    <>
+                      <input
+                        type="text"
+                        value={prescriptionRef}
+                        onChange={(e) => setPrescriptionRef(e.target.value)}
+                        placeholder="Prescription reference (e.g. script no. / prescriber)"
+                        aria-label="Prescription reference"
+                        className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-[13.5px] outline-none placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                      />
+                      <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium text-slate-600 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={prescriptionVerified}
+                          onChange={(e) => setPrescriptionVerified(e.target.checked)}
+                          className="h-4 w-4 rounded border-slate-300 accent-purple-600"
+                        />
+                        Prescription seen and verified at the counter
+                      </label>
+                      {!rxReady && (
+                        <p role="alert" className="text-[12px] font-medium text-rose-600 dark:text-rose-400">
+                          Add the patient name and verify the prescription to charge Rx items.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 

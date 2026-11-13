@@ -67,15 +67,18 @@ import {
   formatZMW,
   loadDeliveries,
   loadInventory,
+  loadPurchaseOrders,
   loadSales,
   loadStockRequests,
   loadStores,
   resolveStoreId,
   saveStores,
+  setPharmacyScope,
   type Delivery,
   type InventoryItem,
   type PharmacyStore,
   type POSSale,
+  type PurchaseOrder,
   type StockRequest,
 } from "@/components/pharmacy/pharmacy-data";
 import {
@@ -308,6 +311,7 @@ const ROLE_ALIASES: Record<string, PharmacyRole> = {
   technician: "technician",
   "pharmacy technician": "technician",
   cashier: "cashier",
+  "team member": "cashier",
 };
 
 function normalizeRole(value: string | null | undefined): PharmacyRole | undefined {
@@ -691,6 +695,7 @@ function PharmacyHome({
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [sales, setSales] = useState<POSSale[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -699,6 +704,7 @@ function PharmacyHome({
       setRequests(loadStockRequests());
       setDeliveries(loadDeliveries());
       setSales(loadSales());
+      setPurchaseOrders(loadPurchaseOrders());
       setHydrated(true);
     });
     return () => cancelAnimationFrame(raf);
@@ -715,6 +721,8 @@ function PharmacyHome({
   const scopedRequests = inScope(requests);
   const scopedDeliveries = inScope(deliveries);
   const scopedSales = inScope(sales.filter((sale) => !sale.reversedAt));
+  const scopedOrders = inScope(purchaseOrders);
+  const openOrders = scopedOrders.filter((o) => o.status === "draft" || o.status === "sent").length;
 
   const skuCount = scopedItems.length;
   const units = scopedItems.reduce((acc, entry) => acc + entry.qty, 0);
@@ -754,7 +762,7 @@ function PharmacyHome({
       id: "pending-requests",
       value: String(hydrated ? pendingCount : "—"),
       label: "Pending Requests",
-      desc: "Awaiting Pulse hub approval",
+      desc: `${openOrders} open purchase order${openOrders === 1 ? "" : "s"} · awaiting hub approval`,
       icon: ClipboardList,
       tile: "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400",
     },
@@ -768,7 +776,7 @@ function PharmacyHome({
     },
   ];
 
-  // Requests + deliveries merged into one recent-activity feed.
+  // Requests, orders and deliveries merged into one recent-activity feed.
   const activity = [
     ...scopedRequests.map((r) => ({
       kind: "REQUEST" as const,
@@ -779,6 +787,11 @@ function PharmacyHome({
       kind: "DELIVERY" as const,
       title: `${d.id} · ${d.supplier}`,
       when: d.receivedAt,
+    })),
+    ...scopedOrders.map((o) => ({
+      kind: "ORDER" as const,
+      title: `${o.id} · ${o.supplier} · ${o.status}`,
+      when: o.receivedAt ?? o.sentAt ?? o.createdAt,
     })),
   ]
     .sort((a, b) => b.when - a.when)
@@ -1020,6 +1033,8 @@ export function PharmacyApp() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [page, setPage] = useState<PharmacyPage>("home");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [user, setUser] = useState<{
     name: string;
     email: string;
@@ -1076,22 +1091,49 @@ export function PharmacyApp() {
       // accounts provisioned elsewhere — the local registry only knows this device.
       let registeredName: string | undefined;
       let role: PharmacyRole | undefined;
+      let approved: boolean | undefined;
       const db = getFirebaseDb();
       if (db && current) {
         try {
           const snap = await getDoc(doc(db, "User", current.uid));
           const data = snap.data() as
-            | { pharmacy_name?: string; role?: string; role_label?: string }
+            | {
+                pharmacy_name?: string;
+                pharmacy_id?: string;
+                role?: string;
+                role_label?: string;
+                approved_by_duniya?: boolean;
+                access_revoked?: boolean;
+              }
             | undefined;
+          if (data?.access_revoked === true) {
+            // Suspended/removed by the pharmacy owner — enforced at sign-in.
+            try {
+              const auth = getFirebaseAuth();
+              if (auth) await signOut(auth);
+            } catch {
+              /* session cleared by the redirect regardless */
+            }
+            if (active) {
+              toast({ title: "Access suspended", description: "Your pharmacy access was suspended by your account owner." });
+              router.replace("/login");
+            }
+            return;
+          }
           registeredName = data?.pharmacy_name?.trim() || undefined;
           role = normalizeRole(data?.role ?? data?.role_label);
+          approved = data?.approved_by_duniya;
+          // Tenant scope: every pharmacy list read after this point belongs
+          // to this pharmacy only — accounts never share shelves.
+          setPharmacyScope(data?.pharmacy_id ?? current.uid);
         } catch {
           /* rules or offline — fall back to the invitation/session */
         }
       }
+      if (current && !db) setPharmacyScope(current.uid);
       // A team invitation accepted on this device still knows its role even
-      // when the Firestore read is unavailable. Pharmacy owners are the default
-      // for accounts created before roles were stored.
+      // when the Firestore read is unavailable. Unknown roles fail to the
+      // least-privilege counter role, never to owner.
       role ??= normalizeRole(
         current ? getInvitedAccountRole(current.uid, email) : null
       );
@@ -1101,10 +1143,28 @@ export function PharmacyApp() {
         name,
         email,
         initial: (name[0] ?? "P").toUpperCase(),
-        role: role ?? "owner",
+        role: role ?? "cashier",
       });
       setPharmacyName(registration?.pharmacyName ?? registeredName ?? name);
-      setPendingReview(Boolean(registration));
+      setPendingReview(approved === false || Boolean(registration));
+      setStores(loadStores());
+      // Mirror the shelves to the Pulse network stock picture (best-effort;
+      // the local console keeps working offline and the next visit retries).
+      void (async () => {
+        try {
+          const { syncPharmacyInventory } = await import("@/lib/cloud/pharmacy-inventory");
+          const storesNow = loadStores();
+          const nameOf = new Map(storesNow.map((s) => [s.id, s.name]));
+          await syncPharmacyInventory(
+            loadInventory().map((item) => ({
+              ...item,
+              storeName: nameOf.get(item.storeId ?? "st-main") ?? "",
+            }))
+          );
+        } catch {
+          /* offline — retried on the next visit */
+        }
+      })();
       setResolved(true);
     })();
 
@@ -1326,11 +1386,48 @@ export function PharmacyApp() {
               <Menu className="h-5 w-5" />
             </button>
 
-            <div className="ml-auto flex items-center gap-2.5">
+            <div className="relative ml-auto flex items-center gap-2.5">
+              {searchOpen && (
+                <div className="absolute right-12 top-0 z-30 w-64">
+                  <input
+                    autoFocus
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setSearchOpen(false);
+                      if (e.key === "Enter") {
+                        const first = Object.entries(LIVE_PAGES).find(([label]) =>
+                          label.toLowerCase().includes(searchQuery.trim().toLowerCase())
+                        );
+                        if (first) {
+                          goTo(first[1]);
+                          setSearchOpen(false);
+                          setSearchQuery("");
+                        }
+                      }
+                    }}
+                    placeholder="Jump to a page…"
+                    aria-label="Jump to a page"
+                    className="h-10 w-full rounded-full border border-slate-200 bg-white px-4 text-[13px] shadow-lg outline-none focus:border-purple-400 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                  {searchQuery.trim() && (
+                    <ul className="mt-1.5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-white/10 dark:bg-slate-900">
+                      {Object.entries(LIVE_PAGES)
+                        .filter(([label]) => label.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+                        .slice(0, 6)
+                        .map(([label, target]) => (
+                          <li key={label}>
+                            <button type="button" onClick={() => { goTo(target); setSearchOpen(false); setSearchQuery(""); }} className="w-full px-4 py-2 text-left text-[13px] text-slate-700 hover:bg-purple-50 dark:text-slate-200 dark:hover:bg-white/5">{label}</button>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 aria-label="Search"
-                onClick={() => toast({ title: "Search", description: "Search is coming soon." })}
+                onClick={() => setSearchOpen((open) => !open)}
                 className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:text-slate-400 dark:hover:bg-white/10"
               >
                 <Search className="h-[18px] w-[18px]" />

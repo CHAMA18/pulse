@@ -78,21 +78,53 @@ const HEALTH_META: Record<StockHealth, { label: string; pill: string }> = {
 
 function loadVisibility(): VisibilityPharmacy[] {
   if (typeof window === "undefined") return [];
+  let stored: VisibilityPharmacy[] = [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (p): p is VisibilityPharmacy =>
-        !!p &&
-        typeof p === "object" &&
-        typeof (p as VisibilityPharmacy).name === "string" &&
-        !["vis-apex", "vis-stackone"].includes(String((p as VisibilityPharmacy).id ?? ""))
-    );
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        stored = parsed.filter(
+          (p): p is VisibilityPharmacy =>
+            !!p &&
+            typeof p === "object" &&
+            typeof (p as VisibilityPharmacy).name === "string" &&
+            !["vis-apex", "vis-stackone"].includes(String((p as VisibilityPharmacy).id ?? ""))
+        );
+      }
+    }
   } catch {
-    return [];
+    stored = [];
   }
+  // Live shelves: derive a row set from the pharmacy portal's inventory so
+  // stock created at the counter is visible here instead of an orphan key.
+  try {
+    const rawInv = window.localStorage.getItem(
+      window.localStorage.getItem("pulse.active-pharmacy.v1")
+        ? `pulse.pharmacy-inventory.v1:${window.localStorage.getItem("pulse.active-pharmacy.v1")}`
+        : "pulse.pharmacy-inventory.v1"
+    );
+    const inv: unknown = rawInv ? JSON.parse(rawInv) : [];
+    if (Array.isArray(inv) && inv.length > 0) {
+      const rows: StockRow[] = (inv as { id: string; name: string; qty: number; unitPrice: number }[]).map((item) => ({
+        id: item.id,
+        product: item.name,
+        sku: item.id,
+        opening: item.qty,
+        received: 0,
+        dispensed: 0,
+        transferred: 0,
+        adjusted: 0,
+        closing: item.qty,
+        valueZmw: item.qty * (item.unitPrice || 0),
+        daysOfStock: null,
+      }));
+      return [...stored, { id: "vis-live-shelves", name: "Pharmacy shelves (live)", address: "", rows }];
+    }
+  } catch {
+    /* inventory unavailable — stored rows still render */
+  }
+  return stored;
 }
 
 function formatZmw(value: number): string {

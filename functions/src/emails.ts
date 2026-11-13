@@ -6,15 +6,15 @@
 /* CTA with an Outlook fallback, and a footer that never over-claims.  */
 /* Table-based and dependency-free so it renders from Gmail to Outlook. */
 
-const BRAND_DEEP = "#4c1d95";
-const BRAND_PURPLE = "#7c3aed";
+const BRAND_DEEP = "#2e1065";
+const BRAND_PURPLE = "#6d28d9";
 const BRAND_FUCHSIA = "#c026d3";
-const INK = "#18122b";
-const MUTED = "#665e7c";
-const FAINT = "#9b92ae";
-const BORDER = "#ece5f7";
-const SURFACE = "#faf8fe";
-const CANVAS = "#f2edfb";
+const INK = "#171321";
+const MUTED = "#5f5872";
+const FAINT = "#9890ab";
+const BORDER = "#e8e4ef";
+const SURFACE = "#fafaf8";
+const CANVAS = "#f3f1ee";
 
 /** Inline CID image attached by deliver() — renders without loading remote images. */
 const LOGO_URL = "cid:pulse-mark";
@@ -31,20 +31,19 @@ function esc(value: string): string {
 }
 
 function masthead(): string {
-  return `<tr><td class="pad" style="padding:26px 36px;background-color:${BRAND_DEEP};background-image:linear-gradient(120deg,${BRAND_DEEP} 0%,${BRAND_PURPLE} 54%,${BRAND_FUCHSIA} 100%);">
+  return `<tr><td class="pad" style="padding:28px 40px 24px;background-color:#ffffff;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-    <td width="56" valign="middle" style="width:56px;">
-      <img src="${LOGO_URL}" width="56" height="56" alt="Pulse" style="display:block;width:56px;height:56px;border:0;border-radius:14px;" />
+    <td width="48" valign="middle" style="width:48px;">
+      <img src="${LOGO_URL}" width="48" height="48" alt="Pulse" style="display:block;width:48px;height:48px;border:0;border-radius:12px;" />
     </td>
-    <td valign="middle" style="padding-left:14px;">
-      <div style="font-family:${FONT};font-size:25px;font-weight:800;line-height:1.05;letter-spacing:-0.7px;color:#ffffff;">Pulse</div>
-      <div style="padding-top:5px;font-family:${FONT};font-size:8px;font-weight:700;letter-spacing:2.1px;text-transform:uppercase;color:rgba(255,255,255,0.58);">By Duniya Healthcare</div>
+    <td valign="middle" style="padding-left:13px;">
+      <div style="font-family:${FONT};font-size:21px;font-weight:800;line-height:1.05;letter-spacing:-0.5px;color:${INK};">Pulse</div>
+      <div style="padding-top:4px;font-family:${FONT};font-size:8px;font-weight:700;letter-spacing:2.2px;text-transform:uppercase;color:${FAINT};">By Duniya Healthcare</div>
     </td>
-    <td align="right" valign="middle" class="hide" style="font-family:${FONT};">
-      <span style="display:inline-block;border:1px solid rgba(255,255,255,0.24);border-radius:999px;padding:7px 12px;font-size:8.5px;font-weight:700;letter-spacing:1.9px;text-transform:uppercase;color:rgba(255,255,255,0.82);white-space:nowrap;">Pharmacy, in rhythm</span>
-    </td>
+    <td align="right" valign="middle" class="hide" style="font-family:${FONT};font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:${FAINT};white-space:nowrap;">Pharmacy, in rhythm</td>
   </tr></table>
-</td></tr>`;
+</td></tr>
+<tr><td style="height:3px;font-size:0;line-height:0;background-color:${BRAND_PURPLE};background-image:linear-gradient(90deg,${BRAND_DEEP} 0%,${BRAND_PURPLE} 45%,${BRAND_FUCHSIA} 100%);">&nbsp;</td></tr>`;
 }
 
 /** Bulletproof CTA — VML for Outlook, gradient table for everyone else. */
@@ -58,8 +57,8 @@ function cta(href: string, label: string): string {
 <![endif]-->
 <!--[if !mso]><!-->
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr>
-  <td align="center" bgcolor="${BRAND_PURPLE}" style="border-radius:12px;background-color:${BRAND_PURPLE};background-image:linear-gradient(120deg,${BRAND_PURPLE} 0%,${BRAND_FUCHSIA} 100%);box-shadow:0 16px 32px -14px rgba(109,40,217,0.7);">
-    <a href="${safeHref}" target="_blank" style="display:inline-block;padding:16px 42px;font-family:${FONT};font-size:15px;font-weight:700;line-height:1.1;letter-spacing:0.1px;color:#ffffff;text-decoration:none;border-radius:12px;">${esc(label)} &nbsp;&rarr;</a>
+  <td align="center" bgcolor="${BRAND_PURPLE}" style="border-radius:12px;background-color:${BRAND_PURPLE};box-shadow:0 10px 24px -12px rgba(109,40,217,0.55);">
+    <a href="${safeHref}" target="_blank" style="display:inline-block;padding:16px 44px;font-family:${FONT};font-size:15px;font-weight:700;line-height:1.1;letter-spacing:0.1px;color:#ffffff;text-decoration:none;border-radius:12px;">${esc(label)} &nbsp;&rarr;</a>
   </td>
 </tr></table>
 <!--<![endif]-->`;
@@ -100,11 +99,11 @@ function detailsCard(
     })
     .join("");
 
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0;background-color:${SURFACE};border:1px solid ${BORDER};border-radius:16px;">
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 0;background-color:#ffffff;border:1px solid ${BORDER};border-radius:16px;">
   <tr><td class="card-pad" style="padding:18px 20px 4px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
       <td style="font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">${esc(title)}</td>
-      <td align="right" class="hide"><span style="display:inline-block;border:1px solid #fde68a;border-radius:999px;background-color:#fffbeb;padding:3px 8px;font-family:${FONT};font-size:8.5px;font-weight:800;letter-spacing:0.7px;text-transform:uppercase;color:#b45309;white-space:nowrap;">${esc(status)}</span></td>
+      <td align="right" class="hide"><span style="display:inline-block;border:1px solid #fde68a;border-radius:999px;background-color:#fffbeb;padding:4px 9px;font-family:${FONT};font-size:8.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#92400e;white-space:nowrap;">${esc(status)}</span></td>
     </tr></table>
   </td></tr>
   <tr><td class="card-pad" style="padding:0 20px 6px;">
@@ -114,7 +113,7 @@ function detailsCard(
 }
 
 function quoteBlock(message: string, inviterName: string): string {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 0;background-color:#fdf4ff;border-left:3px solid ${BRAND_FUCHSIA};border-radius:0 12px 12px 0;">
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 0;background-color:${SURFACE};border:1px solid ${BORDER};border-radius:12px;">
   <tr><td style="padding:16px 18px;font-family:${FONT};font-size:14px;line-height:1.65;color:#4b4263;font-style:italic;">
     &ldquo;${esc(message)}&rdquo;
     <span style="display:block;margin-top:7px;font-size:12px;font-style:normal;font-weight:700;letter-spacing:0.2px;color:${INK};">&mdash; ${esc(inviterName)}</span>
@@ -140,7 +139,7 @@ function stepsBlock(steps: { title: string; body: string }[]): string {
 }
 
 function securityBlock(): string {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fbfaff;border:1px solid ${BORDER};border-radius:12px;">
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${SURFACE};border:1px solid ${BORDER};border-radius:12px;">
   <tr><td style="padding:14px 16px;font-family:${FONT};font-size:12px;line-height:1.65;color:#6f6785;">
     <strong style="color:${INK};">Keep this link to yourself.</strong> Pulse will never ask for your password by email. This invitation is unique to you, so please don&rsquo;t forward it.
   </td></tr>
@@ -214,15 +213,13 @@ function layout(options: {
 <body style="margin:0;padding:0;background-color:${CANVAS};-webkit-font-smoothing:antialiased;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${esc(preheader)}&#8203;&zwnj;&nbsp;&#8203;&zwnj;&nbsp;&#8203;&zwnj;&nbsp;&#8203;&zwnj;&nbsp;</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CANVAS}" style="background-color:${CANVAS};">
-<tr><td align="center" style="padding:30px 12px;">
-  <table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" class="wrap" style="width:620px;max-width:100%;background-color:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 24px 60px -28px rgba(76,29,149,0.42);">
+<tr><td align="center" style="padding:36px 12px;">
+  <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" class="wrap" style="width:640px;max-width:100%;background-color:#ffffff;border:1px solid ${BORDER};border-radius:20px;overflow:hidden;box-shadow:0 20px 44px -24px rgba(23,19,33,0.25);">
     ${masthead()}
 
     <tr><td class="pad" style="padding:36px 40px 0;font-family:${FONT};color:${INK};">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-        <td style="background-color:#f3e8ff;border-radius:999px;padding:6px 12px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.6px;text-transform:uppercase;color:${BRAND_PURPLE};">${esc(eyebrow)}</td>
-      </tr></table>
-      <h1 class="h1" style="margin:18px 0 0;font-family:${FONT};font-size:32px;line-height:1.16;font-weight:800;letter-spacing:-0.9px;color:${INK};">${esc(heading)}</h1>
+      <p style="margin:0;font-family:${FONT};font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:${BRAND_PURPLE};">${esc(eyebrow)}</p>
+      <h1 class="h1" style="margin:14px 0 0;font-family:${FONT};font-size:31px;line-height:1.18;font-weight:800;letter-spacing:-0.8px;color:${INK};">${esc(heading)}</h1>
       <p style="margin:15px 0 0;font-family:${FONT};font-size:15.5px;line-height:1.7;color:${MUTED};">${intro}</p>
       ${bodyHtml}
     </td></tr>
@@ -242,15 +239,15 @@ function layout(options: {
 
     <tr><td class="pad" style="padding:20px 40px 30px;font-family:${FONT};">
       <p style="margin:0;font-size:12.5px;line-height:1.7;color:${MUTED};">${footerNote}</p>
-      <p style="margin:16px 0 0;font-size:9px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#b3aac5;">Pulse &middot; Pharmacy intelligence, delivered</p>
-      <p style="margin:6px 0 0;font-size:10.5px;line-height:1.7;color:#b3aac5;">
+      <p style="margin:16px 0 0;font-size:9px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#a39cb0;">Pulse &middot; Pharmacy intelligence, delivered</p>
+      <p style="margin:6px 0 0;font-size:10.5px;line-height:1.7;color:#a39cb0;">
         Pulse by Duniya Healthcare &middot; Lusaka, Zambia<br />
         You received this because ${esc(reason)} If it wasn&rsquo;t meant for you, you can safely ignore it.
       </p>
     </td></tr>
   </table>
 
-  <p style="margin:16px auto 0;max-width:520px;text-align:center;font-family:${FONT};font-size:10px;line-height:1.6;color:#a79dbd;">
+  <p style="margin:18px auto 0;max-width:520px;text-align:center;font-family:${FONT};font-size:10px;line-height:1.6;color:#a39cb0;">
     Sent securely by Pulse &middot; noreply@thestackone.com<br />
     This is a one-time transactional message about your Pulse account.
   </p>

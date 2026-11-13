@@ -10,12 +10,20 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  creditReceivedLines,
+  DEFAULT_STORE_ID,
   formatDay,
   loadDeliveries,
+  loadOutboundDeliveries,
+  loadSales,
   nextId,
+  parseDeliveryItems,
   resolveStoreId,
   saveDeliveries,
+  saveOutboundDeliveries,
   type Delivery,
+  type OutboundDelivery,
+  type OutboundDeliveryStatus,
 } from "@/components/pharmacy/pharmacy-data";
 import {
   PageHeader,
@@ -100,7 +108,7 @@ function RecordDeliveryDialog({
       units: Number.parseInt(units, 10),
       receivedAt: Date.now(),
       condition: "verified",
-      ...(storeId !== "all" ? { storeId } : {}),
+      storeId: storeId === "all" ? DEFAULT_STORE_ID : storeId,
     };
     onRecorded(delivery);
     toast({
@@ -299,7 +307,57 @@ export function PharmacyDeliveries({ storeId = "all" }: { storeId?: string }) {
       saveDeliveries(next);
       return next;
     });
+    // Goods received become sellable stock in the same action.
+    const credited = creditReceivedLines(
+      parseDeliveryItems(delivery.items, delivery.units),
+      delivery.storeId ?? DEFAULT_STORE_ID,
+      actor,
+      "Supplier delivery"
+    );
+    if (credited > 0) {
+      toast({ title: "Shelves updated", description: `${credited} units credited to stock.` });
+    }
   };
+
+  /* Outbound deliveries — a sale leaving for a patient, with a rider lifecycle. */
+  const [outbound, setOutbound] = useState<OutboundDelivery[]>([]);
+  const [outForm, setOutForm] = useState({ saleId: "", patientName: "", address: "", riderName: "" });
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setOutbound(loadOutboundDeliveries()));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const createOutbound = () => {
+    if (outForm.patientName.trim().length < 2 || outForm.address.trim().length < 4 || outForm.riderName.trim().length < 2) {
+      toast({ title: "Missing delivery details", description: "Patient, address and rider are all required." });
+      return;
+    }
+    const entry: OutboundDelivery = {
+      id: nextId(outbound, "OUT"),
+      ...(outForm.saleId ? { saleId: outForm.saleId } : {}),
+      patientName: outForm.patientName.trim(),
+      address: outForm.address.trim(),
+      riderName: outForm.riderName.trim(),
+      status: "pending",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      storeId: storeId === "all" ? DEFAULT_STORE_ID : storeId,
+    };
+    const next = [entry, ...outbound];
+    setOutbound(next);
+    saveOutboundDeliveries(next);
+    setOutForm({ saleId: "", patientName: "", address: "", riderName: "" });
+    toast({ title: "Delivery created", description: `${entry.id} assigned to ${entry.riderName}.` });
+  };
+
+  const advanceOutbound = (entry: OutboundDelivery, status: OutboundDeliveryStatus) => {
+    const next = outbound.map((d) => (d.id === entry.id ? { ...d, status, updatedAt: Date.now() } : d));
+    setOutbound(next);
+    saveOutboundDeliveries(next);
+  };
+
+  const recentSales = useMemo(() => loadSales().slice(0, 8), []);
 
   const EmptyIcon: LucideIcon = Truck;
 
@@ -407,6 +465,40 @@ export function PharmacyDeliveries({ storeId = "all" }: { storeId?: string }) {
           {lastDelivery ? ` Latest: ${lastDelivery.id} · ${lastDelivery.units} units.` : ""}
         </div>
       )}
+
+      {/* Outbound deliveries to patients */}
+      <section className={cn(pharmacyCardCls, "mt-5 p-5")} aria-label="Outbound deliveries">
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-white">Outbound deliveries</h3>
+        <p className="mt-1 text-[12.5px] text-slate-500 dark:text-slate-400">Send a completed sale to a patient and track the rider to the door.</p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <select value={outForm.saleId} onChange={(e) => setOutForm((f) => ({ ...f, saleId: e.target.value }))} aria-label="Sale" className="h-10 rounded-md border border-slate-200 bg-white px-2.5 text-[13px] dark:border-white/10 dark:bg-white/5 dark:text-white">
+            <option value="">Sale (optional)</option>
+            {recentSales.map((sale) => (
+              <option key={sale.id} value={sale.id}>{sale.id} · {sale.patientName ?? sale.servedBy}</option>
+            ))}
+          </select>
+          <input value={outForm.patientName} onChange={(e) => setOutForm((f) => ({ ...f, patientName: e.target.value }))} placeholder="Patient name" aria-label="Patient name" className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13px] dark:border-white/10 dark:bg-white/5 dark:text-white" />
+          <input value={outForm.address} onChange={(e) => setOutForm((f) => ({ ...f, address: e.target.value }))} placeholder="Delivery address" aria-label="Delivery address" className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13px] dark:border-white/10 dark:bg-white/5 dark:text-white" />
+          <input value={outForm.riderName} onChange={(e) => setOutForm((f) => ({ ...f, riderName: e.target.value }))} placeholder="Rider name" aria-label="Rider name" className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13px] dark:border-white/10 dark:bg-white/5 dark:text-white" />
+          <button type="button" onClick={createOutbound} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13px] font-semibold text-white">Create delivery</button>
+        </div>
+        {outbound.length > 0 && (
+          <ol className="mt-4 divide-y divide-slate-100 dark:divide-white/5">
+            {outbound.map((entry) => (
+              <li key={entry.id} className="flex flex-wrap items-center gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13.5px] font-semibold text-slate-900 dark:text-white">{entry.patientName} · {entry.riderName}</p>
+                  <p className="truncate text-[12px] text-slate-500 dark:text-slate-400">{entry.id}{entry.saleId ? ` · ${entry.saleId}` : ""} · {entry.address}</p>
+                </div>
+                <StatusPill status={entry.status} />
+                {entry.status === "pending" && <button type="button" onClick={() => advanceOutbound(entry, "in-transit")} className="rounded-md border border-purple-200 px-2.5 py-1.5 text-[12px] font-semibold text-purple-600 dark:border-purple-500/30 dark:text-purple-300">Dispatch</button>}
+                {entry.status === "in-transit" && <button type="button" onClick={() => advanceOutbound(entry, "delivered")} className="rounded-md border border-emerald-200 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-600 dark:border-emerald-500/30 dark:text-emerald-300">Mark delivered</button>}
+                {(entry.status === "pending" || entry.status === "in-transit") && <button type="button" onClick={() => advanceOutbound(entry, "failed")} className="rounded-md border border-rose-200 px-2.5 py-1.5 text-[12px] font-semibold text-rose-600 dark:border-rose-500/30 dark:text-rose-300">Failed</button>}
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
 
       <RecordDeliveryDialog
         open={addOpen}

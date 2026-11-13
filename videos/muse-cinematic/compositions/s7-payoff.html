@@ -1,0 +1,66 @@
+<template>
+<style>
+  #root { position:absolute; inset:0; overflow:hidden; background:#0C0C0E; font-family:Inter, sans-serif; color:#F2EDE3; }
+  .s7-vignette { position:absolute; inset:0; background:radial-gradient(ellipse 90% 80% at 42% 38%, transparent 55%, rgba(0,0,0,0.42) 100%); pointer-events:none; }
+  .s7-glow { position:absolute; width:1000px; height:800px; right:-260px; top:-260px; background:radial-gradient(circle, rgba(255,90,31,0.14) 0%, transparent 62%); pointer-events:none; }
+  .s7-orbit { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  .s7-window { width:1620px; height:900px; background:#131316; border:2px solid #2A2A2E; border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(242,237,227,0.14); overflow:hidden; display:flex; flex-direction:column; }
+  .s7-chrome { height:56px; background:#1A1A1E; border-bottom:2px solid #2A2A2E; display:flex; align-items:center; gap:18px; padding:0 22px; flex:none; }
+  .s7-main { flex:1; display:flex; min-height:0; }
+  .s7-side { width:290px; flex:none; border-right:2px solid #2A2A2E; padding:26px 22px; }
+  .s7-brand { font-family:Montserrat, sans-serif; font-weight:800; font-size:30px; }
+  .s7-brand span { color:#FF5A1F; }
+  .s7-nav { font-size:23px; padding:11px 13px; border-radius:10px; color:#8A8578; margin-top:6px; }
+  .s7-nav.on { background:#1F1F23; color:#F2EDE3; }
+  .s7-body { flex:1; padding:28px 32px; }
+  .s7-kicker { font-family:"JetBrains Mono", monospace; font-size:18px; letter-spacing:0.18em; color:#8A8578; }
+  .s7-h { font-family:Montserrat, sans-serif; font-weight:800; font-size:50px; letter-spacing:-0.02em; margin-top:6px; }
+  .s7-grid { display:flex; gap:18px; margin-top:20px; }
+  .s7-stat { flex:1; background:#0C0C0E; border:2px solid #2A2A2E; border-radius:14px; padding:20px 22px; }
+  .s7-stat .n { font-family:Montserrat, sans-serif; font-weight:800; font-size:52px; }
+  .s7-stat .l { font-family:"JetBrains Mono", monospace; font-size:17px; letter-spacing:0.12em; color:#8A8578; margin-top:4px; }
+  .s7-rows { margin-top:18px; display:flex; flex-direction:column; gap:11px; }
+  .s7-row { display:flex; gap:14px; align-items:center; background:#17171A; border:2px solid #232327; border-radius:12px; padding:15px 18px; font-size:25px; }
+  .s7-pill { margin-left:auto; font-family:"JetBrains Mono", monospace; font-size:19px; border:2px solid #2A2A2E; border-radius:999px; padding:5px 14px; }
+  .s7-pill.hot { border-color:#FF5A1F; color:#FF5A1F; }
+  .s7-line { height:4px; background:#FF5A1F; border-radius:2px; margin-top:22px; transform-origin:left center; }
+</style>
+<div id="root" data-composition-id="s7-payoff" data-width="1920" data-height="1080">
+  <div class="s7-glow" data-layout-ignore="true"></div>
+  <div id="s7-clip" class="clip" data-start="0" data-duration="6" data-track-index="1" style="position:absolute; inset:0;">
+    <div id="s7-orbit" class="s7-orbit">
+      <div class="s7-window">
+        <div class="s7-chrome"><span style="width:14px;height:14px;border-radius:50%;background:#3A3A40;display:inline-block"></span><span style="width:14px;height:14px;border-radius:50%;background:#3A3A40;display:inline-block"></span><span style="width:14px;height:14px;border-radius:50%;background:#FF5A1F;display:inline-block"></span><span style="font-family:'JetBrains Mono',monospace; font-size:20px; color:#8A8578; margin-left:8px;">pulse — live</span><span style="margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:18px; letter-spacing:0.14em;">02:14 — OPEN</span></div>
+        <div class="s7-main">
+          <div class="s7-side"><div class="s7-brand">PULSE<span>.</span></div><div class="s7-nav on">Orders</div><div class="s7-nav">Inventory</div><div class="s7-nav">Patients</div><div class="s7-nav">Delivery</div></div>
+          <div class="s7-body">
+            <div class="s7-kicker">TONIGHT — EVERY BRANCH, ONE SCREEN</div>
+            <div class="s7-h">Open all night. Answered in seconds.</div>
+            <div class="s7-grid">
+              <div class="s7-stat"><div class="n" id="s7-n1">312</div><div class="l">ORDERS TONIGHT</div></div>
+              <div class="s7-stat"><div class="n" id="s7-n2">40s</div><div class="l">RIDER ASSIGNED</div></div>
+              <div class="s7-stat"><div class="n" id="s7-n3">24/7</div><div class="l">ALWAYS OPEN</div></div>
+            </div>
+            <div class="s7-rows">
+              <div class="s7-row" id="s7-r1"><b>#2844 — Metformin 850 mg</b><span style="color:#8A8578">Ngong Rd</span><span class="s7-pill hot">OUT FOR DELIVERY</span></div>
+              <div class="s7-row" id="s7-r2"><b>#2845 — Vitamin D3</b><span style="color:#8A8578">Karen</span><span class="s7-pill">DELIVERED</span></div>
+            </div>
+            <div class="s7-line" id="s7-line"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="s7-vignette" data-layout-ignore="true"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true });
+  tl.fromTo("#s7-orbit", { rotation: -1.1, scale: 1.02 }, { rotation: 1.1, scale: 1.0, duration: 6, ease: "power1.inOut" }, 0);
+  tl.fromTo("#s7-r1", { x: -30, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, 0.6);
+  tl.fromTo("#s7-r2", { x: -30, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, 1.5);
+  const c1 = { v: 280 };
+  tl.to(c1, { v: 312, duration: 2.4, ease: "power2.out", onUpdate: () => { document.getElementById("s7-n1").textContent = Math.round(c1.v); } }, 0.8);
+  tl.fromTo("#s7-line", { scaleX: 0 }, { scaleX: 1, duration: 1.6, ease: "power2.inOut" }, 3.6);
+  window.__timelines["s7-payoff"] = tl;
+</script>
+</template>

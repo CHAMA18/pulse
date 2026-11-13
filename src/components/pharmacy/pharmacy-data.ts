@@ -1,6 +1,17 @@
 "use client";
 
-import { savePharmacyList } from "@/components/pharmacy/pharmacy-shared";
+import {
+  PHARMACY_SCOPE_KEY,
+  savePharmacyList,
+  scopedPharmacyKey,
+} from "@/components/pharmacy/pharmacy-shared";
+import {
+  creditReceivedStock,
+  parseDeliveryItems,
+  type ReceivedLine,
+} from "@/lib/pharmacy-stock";
+
+export { parseDeliveryItems };
 
 /* ------------------------------------------------------------------ */
 /* Pharmacy portal data model                                          */
@@ -34,6 +45,8 @@ export type InventoryItem = {
   unitPrice: number;
   /** Store this stock sits in; legacy records live in the main store. */
   storeId?: string;
+  /** Catalogue product this stock fulfils; legacy rows link by name only. */
+  productId?: string;
 };
 
 export type RequestStatus = "pending" | "approved" | "dispatched" | "delivered" | "cancelled";
@@ -60,6 +73,23 @@ export type Delivery = {
   /** Store the goods were received into; legacy records landed in main. */
   storeId?: string;
 };
+
+export type OutboundDeliveryStatus = "pending" | "in-transit" | "delivered" | "failed";
+
+/** A sale leaving the pharmacy for a patient — rider, address and lifecycle. */
+export type OutboundDelivery = {
+  id: string;
+  saleId?: string;
+  patientName: string;
+  address: string;
+  riderName: string;
+  status: OutboundDeliveryStatus;
+  createdAt: number;
+  updatedAt: number;
+  storeId?: string;
+};
+
+export const PHARMACY_OUTBOUND_KEY = "pulse.pharmacy-outbound.v1";
 
 /** A network supplier shown in the Pharmacy portal's Supplier Directory. */
 export type Supplier = {
@@ -138,6 +168,10 @@ export type POSSale = {
   /** Store label copied onto the sale so network reports retain its context. */
   storeName?: string;
   servedBy: string;
+  /** Patient the sale was dispensed to — required for prescription items. */
+  patientName?: string;
+  /** Prescription reference verified at the counter for prescription items. */
+  prescriptionRef?: string;
   /** Reversals preserve the original receipt and record who, when and why. */
   reversedAt?: number;
   reversedBy?: string;
@@ -222,11 +256,38 @@ const SEED_IDS = {
   purchaseOrders: new Set(["PO-3016", "PO-3017", "PO-3018"]),
 } satisfies Record<string, ReadonlySet<string>>;
 
+/**
+ * Declares which pharmacy subsequent loads/saves belong to. Called once the
+ * signed-in identity resolves; every pharmacy list is stored under a key
+ * scoped to this id, so two accounts never share shelves on one browser.
+ */
+export function setPharmacyScope(pharmacyId: string | null | undefined): void {
+  if (typeof window === "undefined") return;
+  try {
+    const clean = (pharmacyId ?? "").trim();
+    if (clean) window.localStorage.setItem(PHARMACY_SCOPE_KEY, clean);
+    else window.localStorage.removeItem(PHARMACY_SCOPE_KEY);
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Reads only records that were actually saved — no demo fallback. */
 function loadStoredList<T>(key: string, seedIds?: ReadonlySet<string>): T[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(key);
+    const scoped = scopedPharmacyKey(key);
+    let raw = window.localStorage.getItem(scoped);
+    if (!raw && scoped !== key) {
+      // Upgrade path: claim the pre-scoping legacy list for this pharmacy once,
+      // then remove it so the next account on this browser starts empty.
+      const legacy = window.localStorage.getItem(key);
+      if (legacy) {
+        window.localStorage.setItem(scoped, legacy);
+        window.localStorage.removeItem(key);
+        raw = legacy;
+      }
+    }
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -252,7 +313,7 @@ export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
 export function loadPharmacySettings(): PharmacySettings {
   if (typeof window === "undefined") return DEFAULT_PHARMACY_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(PHARMACY_SETTINGS_KEY);
+    const raw = window.localStorage.getItem(scopedPharmacyKey(PHARMACY_SETTINGS_KEY));
     if (!raw) return DEFAULT_PHARMACY_SETTINGS;
     return { ...DEFAULT_PHARMACY_SETTINGS, ...(JSON.parse(raw) as Partial<PharmacySettings>) };
   } catch {
@@ -263,7 +324,7 @@ export function loadPharmacySettings(): PharmacySettings {
 export function savePharmacySettings(settings: PharmacySettings): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(PHARMACY_SETTINGS_KEY, JSON.stringify(settings));
+    window.localStorage.setItem(scopedPharmacyKey(PHARMACY_SETTINGS_KEY), JSON.stringify(settings));
   } catch {
     /* best-effort */
   }
@@ -348,6 +409,56 @@ export function saveDeliveries(deliveries: Delivery[]): void {
   savePharmacyList(PHARMACY_DELIVERIES_KEY, deliveries);
 }
 
+export function loadOutboundDeliveries(): OutboundDelivery[] {
+  return loadStoredList<OutboundDelivery>(PHARMACY_OUTBOUND_KEY);
+}
+
+export function saveOutboundDeliveries(deliveries: OutboundDelivery[]): void {
+  savePharmacyList(PHARMACY_OUTBOUND_KEY, deliveries);
+}
+
+/**
+ * Credits received goods onto the shelves and into the movement ledger, so a
+ * received purchase order, hub delivery or manual receipt becomes sellable
+ * stock. Returns the number of units credited.
+ */
+export function creditReceivedLines(
+  lines: ReceivedLine[],
+  storeId: string,
+  actor: { name: string; email: string },
+  reason: string
+): number {
+  const clean = lines.filter((line) => line.name.trim() && line.qty > 0);
+  if (clean.length === 0) return 0;
+  const now = Date.now();
+  const inventory = loadInventory();
+  const movements = loadMovements();
+  const { items, credited } = creditReceivedStock(inventory, clean, storeId, now, (index) => {
+    const max = inventory.reduce((acc, item) => {
+      const n = Number.parseInt(item.id.replace("inv-", ""), 10);
+      return Number.isFinite(n) ? Math.max(acc, n) : acc;
+    }, 1000);
+    return `inv-${max + 1 + index}`;
+  });
+  for (const entry of credited) {
+    movements.push({
+      id: nextMovementId(movements),
+      at: now,
+      type: "receipt",
+      itemId: entry.itemId,
+      productName: entry.name,
+      batch: entry.batch,
+      qty: entry.qty,
+      fromStoreId: storeId,
+      reason,
+      actor,
+    });
+  }
+  saveInventory(items);
+  saveMovements(movements);
+  return credited.reduce((acc, entry) => acc + entry.qty, 0);
+}
+
 /** The network supplier directory — saved partners only. */
 export function loadSuppliers(): Supplier[] {
   return loadStoredList<Supplier>(PHARMACY_SUPPLIERS_KEY, SEED_IDS.suppliers);
@@ -373,10 +484,16 @@ export function saveCatalogue(products: CatalogueProduct[]): void {
 export function stockForProduct(
   name: string,
   items: InventoryItem[],
-  storeId?: string
+  storeId?: string,
+  productId?: string
 ): number {
   return items
-    .filter((item) => item.name === name && (!storeId || storeId === "all" || resolveStoreId(item) === storeId))
+    .filter((item) => {
+      const linked = productId
+        ? item.productId === productId || (!item.productId && item.name === name)
+        : item.name === name;
+      return linked && (!storeId || storeId === "all" || resolveStoreId(item) === storeId);
+    })
     .reduce((acc, item) => acc + item.qty, 0);
 }
 
@@ -420,6 +537,8 @@ export type PurchaseOrderLine = {
   qty: number;
   /** Unit cost in ZMW. */
   unitCost: number;
+  /** Catalogue product ordered, when the line came from the catalogue. */
+  productId?: string;
 };
 
 /** An order raised to a network supplier. */

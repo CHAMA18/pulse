@@ -370,7 +370,13 @@ export function PharmacySalesReport() {
     }>()),
   ).map(([, value]) => value);
   for (const [id, name] of pharmacyNames) {
-    if (!groupedPharmacies.some((pharmacy) => pharmacy.id === id)) {
+    // Match on id, then on name: a registered pharmacy must appear exactly
+    // once even if its directory id and sales id were resolved differently.
+    if (
+      !groupedPharmacies.some(
+        (pharmacy) => pharmacy.id === id || pharmacy.name.trim().toLowerCase() === name.trim().toLowerCase()
+      )
+    ) {
       groupedPharmacies.push({
         id,
         name,

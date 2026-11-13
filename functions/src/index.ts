@@ -100,6 +100,7 @@ type PharmacyActor = {
   uid: string;
   email: string;
   name: string;
+  role: string;
   pharmacyId: string;
   pharmacyName: string;
 };
@@ -146,13 +147,16 @@ async function requirePharmacyActor(request: { auth?: { uid: string } }): Promis
       return profile.account_type === "Pharmacy" &&
         String(profile.role ?? profile.role_label ?? "").trim().toLowerCase() === "owner";
     });
-    pharmacyId = owner?.id ?? pharmacyName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    // Canonical fallback is the owner's uid — never a name slug, which
+    // collides across pharmacies that share a trading name.
+    pharmacyId = owner?.id ?? request.auth.uid;
   }
 
   return {
     uid: request.auth.uid,
     email: String(data.email ?? "").trim().toLowerCase(),
     name: String(data.display_name ?? data.name ?? data.email ?? "Pharmacy staff"),
+    role: String(data.role ?? data.role_label ?? "").trim().toLowerCase(),
     pharmacyId,
     pharmacyName,
   };
@@ -162,14 +166,6 @@ async function requireConsoleManager(request: { auth?: { uid: string } }): Promi
   const actor = await requirePulseActor(request);
   if (actor.role !== "owner" && actor.role !== "admin") {
     throw new HttpsError("permission-denied", "Only Owners and Admins can view administrative console data.");
-  }
-  return actor;
-}
-
-async function requireConsoleOwner(request: { auth?: { uid: string } }): Promise<PulseActor> {
-  const actor = await requirePulseActor(request);
-  if (actor.role !== "owner") {
-    throw new HttpsError("permission-denied", "Only an Owner can change or remove console users.");
   }
   return actor;
 }
@@ -300,11 +296,25 @@ async function markInvitationFailed(id: string): Promise<void> {
 export const sendTeamInvite = onCall({ secrets: [resendApiKey] }, async (request) => {
   const actor = await requirePharmacyActor(request);
 
+  // Only owners and managers may invite, only into known roles, and only an
+  // owner may create another owner — regardless of what the client sends.
+  const actorRole = actor.role === "pharmacy manager" ? "manager" : actor.role;
+  if (actorRole !== "owner" && actorRole !== "manager") {
+    throw new HttpsError("permission-denied", "Only Owners and Managers can invite team members.");
+  }
   const pharmacyName = actor.pharmacyName;
   const inviterName = requireString(request.data?.inviterName, "inviterName");
   const inviteeName = String(request.data?.inviteeName ?? "").trim();
   const inviteeEmail = assertEmail(request.data?.inviteeEmail, "inviteeEmail");
   const role = requireString(request.data?.role, "role");
+  const PHARMACY_ROLES = new Set(["owner", "manager", "pharmacist", "technician", "cashier"]);
+  const normalizedRole = role.trim().toLowerCase() === "team member" ? "cashier" : role.trim().toLowerCase();
+  if (!PHARMACY_ROLES.has(normalizedRole)) {
+    throw new HttpsError("invalid-argument", "Unknown pharmacy role.");
+  }
+  if (normalizedRole === "owner" && actorRole !== "owner") {
+    throw new HttpsError("permission-denied", "Only an Owner can invite another Owner.");
+  }
   const storeNames: string[] = Array.isArray(request.data?.storeNames)
     ? request.data.storeNames.map((entry: unknown) => String(entry))
     : ["All stores"];
@@ -320,7 +330,7 @@ export const sendTeamInvite = onCall({ secrets: [resendApiKey] }, async (request
     kind: "team",
     email: inviteeEmail,
     name: inviteeName,
-    role,
+    role: normalizedRole,
     pharmacyName,
     pharmacyId: actor.pharmacyId,
     storeNames,
@@ -451,7 +461,7 @@ async function otherOwnerCount(
 }
 
 export const updatePulseConsoleUserRole = onCall(async (request) => {
-  const actor = await requireConsoleOwner(request);
+  const actor = await requireConsoleManager(request);
   const uid = requireString(request.data?.uid, "uid");
   if (uid === actor.uid) {
     throw new HttpsError("failed-precondition", "You can't change your own role.");
@@ -459,6 +469,9 @@ export const updatePulseConsoleUserRole = onCall(async (request) => {
   const nextRole = pulseRole(request.data?.role);
   if (!nextRole) {
     throw new HttpsError("invalid-argument", "role must be Owner, Admin or Staff.");
+  }
+  if (actor.role !== "owner" && nextRole === "owner") {
+    throw new HttpsError("permission-denied", "Only an Owner can hand out the Owner role.");
   }
 
   await db.runTransaction(async (transaction) => {
@@ -469,6 +482,9 @@ export const updatePulseConsoleUserRole = onCall(async (request) => {
       throw new HttpsError("not-found", "That console user no longer exists.");
     }
     const currentRole = pulseRole(data.role ?? data.role_label) ?? "staff";
+    if (actor.role !== "owner" && currentRole === "owner") {
+      throw new HttpsError("permission-denied", "Only an Owner can change an Owner's role.");
+    }
     if (currentRole === "owner" && nextRole !== "owner") {
       const owners = await otherOwnerCount(transaction, uid);
       if (owners === 0) {
@@ -490,7 +506,7 @@ export const updatePulseConsoleUserRole = onCall(async (request) => {
 });
 
 export const removePulseConsoleUser = onCall(async (request) => {
-  const actor = await requireConsoleOwner(request);
+  const actor = await requireConsoleManager(request);
   const uid = requireString(request.data?.uid, "uid");
   if (uid === actor.uid) {
     throw new HttpsError("failed-precondition", "You can't remove your own account.");
@@ -502,6 +518,9 @@ export const removePulseConsoleUser = onCall(async (request) => {
     const data = target.data();
     if (!target.exists || data?.account_type !== "Pulse" || data?.access_revoked === true) {
       throw new HttpsError("not-found", "That console user no longer exists.");
+    }
+    if (actor.role !== "owner" && pulseRole(data.role ?? data.role_label) === "owner") {
+      throw new HttpsError("permission-denied", "Only an Owner can remove another Owner.");
     }
     if (pulseRole(data.role ?? data.role_label) === "owner") {
       const owners = await otherOwnerCount(transaction, uid);
@@ -693,9 +712,12 @@ export const listNetworkPharmacySales = onCall(async (request) => {
     const data = profile.data();
     const name = String(data.pharmacy_name ?? "").trim();
     if (!name) continue;
+    // Same resolution as requirePharmacyActor and the sales sync stamp:
+    // stored pharmacy_id, then the owner's uid, then this profile's uid —
+    // never a name slug, which orphaned the directory row from its sales.
     const id = String(data.pharmacy_id ?? "").trim() ||
       ownerIdsByName.get(name.toLowerCase()) ||
-      name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      profile.id;
     pharmaciesById.set(id, { id, name });
   }
   const pharmacies = Array.from(pharmaciesById.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -704,6 +726,107 @@ export const listNetworkPharmacySales = onCall(async (request) => {
     pharmacies,
     nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
     hasMore,
+  };
+});
+
+/* ------------------------------------------------------------------ */
+/* Pharmacy inventory sync — the network stock picture                 */
+/* ------------------------------------------------------------------ */
+
+function cleanInventoryItem(entry: unknown) {
+  if (!entry || typeof entry !== "object") {
+    throw new HttpsError("invalid-argument", "Inventory item is invalid.");
+  }
+  const raw = entry as Record<string, unknown>;
+  const id = String(raw.id ?? "").trim().slice(0, 120);
+  const name = String(raw.name ?? "").trim().slice(0, 200);
+  if (!id || !name) throw new HttpsError("invalid-argument", "Inventory item needs an id and a name.");
+  return {
+    id,
+    name,
+    category: String(raw.category ?? "General").trim().slice(0, 120),
+    batch: String(raw.batch ?? "").slice(0, 120),
+    expiry: String(raw.expiry ?? "").slice(0, 30),
+    qty: Math.max(0, Math.round(Number(raw.qty) || 0)),
+    reorderLevel: Math.max(0, Math.round(Number(raw.reorderLevel) || 0)),
+    unitPrice: Math.max(0, Number(raw.unitPrice) || 0),
+    storeId: String(raw.storeId ?? "st-main").slice(0, 120),
+    storeName: String(raw.storeName ?? "").trim().slice(0, 160),
+    ...(raw.productId ? { productId: String(raw.productId).slice(0, 120) } : {}),
+  };
+}
+
+/** Pharmacy users mirror their shelf stock; identity comes from User/{uid}. */
+export const syncPharmacyInventory = onCall(async (request) => {
+  const actor = await requirePharmacyActor(request);
+  const items = Array.isArray(request.data?.items) ? request.data.items : [];
+  if (items.length > 200) {
+    throw new HttpsError("invalid-argument", "Sync at most 200 inventory items at a time.");
+  }
+  const cleaned: ReturnType<typeof cleanInventoryItem>[] = items.map((entry: unknown) => cleanInventoryItem(entry));
+  const collection = db.collection("PharmacyInventory");
+
+  // Snapshot semantics: rows the pharmacy no longer holds leave the network view.
+  const existing = await collection.where("pharmacyId", "==", actor.pharmacyId).get();
+  const incomingIds = new Set(cleaned.map((item) => item.id));
+  const stale = existing.docs.filter((doc) => !incomingIds.has(String(doc.data().id ?? "")));
+  for (let offset = 0; offset < stale.length; offset += 400) {
+    const batch = db.batch();
+    for (const doc of stale.slice(offset, offset + 400)) batch.delete(doc.ref);
+    await batch.commit();
+  }
+
+  for (let offset = 0; offset < cleaned.length; offset += 400) {
+    const batch = db.batch();
+    for (const item of cleaned.slice(offset, offset + 400)) {
+      const key = createHash("sha256").update(`${actor.pharmacyId}:${item.id}`).digest("hex");
+      batch.set(collection.doc(`inv_${key}`), {
+        ...item,
+        pharmacyId: actor.pharmacyId,
+        pharmacyName: actor.pharmacyName,
+        sourceUid: actor.uid,
+        syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+    await batch.commit();
+  }
+  return { synced: cleaned.length, removed: stale.length };
+});
+
+/** Registered pharmacies for network views, resolved exactly like sales. */
+async function networkPharmacyDirectory() {
+  const profileSnap = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+  const activeProfiles = profileSnap.docs.filter((doc) => doc.data().access_revoked !== true);
+  const ownerIdsByName = new Map<string, string>();
+  for (const profile of activeProfiles) {
+    const data = profile.data();
+    const name = String(data.pharmacy_name ?? "").trim();
+    if (name && String(data.role ?? data.role_label ?? "").trim().toLowerCase() === "owner") {
+      ownerIdsByName.set(name.toLowerCase(), profile.id);
+    }
+  }
+  const pharmaciesById = new Map<string, { id: string; name: string }>();
+  for (const profile of activeProfiles) {
+    const data = profile.data();
+    const name = String(data.pharmacy_name ?? "").trim();
+    if (!name) continue;
+    const id = String(data.pharmacy_id ?? "").trim() ||
+      ownerIdsByName.get(name.toLowerCase()) ||
+      profile.id;
+    pharmaciesById.set(id, { id, name });
+  }
+  return Array.from(pharmaciesById.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Pulse Owners and Admins can review every pharmacy's shelves; Staff cannot. */
+export const listNetworkInventory = onCall(async (request) => {
+  await requireConsoleManager(request);
+  const requestedLimit = Number(request.data?.limit ?? 500);
+  const limit = Number.isInteger(requestedLimit) ? Math.min(1000, Math.max(1, requestedLimit)) : 500;
+  const snap = await db.collection("PharmacyInventory").orderBy("pharmacyName").limit(limit).get();
+  return {
+    items: snap.docs.map((doc) => ({ docId: doc.id, ...doc.data() })),
+    pharmacies: await networkPharmacyDirectory(),
   };
 });
 
@@ -814,11 +937,14 @@ export const acceptInvitation = onCall(async (request) => {
         );
       }
     } else {
+      const acceptedRoleRaw = String(data.role ?? "Team member").trim();
+      const acceptedRole =
+        acceptedRoleRaw.toLowerCase() === "team member" ? "cashier" : acceptedRoleRaw.toLowerCase();
       transaction.set(
         db.collection("User").doc(request.auth!.uid),
         {
-          role: String(data.role ?? "Team member").trim().toLowerCase(),
-          role_label: String(data.role ?? "Team member").trim(),
+          role: acceptedRole,
+          role_label: acceptedRole === "cashier" && acceptedRoleRaw.toLowerCase() === "team member" ? "Cashier" : acceptedRoleRaw,
           account_type: "Pharmacy",
           pharmacy_name: data.pharmacyName ?? null,
           pharmacy_id: data.pharmacyId ?? null,

@@ -23,10 +23,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
     void (async () => {
       const auth = getFirebaseAuth();
-      // Firebase not configured (fresh checkout / no env) — allow through so
-      // the UI stays previewable in local development.
+      // Fail closed: without a Firebase session there is nothing to render
+      // behind this guard — send the visitor to sign in instead of through.
       if (!auth) {
-        if (active) setState("authed");
+        if (active) {
+          setState("anonymous");
+          router.replace("/login");
+        }
         return;
       }
       try {

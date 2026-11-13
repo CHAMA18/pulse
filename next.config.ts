@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 /**
@@ -24,9 +25,9 @@ const nextConfig: NextConfig = {
     : {
         output: "standalone" as const,
       }),
-  typescript: {
-    ignoreBuildErrors: true,
-  },
+  // Pin the tracing root so the standalone server lands where the start
+  // script expects it, and let TypeScript errors fail the build again.
+  outputFileTracingRoot: path.join(__dirname),
   reactStrictMode: false,
 };
 

@@ -1,0 +1,38 @@
+<template>
+<style>
+  #root { position:absolute; inset:0; overflow:hidden; background:#0C0C0E; font-family:Inter, sans-serif; color:#F2EDE3; }
+  .s3-vignette { position:absolute; inset:0; background:radial-gradient(ellipse 90% 80% at 50% 42%, transparent 55%, rgba(0,0,0,0.42) 100%); pointer-events:none; }
+  .s3-glow { position:absolute; width:1100px; height:700px; left:50%; top:50%; margin-left:-550px; margin-top:-350px; background:radial-gradient(ellipse, rgba(255,90,31,0.12) 0%, transparent 60%); pointer-events:none; }
+  .s3-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .s3-mark { width:64px; height:64px; background:#FF5A1F; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:44px; }
+  .s3-mark i { width:26px; height:26px; background:#0C0C0E; border-radius:6px; display:block; }
+  .s3-word { font-family:Montserrat, sans-serif; font-weight:800; font-size:150px; letter-spacing:-0.02em; line-height:1; display:flex; }
+  .s3-word span { display:inline-block; }
+  .s3-sub { margin-top:30px; font-family:"JetBrains Mono", monospace; font-size:28px; letter-spacing:0.22em; color:#8A8578; }
+  .s3-rule { width:520px; height:2px; background:#2A2A2E; margin-top:36px; }
+  .s3-rule i { display:block; height:100%; width:100%; background:#FF5A1F; transform-origin:left center; }
+</style>
+<div id="root" data-composition-id="s3-reveal" data-width="1920" data-height="1080">
+  <div class="s3-glow" data-layout-ignore="true"></div>
+  <div id="s3-clip" class="clip" data-start="0" data-duration="3" data-track-index="1" style="position:absolute; inset:0;">
+    <div class="s3-center">
+      <div class="s3-mark" id="s3-mark"><i></i></div>
+      <div class="s3-word" id="s3-word" aria-label="MUSE CODE"><span>M</span><span>U</span><span>S</span><span>E</span><span>&nbsp;</span><span>C</span><span>O</span><span>D</span><span>E</span></div>
+      <div class="s3-sub" id="s3-sub">POWERED BY MUSE-WONDER-1.0</div>
+      <div class="s3-rule"><i id="s3-rule-fill"></i></div>
+    </div>
+  </div>
+  <div class="s3-vignette" data-layout-ignore="true"></div>
+</div>
+<script>
+  const tl = gsap.timeline({ paused: true });
+  tl.fromTo("#s3-mark", { scale: 0, rotation: 45 }, { scale: 1, rotation: 45, duration: 0.45, ease: "expo.out" }, 0.1);
+  const letters = document.querySelectorAll("#s3-word span");
+  letters.forEach((el, i) => {
+    tl.fromTo(el, { opacity: 0.25, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.28, ease: "power4.out" }, 0.35 + i * 0.09);
+  });
+  tl.fromTo("#s3-sub", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 1.05);
+  tl.fromTo("#s3-rule-fill", { scaleX: 0 }, { scaleX: 1, duration: 0.7, ease: "power2.inOut" }, 1.2);
+  window.__timelines["s3-reveal"] = tl;
+</script>
+</template>
