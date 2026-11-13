@@ -8,7 +8,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "dist:mac": "electron-builder --mac dmg zip --arm64 --x64 --publish never",
-    "dist:win": "electron-builder --win nsis zip --x64 --publish never"
+    "dist:win": "electron-builder --win zip --x64 --publish never"
   },
   "devDependencies": {
     "electron-builder": "^26.18.0"
@@ -50,24 +50,13 @@
     },
     "win": {
       "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
       "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        },
         {
           "target": "zip",
           "arch": ["x64"]
         }
       ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Pulse"
     },
     "artifactName": "Pulse-${version}-${os}-${arch}.${ext}"
   }
