@@ -96,6 +96,7 @@ const STATUS_PILLS: Record<string, string> = {
   received: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
   "in-transit": "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
   failed: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
+  rejected: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
 };
 
 export function StatusPill({ status, label }: { status: string; label?: string }) {

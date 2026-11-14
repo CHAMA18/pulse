@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  KeyRound,
   Loader2,
   Lock,
   Mail,
@@ -24,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ForgotDialog } from "@/components/login/forgot-dialog";
 import { GoogleIcon } from "@/components/login/google-icon";
+import { OtpClaimDialog } from "@/components/login/otp-claim-dialog";
 import { PulseBeatMark } from "@/components/login/pulse-logo";
 import { RegisterDialog } from "@/components/login/register-dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -123,6 +125,8 @@ export function LoginCard({
 
   const [forgotOpen, setForgotOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(initialMode === "register");
+  const [otpOpen, setOtpOpen] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
   // The invitation carried by ?invite= — resolved before registration opens.
   const [invitation, setInvitation] = useState<InvitationRecord | null>(null);
   const [registerInvitation, setRegisterInvitation] = useState<InvitationRecord | null>(null);
@@ -134,6 +138,15 @@ export function LoginCard({
     const params = new URLSearchParams(window.location.search);
     if (params.get("intent") !== "register") return;
     setRegisterOpen(true);
+  }, []);
+
+  // A pharmacy can arrive through a shared OTP link (/login?otp=…). Open the
+  // claim flow with the code already filled in.
+  useEffect(() => {
+    const otp = new URLSearchParams(window.location.search).get("otp")?.trim();
+    if (!otp) return;
+    setOtpCode(otp);
+    setOtpOpen(true);
   }, []);
 
   // Invitation links land here with ?invite=<id>. Resolve the record before
@@ -631,10 +644,32 @@ export function LoginCard({
             </button>
           </motion.p>
 
+          <motion.div variants={item} className="mt-3 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                setOtpCode("");
+                setOtpOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] font-medium text-slate-500 transition-colors hover:text-fuchsia-600 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
+            >
+              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+              Have a pharmacy OTP?
+            </button>
+          </motion.div>
+
         </motion.div>
       </motion.section>
 
       <ForgotDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+      <OtpClaimDialog
+        open={otpOpen}
+        onOpenChange={(next) => {
+          setOtpOpen(next);
+          if (!next) setOtpCode("");
+        }}
+        initialCode={otpCode}
+      />
       <RegisterDialog
         open={registerOpen}
         onOpenChange={setRegisterOpen}

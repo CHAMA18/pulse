@@ -26,6 +26,7 @@ import {
   ShoppingCart,
   Store,
   TriangleAlert,
+  Wallet,
   Truck,
   Users,
   Warehouse,
@@ -40,6 +41,7 @@ import { PulseMark } from "@/components/login/pulse-logo";
 import { PharmacyInventory } from "@/components/pharmacy/pharmacy-inventory";
 import { PharmacyPOS } from "@/components/pharmacy/pharmacy-pos";
 import { PharmacySalesReport } from "@/components/pharmacy/pharmacy-sales-report";
+import { PharmacyShifts } from "@/components/pharmacy/pharmacy-shifts";
 import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
 import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
 import { PharmacyStockBalance } from "@/components/pharmacy/pharmacy-stock-balance";
@@ -115,6 +117,7 @@ import {
 type PharmacyPage =
   | "home"
   | "pos"
+  | "shifts"
   | "sales-report"
   | "balance"
   | "inventory"
@@ -130,6 +133,7 @@ type PharmacyPage =
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   home: "Dashboard",
   pos: "Point of Sale",
+  shifts: "Shift Management",
   "sales-report": "Sales Report",
   balance: "Stock Balance",
   inventory: "Inventory",
@@ -148,6 +152,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
     items: [
       { label: "Dashboard", icon: LayoutDashboard },
       { label: "Point of Sale", icon: ShoppingCart },
+      { label: "Shift Management", icon: Wallet },
       { label: "Sales Report", icon: BarChart3 },
     ],
   },
@@ -181,6 +186,7 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
 const LIVE_PAGES: Record<string, PharmacyPage> = {
   Dashboard: "home",
   "Point of Sale": "pos",
+  "Shift Management": "shifts",
   "Sales Report": "sales-report",
   "Stock Balance": "balance",
   Inventory: "inventory",
@@ -193,10 +199,11 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   Walkthrough: "walkthrough",
 };
 
-const QUICK_ACTIONS = ["New sale", "Request stock", "Record movement"];
+const QUICK_ACTIONS = ["New sale", "Manage shift", "Request stock", "Record movement"];
 
 const QUICK_ACTION_PAGES: Record<string, PharmacyPage> = {
   "New sale": "pos",
+  "Manage shift": "shifts",
   "Request stock": "requests",
   "Record movement": "movement",
 };
@@ -211,6 +218,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
   owner: new Set<PharmacyPage>([
     "home",
     "pos",
+    "shifts",
     "sales-report",
     "balance",
     "inventory",
@@ -225,6 +233,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
   manager: new Set<PharmacyPage>([
     "home",
     "pos",
+    "shifts",
     "sales-report",
     "balance",
     "inventory",
@@ -239,6 +248,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
   pharmacist: new Set<PharmacyPage>([
     "home",
     "pos",
+    "shifts",
     "sales-report",
     "balance",
     "inventory",
@@ -251,6 +261,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
   technician: new Set<PharmacyPage>([
     "home",
     "pos",
+    "shifts",
     "sales-report",
     "balance",
     "inventory",
@@ -263,6 +274,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
   cashier: new Set<PharmacyPage>([
     "home",
     "pos",
+    "shifts",
     "sales-report",
     "balance",
     "inventory",
@@ -1079,7 +1091,7 @@ export function PharmacyApp() {
               }
             | undefined;
           if (data?.access_revoked === true) {
-            // Suspended/removed by the pharmacy owner — enforced at sign-in.
+            // Suspended/removed by the pharmacy owner or the Pulse network — enforced at sign-in.
             try {
               const auth = getFirebaseAuth();
               if (auth) await signOut(auth);
@@ -1282,6 +1294,11 @@ export function PharmacyApp() {
     if (action === "New sale") {
       setMobileOpen(false);
       goTo("pos");
+      return;
+    }
+    if (action === "Manage shift") {
+      setMobileOpen(false);
+      goTo("shifts");
       return;
     }
     if (action === "Request stock") {
@@ -1568,6 +1585,13 @@ export function PharmacyApp() {
           >
             {page === "pos" ? (
               <PharmacyPOS storeId={activeStore} stores={stores} pharmacyName={pharmacyName} />
+            ) : page === "shifts" ? (
+              <PharmacyShifts
+                storeId={activeStore}
+                stores={stores}
+                user={{ name: user.name, email: user.email }}
+                onGoToPos={() => goTo("pos")}
+              />
             ) : page === "sales-report" ? (
               <PharmacySalesReport
                 storeId={activeStore}
@@ -1577,7 +1601,6 @@ export function PharmacyApp() {
               />
             ) : page === "inventory" ? (
               <PharmacyInventory
-                storeId={activeStore}
                 stores={stores}
                 onSell={() => goTo("pos")}
                 canManageProducts={
@@ -1609,12 +1632,7 @@ export function PharmacyApp() {
             ) : page === "profile" ? (
               <PharmacyProfile user={user} roleLabel={ROLE_META[user.role].label} />
             ) : page === "settings" ? (
-              <PharmacySettings
-                user={user}
-                dark={dark}
-                onDarkChange={toggleDark}
-                onSignOut={onSignOut}
-              />
+              <PharmacySettings user={user} onSignOut={onSignOut} />
             ) : (
               <PharmacyHome
                 pharmacyName={pharmacyName}

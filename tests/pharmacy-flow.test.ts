@@ -15,6 +15,18 @@ import {
   findCatalogueProductByName,
   storeHasProduct,
 } from "../src/lib/pharmacy-catalogue.ts";
+import { computeShiftTotals } from "../src/lib/shift-reconciliation.ts";
+import {
+  DUNIYA_MARKUP_PERCENT,
+  duniyaUnitPrice,
+  impliedCostPrice,
+  priceLayers,
+} from "../src/lib/pricing.ts";
+import {
+  auditSchedule,
+  computeReconciliation,
+  RECONCILIATION_CADENCE_MS,
+} from "../src/lib/stock-reconciliation.ts";
 
 test("tenant scoping: different pharmacies never share a storage key", () => {
   assert.notEqual(scopedStorageKey("pulse.pharmacy-inventory.v1", "phm-a"), scopedStorageKey("pulse.pharmacy-inventory.v1", "phm-b"));
@@ -60,6 +72,80 @@ test("stock request lifecycle only moves forward through the hub", () => {
   assert.equal(nextRequestStatus("pending", "deliver"), null);
   assert.equal(nextRequestStatus("delivered", "cancel"), null);
   assert.equal(nextRequestStatus("pending", "cancel"), "cancelled");
+  assert.equal(nextRequestStatus("pending", "reject"), "rejected");
+  assert.equal(nextRequestStatus("approved", "reject"), "rejected");
+});
+
+test("pricing layers keep cost, Duniya and retail distinct", () => {
+  assert.equal(DUNIYA_MARKUP_PERCENT, 20);
+  assert.equal(duniyaUnitPrice(10), 12);
+  assert.equal(duniyaUnitPrice(12.5, 20), 15);
+  assert.equal(impliedCostPrice(12), 10);
+  const layers = priceLayers({ costPrice: 10, retailPrice: 18 });
+  assert.equal(layers.duniyaPrice, 12);
+  assert.equal(layers.markupAmount, 2);
+  assert.equal(layers.marginAmount, 6);
+  assert.equal(layers.marginPercent, 33.33);
+  // A pharmacy may sell below its own cost; the margin is clamped at zero so
+  // the report never claims a negative cash margin.
+  assert.equal(priceLayers({ costPrice: 10, retailPrice: 8 }).marginAmount, 0);
+});
+
+test("physical reconciliation values shortages and overages at all three prices", () => {
+  const result = computeReconciliation([
+    {
+      name: "Amoxicillin 500mg",
+      expectedQty: 20,
+      countedQty: 17,
+      costPrice: 10,
+      markupPercent: 20,
+      retailPrice: 18,
+    },
+    {
+      name: "Paracetamol 1g",
+      expectedQty: 10,
+      countedQty: 12,
+      costPrice: 4,
+      markupPercent: 20,
+      retailPrice: 8,
+    },
+    {
+      name: "Vitamin C",
+      expectedQty: 5,
+      countedQty: 5,
+      costPrice: 6,
+      markupPercent: 20,
+      retailPrice: 9,
+    },
+  ]);
+  assert.equal(result.totals.expectedUnits, 35);
+  assert.equal(result.totals.countedUnits, 34);
+  assert.equal(result.totals.varianceUnits, -1);
+  assert.equal(result.totals.shortageUnits, 3);
+  assert.equal(result.totals.overageUnits, 2);
+  assert.equal(result.totals.shortLines, 1);
+  assert.equal(result.totals.overLines, 1);
+  assert.equal(result.totals.balancedLines, 1);
+  assert.equal(result.lines[0]?.varianceQty, -3);
+  assert.equal(result.lines[0]?.varianceDuniyaValue, -36);
+  assert.equal(result.lines[0]?.varianceRetailValue, -54);
+  assert.equal(result.lines[1]?.varianceCostValue, 8);
+  assert.equal(result.lines[1]?.varianceDuniyaValue, 9.6);
+  assert.equal(result.totals.expectedDuniyaValue, 324);
+  assert.equal(result.totals.expectedRetailValue, 485);
+});
+
+test("two-week audit cadence starts on the last completed count", () => {
+  const now = 1_700_000_000_000;
+  const never = auditSchedule(null, now);
+  assert.equal(never.status, "never");
+  const fresh = auditSchedule(now - 2 * 24 * 60 * 60 * 1000, now);
+  assert.equal(fresh.status, "scheduled");
+  assert.equal(fresh.daysUntilDue, 12);
+  const dueSoon = auditSchedule(now - 11 * 24 * 60 * 60 * 1000, now);
+  assert.equal(dueSoon.status, "due");
+  const overdue = auditSchedule(now - RECONCILIATION_CADENCE_MS - 1, now);
+  assert.equal(overdue.status, "overdue");
 });
 
 test("low-stock trigger honours the configured limit and higher reorder levels", () => {
@@ -115,4 +201,111 @@ test("catalogue lookup reuses one product record across stores", () => {
   const catalogue = [{ id: "cat-1", name: "Amoxicillin 500mg" }];
   assert.equal(findCatalogueProductByName(catalogue, " amoxicillin 500MG ")?.id, "cat-1");
   assert.equal(findCatalogueProductByName(catalogue, "Paracetamol 1g"), undefined);
+});
+
+test("shift close expects float plus cash sales, with mobile and card kept separate", () => {
+  const base = {
+    id: "SHIFT-1001",
+    cashierEmail: "cashier@pharmacy.zm",
+    storeId: "st-main",
+    openedAt: 1_000,
+    closedAt: 2_000,
+    openingFloat: 500,
+  };
+  const sale = (
+    id: string,
+    method: "cash" | "mobile" | "card",
+    total: number,
+    soldAt: number,
+    shiftId = "SHIFT-1001"
+  ) => ({
+    id,
+    method,
+    total,
+    soldAt,
+    shiftId,
+    lines: [{ qty: 1 }],
+  });
+  const totals = computeShiftTotals(base, [
+    sale("SALE-1", "cash", 100, 1_100),
+    sale("SALE-2", "mobile", 50, 1_200),
+    sale("SALE-3", "card", 25, 1_300),
+    sale("SALE-OTHER", "cash", 999, 900, "SHIFT-OTHER"),
+  ]);
+  assert.equal(totals.cashSales, 100);
+  assert.equal(totals.mobileSales, 50);
+  assert.equal(totals.cardSales, 25);
+  assert.equal(totals.totalSales, 175);
+  assert.equal(totals.expectedCash, 600);
+  assert.equal(totals.transactionCount, 3);
+});
+
+test("shift close refunds earlier-shift cash once and ignores same-shift reversal twice", () => {
+  const base = {
+    id: "SHIFT-1002",
+    cashierEmail: "cashier@pharmacy.zm",
+    storeId: "st-main",
+    openedAt: 1_000,
+    closedAt: 2_000,
+    openingFloat: 500,
+  };
+  const totals = computeShiftTotals(base, [
+    // Cash from the previous shift, refunded from this drawer: leaves the till.
+    {
+      id: "SALE-OLD",
+      method: "cash" as const,
+      total: 80,
+      soldAt: 500,
+      shiftId: "SHIFT-1001",
+      reversedAt: 1_500,
+      lines: [{ qty: 1 }],
+    },
+    // A sale from this shift reversed within it is already excluded below.
+    {
+      id: "SALE-NEW",
+      method: "cash" as const,
+      total: 30,
+      soldAt: 1_100,
+      shiftId: "SHIFT-1002",
+      reversedAt: 1_600,
+      lines: [{ qty: 1 }],
+    },
+  ]);
+  assert.equal(totals.cashSales, 0);
+  assert.equal(totals.cashRefunds, 80);
+  assert.equal(totals.expectedCash, 420);
+});
+
+test("legacy cashier sales inside the window still reconcile without a shift id", () => {
+  const totals = computeShiftTotals(
+    {
+      id: "SHIFT-1003",
+      cashierEmail: "cashier@pharmacy.zm",
+      storeId: "st-main",
+      openedAt: 1_000,
+      closedAt: 2_000,
+      openingFloat: 0,
+    },
+    [
+      {
+        id: "SALE-LEGACY",
+        method: "cash",
+        total: 40,
+        soldAt: 1_100,
+        cashierEmail: "CASHIER@pharmacy.zm",
+        lines: [{ qty: 1 }],
+      },
+      {
+        id: "SALE-OTHER-STORE",
+        method: "cash",
+        total: 90,
+        soldAt: 1_200,
+        cashierEmail: "cashier@pharmacy.zm",
+        storeId: "st-branch",
+        lines: [{ qty: 1 }],
+      },
+    ]
+  );
+  assert.equal(totals.cashSales, 40);
+  assert.equal(totals.expectedCash, 40);
 });

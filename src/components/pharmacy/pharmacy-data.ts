@@ -41,15 +41,25 @@ export type InventoryItem = {
   expiry: string;
   qty: number;
   reorderLevel: number;
-  /** Unit price in ZMW. */
+  /** Retail shelf price in ZMW — what the pharmacy charges the patient. */
   unitPrice: number;
+  /** Supplier cost in ZMW, when this batch arrived through a priced transfer. */
+  costPrice?: number;
+  /** Duniya markup carried by this batch; unset means the standard 20%. */
+  markupPercent?: number;
   /** Store this stock sits in; legacy records live in the main store. */
   storeId?: string;
   /** Catalogue product this stock fulfils; legacy rows link by name only. */
   productId?: string;
 };
 
-export type RequestStatus = "pending" | "approved" | "dispatched" | "delivered" | "cancelled";
+export type RequestStatus =
+  | "pending"
+  | "approved"
+  | "dispatched"
+  | "delivered"
+  | "rejected"
+  | "cancelled";
 export type RequestPriority = "routine" | "urgent";
 
 export type StockRequest = {
@@ -61,6 +71,27 @@ export type StockRequest = {
   submittedAt: number;
   /** Store the replenishment is headed to; legacy records hit the main store. */
   storeId?: string;
+  storeName?: string;
+  productId?: string;
+  notes?: string;
+  /** Stable id used by the network queue; local display ids may repeat. */
+  syncId?: string;
+  submittedByName?: string;
+  submittedByEmail?: string;
+  /** Firestore document id once the request has reached the Pulse queue. */
+  networkDocId?: string;
+  /** Fulfilment evidence carried back from the hub. */
+  batch?: string;
+  expiry?: string;
+  unitCost?: number;
+  markupPercent?: number;
+  duniyaUnitPrice?: number;
+  totalDuniya?: number;
+  retailUnitPrice?: number;
+  totalRetail?: number;
+  dispatchedAt?: number;
+  deliveredAt?: number;
+  decisionNote?: string;
 };
 
 export type Delivery = {
@@ -130,6 +161,10 @@ export type CatalogueProduct = {
   unit: string;
   /** Shelf price in ZMW. */
   price: number;
+  /** Supplier cost, when the pharmacy records it. */
+  costPrice?: number;
+  /** Duniya markup; unset means the standard 20%. */
+  markupPercent?: number;
   /** True when the item may only be sold against a prescription. */
   prescription: boolean;
   /** One-line note shown on the shelf card. */
@@ -180,6 +215,10 @@ export type POSSale = {
   /** Store label copied onto the sale so network reports retain its context. */
   storeName?: string;
   servedBy: string;
+  /** Signed-in cashier account, used for shift reconciliation. */
+  cashierEmail?: string;
+  /** Shift this sale belongs to; a closed shift keeps its original id. */
+  shiftId?: string;
   /** Patient the sale was dispensed to — required for prescription items. */
   patientName?: string;
   /** Prescription reference verified at the counter for prescription items. */
@@ -247,6 +286,15 @@ export type StockMovement = {
   toStoreId?: string;
   reason: string;
   note?: string;
+  /** Price evidence for a hub transfer. */
+  unitCost?: number;
+  markupPercent?: number;
+  duniyaUnitPrice?: number;
+  totalCost?: number;
+  totalDuniya?: number;
+  retailUnitPrice?: number;
+  totalRetail?: number;
+  requestDocId?: string;
   actor: { name: string; email: string };
 };
 

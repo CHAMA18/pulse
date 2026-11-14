@@ -333,6 +333,11 @@ function PlatformCard({ platform }: { platform: Platform }) {
         <Icon className="h-[18px] w-[18px]" />
         Download for {id === "macos" ? "macOS" : "Windows"}
       </a>
+      <p className="mt-3 text-center text-[11px] leading-relaxed text-white/35">
+        {id === "macos"
+          ? "If macOS blocks the first launch, right-click Pulse and choose Open."
+          : "If SmartScreen appears, choose More info, then Run anyway."}
+      </p>
     </motion.article>
   );
 }
@@ -342,7 +347,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
 /* ------------------------------------------------------------------ */
 
 const TRUST: { icon: LucideIcon; label: string }[] = [
-  { icon: ShieldCheck, label: "Signed & notarized builds" },
+  { icon: ShieldCheck, label: "Mac & Windows installers" },
   { icon: RefreshCw, label: "Silent auto-updates" },
   { icon: WifiOff, label: "Offline-first, syncs on return" },
   { icon: Fingerprint, label: "Biometric unlock" },

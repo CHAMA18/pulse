@@ -50,6 +50,30 @@ test("an issue records the pharmacy the stock is going to", () => {
   assert.equal(applied.movement.destinationPharmacyId, "phm-1");
 });
 
+test("an outbound transfer records cost, Duniya price and the request it fulfils", () => {
+  const applied = applyWarehouseMovement(shelves, [], {
+    type: "transfer",
+    itemId: "wh-1",
+    qty: 10,
+    reason: "Stock request fulfilment",
+    destinationPharmacyId: "phm-1",
+    destinationPharmacyName: "City Pharmacy",
+    unitCost: 12,
+    markupPercent: 20,
+    requestDocId: "req_abc",
+    actor,
+    at: 1_700_000_000_000,
+    id: "WHM-5001",
+  });
+  assert.ok(applied);
+  assert.equal(applied.movement.unitCost, 12);
+  assert.equal(applied.movement.markupPercent, 20);
+  assert.equal(applied.movement.duniyaUnitPrice, 14.4);
+  assert.equal(applied.movement.totalCost, 120);
+  assert.equal(applied.movement.totalDuniya, 144);
+  assert.equal(applied.movement.requestDocId, "req_abc");
+});
+
 test("a movement that would empty the shelf below zero is rejected whole", () => {
   const applied = applyWarehouseMovement(shelves, [], {
     type: "issue", itemId: "wh-1", qty: 101, reason: "Issued to pharmacy",

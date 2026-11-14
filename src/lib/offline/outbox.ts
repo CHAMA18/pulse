@@ -5,8 +5,10 @@ import {
   type InventoryItem,
   type PharmacyStore,
   type POSSale,
+  type StockRequest,
 } from "@/components/pharmacy/pharmacy-data";
 import { scopedPharmacyKey } from "@/components/pharmacy/pharmacy-shared";
+import type { PharmacyShift } from "@/lib/pharmacy-shifts";
 
 /* ------------------------------------------------------------------ */
 /* Offline sync outbox                                                */
@@ -44,6 +46,11 @@ export type SalesOutboxEntry = OutboxEntryBase & {
   sales: (POSSale & { storeName?: string })[];
 };
 
+export type ShiftOutboxEntry = OutboxEntryBase & {
+  kind: "shifts";
+  shifts: PharmacyShift[];
+};
+
 export type LowStockAlertOutboxEntry = OutboxEntryBase & {
   kind: "low-stock-alert";
   items: InventoryItem[];
@@ -51,17 +58,26 @@ export type LowStockAlertOutboxEntry = OutboxEntryBase & {
   pharmacyName: string;
 };
 
+export type StockRequestsOutboxEntry = OutboxEntryBase & {
+  kind: "stock-requests";
+  requests: StockRequest[];
+};
+
 export type OutboxEntry =
   | InventoryOutboxEntry
   | SalesOutboxEntry
-  | LowStockAlertOutboxEntry;
+  | ShiftOutboxEntry
+  | LowStockAlertOutboxEntry
+  | StockRequestsOutboxEntry;
 
 export type OutboxSummary = {
   /** Individual changes waiting — snapshots count once, sales by receipt. */
   total: number;
   inventory: number;
   sales: number;
+  shifts: number;
   alerts: number;
+  requests: number;
 };
 
 function newEntryId(): string {
@@ -89,8 +105,12 @@ function loadOutbox(): OutboxEntry[] {
       const kind = (entry as { kind?: unknown }).kind;
       if (kind === "inventory") return Array.isArray((entry as InventoryOutboxEntry).items);
       if (kind === "sales") return Array.isArray((entry as SalesOutboxEntry).sales);
+      if (kind === "shifts") return Array.isArray((entry as ShiftOutboxEntry).shifts);
       if (kind === "low-stock-alert") {
         return Array.isArray((entry as LowStockAlertOutboxEntry).items);
+      }
+      if (kind === "stock-requests") {
+        return Array.isArray((entry as StockRequestsOutboxEntry).requests);
       }
       return false;
     });
@@ -164,6 +184,28 @@ export function queueSalesSync(sales: POSSale[], stores: PharmacyStore[]): void 
   saveOutbox([...entries.filter((current) => current.kind !== "sales"), entry]);
 }
 
+/** Queue shift opens/closes for the network trail, merging by shift id. */
+export function queueShiftSync(shifts: PharmacyShift[]): void {
+  if (shifts.length === 0) return;
+  const entries = loadOutbox();
+  const pending = entries.find(
+    (entry): entry is ShiftOutboxEntry => entry.kind === "shifts"
+  );
+  const merged = new Map<string, PharmacyShift>();
+  for (const shift of pending?.shifts ?? []) merged.set(shift.id, shift);
+  for (const shift of shifts) merged.set(shift.id, shift);
+  const entry: ShiftOutboxEntry = {
+    id: pending?.id ?? newEntryId(),
+    kind: "shifts",
+    createdAt: pending?.createdAt ?? Date.now(),
+    attempts: pending?.attempts ?? 0,
+    ...(pending?.lastAttemptAt ? { lastAttemptAt: pending.lastAttemptAt } : {}),
+    ...(pending?.lastError ? { lastError: pending.lastError } : {}),
+    shifts: [...merged.values()],
+  };
+  saveOutbox([...entries.filter((current) => current.kind !== "shifts"), entry]);
+}
+
 /** Queue the consolidated low-stock alert; the server still throttles repeats. */
 export function queueLowStockAlert(
   items: InventoryItem[],
@@ -185,6 +227,48 @@ export function queueLowStockAlert(
   ]);
 }
 
+/** Queue stock requests that could not reach the Pulse desk yet. */
+export function queueStockRequests(requests: StockRequest[]): void {
+  if (requests.length === 0) return;
+  const entries = loadOutbox();
+  const pending = entries.find(
+    (entry): entry is StockRequestsOutboxEntry => entry.kind === "stock-requests"
+  );
+  const merged = new Map<string, StockRequest>();
+  for (const request of pending?.requests ?? []) {
+    merged.set(request.syncId ?? request.id, request);
+  }
+  for (const request of requests) merged.set(request.syncId ?? request.id, request);
+  const entry: StockRequestsOutboxEntry = {
+    id: pending?.id ?? newEntryId(),
+    kind: "stock-requests",
+    createdAt: pending?.createdAt ?? Date.now(),
+    attempts: pending?.attempts ?? 0,
+    ...(pending?.lastAttemptAt ? { lastAttemptAt: pending.lastAttemptAt } : {}),
+    ...(pending?.lastError ? { lastError: pending.lastError } : {}),
+    requests: [...merged.values()],
+  };
+  saveOutbox([...entries.filter((current) => current.kind !== "stock-requests"), entry]);
+}
+
+/** Drop a withdrawn request before the queue sends it to Pulse. */
+export function discardQueuedStockRequests(keys: string[]): void {
+  if (keys.length === 0) return;
+  const discard = new Set(keys);
+  const next: OutboxEntry[] = [];
+  for (const entry of loadOutbox()) {
+    if (entry.kind !== "stock-requests") {
+      next.push(entry);
+      continue;
+    }
+    const requests = entry.requests.filter(
+      (request) => !discard.has(request.syncId ?? request.id)
+    );
+    if (requests.length > 0) next.push({ ...entry, requests });
+  }
+  saveOutbox(next);
+}
+
 /** Counts for the offline banner; snapshots count as one change each. */
 export function getOutboxSummary(): OutboxSummary {
   const entries = loadOutbox();
@@ -194,7 +278,22 @@ export function getOutboxSummary(): OutboxSummary {
     (acc, entry) => acc + (entry.kind === "sales" ? entry.sales.length : 0),
     0
   );
-  return { total: inventory + sales + alerts, inventory, sales, alerts };
+  const shifts = entries.reduce(
+    (acc, entry) => acc + (entry.kind === "shifts" ? entry.shifts.length : 0),
+    0
+  );
+  const requests = entries.reduce(
+    (acc, entry) => acc + (entry.kind === "stock-requests" ? entry.requests.length : 0),
+    0
+  );
+  return {
+    total: inventory + sales + shifts + alerts + requests,
+    inventory,
+    sales,
+    shifts,
+    alerts,
+    requests,
+  };
 }
 
 let flushing: Promise<boolean> | null = null;
@@ -234,6 +333,12 @@ async function runFlush(): Promise<boolean> {
       } else if (entry.kind === "sales") {
         const { syncPharmacySales } = await import("@/lib/cloud/pharmacy-sales");
         await syncPharmacySales(entry.sales);
+      } else if (entry.kind === "shifts") {
+        const { syncPharmacyShifts } = await import("@/lib/cloud/pharmacy-shifts");
+        await syncPharmacyShifts(entry.shifts);
+      } else if (entry.kind === "stock-requests") {
+        const { syncPharmacyStockRequests } = await import("@/lib/cloud/stock-requests");
+        await syncPharmacyStockRequests(entry.requests);
       } else {
         const { sendLowStockAlert } = await import("@/lib/cloud/low-stock-alerts");
         const stores = entry.stores;

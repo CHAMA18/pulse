@@ -23,6 +23,7 @@ import {
 } from "@/lib/warehouse";
 import { cn } from "@/lib/utils";
 import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
+import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
 
 /* ------------------------------------------------------------------ */
 /* Warehouse Catalogue — Pulse Central Warehouse shelves. Quantities    */
@@ -87,8 +88,13 @@ export function WarehouseCatalogue() {
   }, [items, query]);
 
   const units = items.reduce((acc, item) => acc + item.qty, 0);
-  const value = items.reduce((acc, item) => acc + item.qty * item.unitPrice, 0);
+  const costValue = items.reduce((acc, item) => acc + item.qty * item.unitPrice, 0);
+  const duniyaValue = items.reduce(
+    (acc, item) => acc + item.qty * duniyaUnitPrice(item.unitPrice, item.markupPercent),
+    0
+  );
   const low = items.filter((item) => item.qty <= item.reorderLevel);
+  const formDuniya = duniyaUnitPrice(Number(form.unitPrice) || 0, DUNIYA_MARKUP_PERCENT);
 
   const addItem = () => {
     const qty = Math.max(0, Math.round(Number(form.qty) || 0));
@@ -110,10 +116,20 @@ export function WarehouseCatalogue() {
       qty,
       reorderLevel: Math.max(1, Math.round(qty * 0.25)),
       unitPrice: Math.max(0, Number(form.unitPrice) || 0),
+      markupPercent: DUNIYA_MARKUP_PERCENT,
     };
     persist(
       existing
-        ? items.map((row) => (row.id === item.id ? { ...row, qty: row.qty + qty } : row))
+        ? items.map((row) =>
+            row.id === item.id
+              ? {
+                  ...row,
+                  qty: row.qty + qty,
+                  unitPrice: item.unitPrice,
+                  markupPercent: DUNIYA_MARKUP_PERCENT,
+                }
+              : row
+          )
         : [item, ...items]
     );
     recordMovement(item, qty, "Supplier delivery");
@@ -144,11 +160,12 @@ export function WarehouseCatalogue() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-5">
         {[
           { label: "Products", value: hydrated ? String(items.length) : "—", desc: "Lines in the warehouse" },
           { label: "Units on hand", value: hydrated ? units.toLocaleString() : "—", desc: "Across every batch" },
-          { label: "Stock value", value: hydrated ? `ZMW ${Math.round(value).toLocaleString()}` : "—", desc: "At unit cost" },
+          { label: "Cost value", value: hydrated ? formatZmw(costValue) : "—", desc: "What Duniya paid suppliers" },
+          { label: "Duniya value", value: hydrated ? formatZmw(duniyaValue) : "—", desc: `Cost + ${DUNIYA_MARKUP_PERCENT}% markup` },
           { label: "Low stock", value: hydrated ? String(low.length) : "—", desc: "At or below reorder level" },
         ].map((card) => (
           <div key={card.label} className={cn(cardCls, "p-5")}>
@@ -173,14 +190,16 @@ export function WarehouseCatalogue() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px] text-left text-[13.5px]">
+            <table className="w-full min-w-[760px] text-left text-[13.5px]">
               <thead>
                 <tr className="border-y border-slate-100 text-[11.5px] uppercase tracking-[0.12em] text-slate-400 dark:border-white/5">
                   <th className="px-5 py-3 font-semibold">Product</th>
                   <th className="px-3 py-3 font-semibold">Batch</th>
                   <th className="px-3 py-3 font-semibold">Expiry</th>
                   <th className="px-3 py-3 text-right font-semibold">Qty</th>
-                  <th className="px-5 py-3 text-right font-semibold">Value</th>
+                  <th className="px-3 py-3 text-right font-semibold">Cost</th>
+                  <th className="px-3 py-3 text-right font-semibold">Duniya</th>
+                  <th className="px-5 py-3 text-right font-semibold">Duniya value</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
@@ -198,7 +217,11 @@ export function WarehouseCatalogue() {
                         <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Low</span>
                       )}
                     </td>
-                    <td className="px-5 py-3 text-right tabular-nums">ZMW {Math.round(item.qty * item.unitPrice).toLocaleString()}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatZmw(item.unitPrice)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums font-semibold text-purple-700 dark:text-purple-300">{formatZmw(duniyaUnitPrice(item.unitPrice, item.markupPercent))}</td>
+                    <td className="px-5 py-3 text-right tabular-nums">
+                      {formatZmw(item.qty * duniyaUnitPrice(item.unitPrice, item.markupPercent))}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -247,8 +270,12 @@ export function WarehouseCatalogue() {
                 <input id="wh-qty" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} type="number" min={1} placeholder="e.g. 500" className={inputCls} />
               </div>
               <div>
-                <label htmlFor="wh-cost" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Unit cost (ZMW)</label>
+                <label htmlFor="wh-cost" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Supplier cost / unit (ZMW)</label>
                 <input id="wh-cost" value={form.unitPrice} onChange={(e) => setForm((f) => ({ ...f, unitPrice: e.target.value }))} type="number" min={0} placeholder="e.g. 12.50" className={inputCls} />
+                <p className="mt-1.5 text-[12px] text-slate-500 dark:text-slate-400">
+                  Duniya price at +{DUNIYA_MARKUP_PERCENT}%:{" "}
+                  <span className="font-semibold text-purple-700 dark:text-purple-300">{formatZmw(formDuniya)}</span>
+                </p>
               </div>
               <div className="sm:col-span-2">
                 <label htmlFor="wh-expiry" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Expiry date</label>

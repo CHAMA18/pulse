@@ -1,9 +1,10 @@
 "use client";
 
 /* ------------------------------------------------------------------ */
-/* Audit log — live, tamper-resistant activity feed for the console    */
-/* Persisted to localStorage and mirrored to listeners via a window    */
-/* event so open pages update instantly ("Just now" entries).          */
+/* Audit log — live activity feed for the console                      */
+/* Firestore is the source of truth; localStorage keeps a small recent */
+/* cache so the page can render instantly/offline. Events are queued   */
+/* and flushed to Firestore in batches.                                */
 /* ------------------------------------------------------------------ */
 
 export type AuditAction = "View" | "Update" | "Activity";
@@ -19,26 +20,38 @@ export type AuditEvent = {
 };
 
 export const AUDIT_STORAGE_KEY = "pulse.audit.v1";
+const AUDIT_PENDING_KEY = "pulse.audit.pending.v1";
+const AUDIT_RECENT_CACHE_CAP = 500;
+const AUDIT_PENDING_CAP = 2_000;
 
 /** Audit trails are per-pharmacy: scoped to the active pharmacy when one is set. */
-function auditKey(): string {
-  if (typeof window === "undefined") return AUDIT_STORAGE_KEY;
+function auditScope(): string {
+  if (typeof window === "undefined") return "";
   try {
-    const scope = window.localStorage.getItem("pulse.active-pharmacy.v1");
-    return scope ? `${AUDIT_STORAGE_KEY}:${scope}` : AUDIT_STORAGE_KEY;
+    return window.localStorage.getItem("pulse.active-pharmacy.v1") ?? "";
   } catch {
-    return AUDIT_STORAGE_KEY;
+    return "";
   }
 }
-export const AUDIT_EVENT_NAME = "pulse:audit";
-const AUDIT_CAP = 500;
 
+function auditKey(): string {
+  const scope = auditScope();
+  return scope ? `${AUDIT_STORAGE_KEY}:${scope}` : AUDIT_STORAGE_KEY;
+}
+
+function pendingKey(): string {
+  const scope = auditScope();
+  return scope ? `${AUDIT_PENDING_KEY}:${scope}` : AUDIT_PENDING_KEY;
+}
+
+export const AUDIT_EVENT_NAME = "pulse:audit";
 export const WORKSPACE_NAME = "Pulse workspace";
 
 function isValidEvent(e: unknown): e is AuditEvent {
   return (
     !!e &&
     typeof e === "object" &&
+    typeof (e as AuditEvent).id === "string" &&
     typeof (e as AuditEvent).title === "string" &&
     typeof (e as AuditEvent).ts === "number" &&
     ["View", "Update", "Activity"].includes((e as AuditEvent).action)
@@ -66,6 +79,31 @@ function humanizeLegacyTitle(title: string): string {
   return title;
 }
 
+function loadPending(): AuditEvent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(pendingKey());
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isValidEvent) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePending(events: AuditEvent[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      pendingKey(),
+      JSON.stringify(events.slice(0, AUDIT_PENDING_CAP))
+    );
+  } catch {
+    /* pending queue is best-effort; Firestore remains authoritative */
+  }
+}
+
+/** Recent local cache. Used for the first paint and offline fallback. */
 export function loadAuditEvents(): AuditEvent[] {
   if (typeof window === "undefined") return [];
   try {
@@ -94,7 +132,40 @@ export function loadAuditEvents(): AuditEvent[] {
   }
 }
 
-/** Append a live event (newest first), cap the log, notify listeners. */
+let flushTimer: number | null = null;
+let flushing = false;
+
+function scheduleAuditFlush(): void {
+  if (typeof window === "undefined" || flushTimer !== null) return;
+  flushTimer = window.setTimeout(() => {
+    flushTimer = null;
+    void flushAuditQueue();
+  }, 900);
+}
+
+/**
+ * Send queued events to Firestore in one callable batch. Failed batches stay
+ * queued and are retried on the next record/refresh.
+ */
+export async function flushAuditQueue(): Promise<void> {
+  if (flushing) return;
+  const pending = loadPending();
+  if (pending.length === 0) return;
+
+  flushing = true;
+  try {
+    const { recordAuditEvents } = await import("@/lib/cloud/audit-logs");
+    await recordAuditEvents(pending);
+    const sent = new Set(pending.map((event) => event.id));
+    savePending(loadPending().filter((event) => !sent.has(event.id)));
+  } catch {
+    /* offline or function unavailable — keep the queue for the next attempt */
+  } finally {
+    flushing = false;
+  }
+}
+
+/** Append a live event locally, then queue it for Firestore. */
 export function recordAudit(event: {
   title: string;
   action: AuditAction;
@@ -103,25 +174,29 @@ export function recordAudit(event: {
   email: string;
 }): void {
   if (typeof window === "undefined") return;
+  const entry: AuditEvent = {
+    id: `aud-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    title: event.title,
+    action: event.action,
+    actor: event.actor,
+    detail: event.detail ?? WORKSPACE_NAME,
+    email: event.email,
+    ts: Date.now(),
+  };
+
   try {
     const events = loadAuditEvents();
-    const entry: AuditEvent = {
-      id: `aud-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-      title: event.title,
-      action: event.action,
-      actor: event.actor,
-      detail: event.detail ?? WORKSPACE_NAME,
-      email: event.email,
-      ts: Date.now(),
-    };
     window.localStorage.setItem(
       auditKey(),
-      JSON.stringify([entry, ...events].slice(0, AUDIT_CAP))
+      JSON.stringify([entry, ...events].slice(0, AUDIT_RECENT_CACHE_CAP))
     );
-    window.dispatchEvent(new CustomEvent(AUDIT_EVENT_NAME));
   } catch {
-    /* storage full or unavailable — recording is best-effort */
+    /* recent cache full or unavailable — Firestore still receives the event */
   }
+
+  savePending([entry, ...loadPending()].slice(0, AUDIT_PENDING_CAP));
+  scheduleAuditFlush();
+  window.dispatchEvent(new CustomEvent(AUDIT_EVENT_NAME));
 }
 
 export function formatRelative(ts: number, now: number = Date.now()): string {

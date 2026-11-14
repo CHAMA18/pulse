@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import {
   Bell,
   LogOut,
-  Moon,
   Settings as SettingsIcon,
   ShieldCheck,
   type LucideIcon,
@@ -82,13 +81,9 @@ function ToggleRow({
 
 export function PharmacySettings({
   user,
-  dark,
-  onDarkChange,
   onSignOut,
 }: {
   user: { name: string; email: string };
-  dark: boolean;
-  onDarkChange: (on: boolean) => void;
   onSignOut: () => void;
 }) {
   const [prefs, setPrefs] = useState<Settings>({
@@ -131,19 +126,6 @@ export function PharmacySettings({
         animate="show"
         className="mt-5 grid grid-cols-1 items-start gap-5 xl:grid-cols-2"
       >
-        {/* Appearance */}
-        <SettingsSection icon={Moon} title="Appearance" description="How the console looks on this device">
-          <div className="flex items-center gap-4">
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-slate-800 dark:text-slate-100">Dark mode</p>
-              <p className="mt-0.5 text-[12.5px] leading-snug text-slate-500 dark:text-slate-400">
-                Easier on the eyes during late-night stock takes.
-              </p>
-            </div>
-            <Switch checked={dark} onCheckedChange={onDarkChange} aria-label="Toggle dark mode" />
-          </div>
-        </SettingsSection>
-
         {/* Notifications */}
         <SettingsSection
           icon={Bell}

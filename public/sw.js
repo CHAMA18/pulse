@@ -7,7 +7,7 @@
 /* is precached at install. Firebase and other cross-origin APIs are   */
 /* never intercepted — the app handles those with its own outbox.      */
 
-const VERSION = "v3";
+const VERSION = "v4";
 const SHELL_CACHE = `pulse-shell-${VERSION}`;
 const ASSET_CACHE = `pulse-assets-${VERSION}`;
 const PAGE_CACHE = `pulse-pages-${VERSION}`;

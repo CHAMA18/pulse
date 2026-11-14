@@ -7,8 +7,8 @@
   "author": "Pulse",
   "license": "UNLICENSED",
   "scripts": {
-    "dist:mac": "electron-builder --mac dmg zip --arm64 --x64 --publish never",
-    "dist:win": "electron-builder --win zip --x64 --publish never"
+    "dist:mac": "electron-builder --mac dmg zip --universal --publish never",
+    "dist:win": "electron-builder --win portable zip --x64 --publish never"
   },
   "devDependencies": {
     "electron-builder": "^26.18.0"
@@ -19,6 +19,7 @@
     "copyright": "Copyright © 2026 Pulse",
     "electronVersion": "45.2.1",
     "asar": true,
+    "afterPack": "after-pack.cjs",
     "directories": {
       "output": "release"
     },
@@ -28,16 +29,21 @@
     ],
     "mac": {
       "category": "public.app-category.medical",
-      "identity": null,
+      "identity": "Developer ID Application",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "notarize": true,
       "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64", "x64"]
+          "arch": ["universal"]
         },
         {
           "target": "zip",
-          "arch": ["arm64", "x64"]
+          "arch": ["universal"]
         }
       ]
     },
@@ -50,8 +56,11 @@
     },
     "win": {
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false,
       "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        },
         {
           "target": "zip",
           "arch": ["x64"]

@@ -5,8 +5,10 @@ import {
   Banknote,
   Check,
   CheckCircle2,
+  Clock,
   CreditCard,
   Loader2,
+  LockKeyhole,
   Mail,
   Minus,
   Plus,
@@ -20,6 +22,7 @@ import {
   Store,
   Trash2,
   TriangleAlert,
+  Wallet,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -49,6 +52,15 @@ import {
   pharmacyCardCls,
   brandBtnCls,
 } from "@/components/pharmacy/pharmacy-shared";
+import { CloseShiftDialog, OpenShiftDialog } from "@/components/pharmacy/shift-dialogs";
+import {
+  SHIFTS_EVENT,
+  activeShiftForStore,
+  formatShiftZMW,
+  shiftDuration,
+  shiftTotals,
+  type PharmacyShift,
+} from "@/lib/pharmacy-shifts";
 import { recordAudit } from "@/lib/audit-log";
 import {
   flushOutbox,
@@ -129,6 +141,9 @@ export function PharmacyPOS({
   const [prescriptionRef, setPrescriptionRef] = useState("");
   const [prescriptionVerified, setPrescriptionVerified] = useState(false);
   const [actor, setActor] = useState({ name: "", email: "" });
+  const [shift, setShift] = useState<PharmacyShift | null>(null);
+  const [openShiftOpen, setOpenShiftOpen] = useState(false);
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
   // Hides the mobile review bar once the payment panel itself is on screen.
   const [cartInView, setCartInView] = useState(false);
   const cartRef = useRef<HTMLElement>(null);
@@ -223,6 +238,25 @@ export function PharmacyPOS({
 
   const sellingStoreId = sellingStore?.id ?? "st-main";
 
+  // Cashier shifts are scoped to this till. Re-read whenever a shift is
+  // opened/closed here or in another tab, so the POS gate never goes stale.
+  useEffect(() => {
+    if (!hydrated) return;
+    const refresh = () =>
+      setShift(activeShiftForStore(actor.email, sellingStoreId) ?? null);
+    refresh();
+    window.addEventListener(SHIFTS_EVENT, refresh);
+    window.addEventListener("pulse:pharmacy-change", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(SHIFTS_EVENT, refresh);
+      window.removeEventListener("pulse:pharmacy-change", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, [hydrated, actor.email, sellingStoreId]);
+
+  const shiftCash = shift ? shiftTotals(shift, sales) : null;
+
   /**
    * Shelf stock of a product at this counter. The "All stores" counter pools
    * every storefront's stock (fulfilling from the counter's store first),
@@ -280,10 +314,6 @@ export function PharmacyPOS({
     );
   };
 
-  const removeLine = (productId: string) => {
-    setCart((prev) => prev.filter((line) => line.product.id !== productId));
-  };
-
   const clearSale = () => {
     setCart([]);
     setDiscountPct(0);
@@ -301,7 +331,14 @@ export function PharmacyPOS({
   const cashShort = method === "cash" && tenderedNum < total;
   const hasRxItems = cart.some((line) => line.product.prescription);
   const rxReady = canChargePrescription({ hasPrescriptionItems: hasRxItems, patientName, prescriptionVerified });
-  const canCharge = hydrated && cart.length > 0 && total > 0 && !cashShort && rxReady && Boolean(sellingStore);
+  const canCharge =
+    hydrated &&
+    cart.length > 0 &&
+    total > 0 &&
+    !cashShort &&
+    rxReady &&
+    Boolean(sellingStore) &&
+    Boolean(shift);
 
   const quickTenders = useMemo(() => {
     if (total <= 0) return [];
@@ -333,6 +370,15 @@ export function PharmacyPOS({
 
   const completeSale = () => {
     if (!canCharge || !sellingStore) return;
+    const currentShift = activeShiftForStore(actor.email, sellingStore.id);
+    if (!currentShift) {
+      setShift(null);
+      toast({
+        title: "Open a shift first",
+        description: "Start a shift with the opening float before charging the next customer.",
+      });
+      return;
+    }
 
     const sale: POSSale = {
       id: nextId(sales, "SALE"),
@@ -351,6 +397,8 @@ export function PharmacyPOS({
       storeId: sellingStore.id,
       storeName: sellingStore.name,
       servedBy: actor.name || "Front counter",
+      cashierEmail: currentShift.cashierEmail,
+      shiftId: currentShift.id,
       ...(patientName.trim() ? { patientName: patientName.trim() } : {}),
       ...(hasRxItems && prescriptionRef.trim() ? { prescriptionRef: prescriptionRef.trim() } : {}),
     };
@@ -656,6 +704,61 @@ export function PharmacyPOS({
           <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
           No store on this account yet — add one under Stores before taking payments.
         </div>
+      )}
+
+      {/* Shift gate — the till must be open before a sale can land */}
+      {hydrated && (
+        shift && shiftCash ? (
+          <div
+            className={cn(
+              pharmacyCardCls,
+              "mt-5 flex flex-wrap items-center gap-3 border-l-4 border-emerald-500 px-4 py-3.5"
+            )}
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+              <Wallet className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13.5px] font-bold text-slate-900 dark:text-white">
+                {shift.id} open at {shift.storeName}
+              </p>
+              <p className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">
+                Float {formatShiftZMW(shift.openingFloat)} · Expected in till{" "}
+                <span className="font-bold text-slate-700 dark:text-slate-200">{formatShiftZMW(shiftCash.expectedCash)}</span>
+                {" "}· {shiftDuration(shift)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCloseShiftOpen(true)}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-purple-200 bg-white px-3 text-[12.5px] font-semibold text-purple-700 transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-purple-500/25 dark:bg-transparent dark:text-purple-300 dark:hover:bg-purple-500/10"
+            >
+              <LockKeyhole className="h-3.5 w-3.5" aria-hidden="true" />
+              Close shift
+            </button>
+          </div>
+        ) : (
+          <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300">
+              <Clock className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13.5px] font-bold">No shift open at {sellingStore?.name ?? "this store"}</p>
+              <p className="mt-0.5 text-[12px] leading-snug text-amber-800 dark:text-amber-200/90">
+                Count the opening float and open a shift before charging customers. Sales are locked to the open till.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpenShiftOpen(true)}
+              disabled={!sellingStore || !actor.email}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-amber-600 px-3 text-[12.5px] font-bold text-white transition-colors hover:bg-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Wallet className="h-3.5 w-3.5" aria-hidden="true" />
+              Open shift
+            </button>
+          </div>
+        )
       )}
 
       {/* Today at this counter */}
@@ -1089,7 +1192,12 @@ export function PharmacyPOS({
                   "mt-4 h-12 w-full text-[15px] font-bold disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
                 )}
               >
-                {cart.length === 0 ? (
+                {!shift ? (
+                  <>
+                    <LockKeyhole className="h-[18px] w-[18px]" aria-hidden="true" />
+                    Open a shift to charge
+                  </>
+                ) : cart.length === 0 ? (
                   <>
                     <ShoppingCart className="h-[18px] w-[18px]" aria-hidden="true" />
                     Charge — add items first
@@ -1406,6 +1514,25 @@ export function PharmacyPOS({
           )}
         </DialogContent>
       </Dialog>
+
+      <OpenShiftDialog
+        open={openShiftOpen}
+        onOpenChange={setOpenShiftOpen}
+        actor={{ name: actor.name || "Cashier", email: actor.email }}
+        store={sellingStore ? { id: sellingStore.id, name: sellingStore.name } : undefined}
+        onOpened={(opened) => setShift(opened)}
+      />
+      <CloseShiftDialog
+        open={closeShiftOpen}
+        onOpenChange={setCloseShiftOpen}
+        shift={shift}
+        sales={sales}
+        actor={{ name: actor.name || "Cashier", email: actor.email }}
+        onClosed={() => {
+          setShift(null);
+          setSales(loadSales());
+        }}
+      />
 
       <Dialog
         open={saleToReverse !== null}

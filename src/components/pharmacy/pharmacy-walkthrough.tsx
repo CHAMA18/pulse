@@ -16,6 +16,7 @@ import {
   ShoppingCart,
   Sparkles,
   Users,
+  Wallet,
   Warehouse,
 } from "lucide-react";
 import { PageHeader, pharmacyCardCls } from "@/components/pharmacy/pharmacy-shared";
@@ -37,7 +38,7 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
   {
     id: "ph-nav",
     title: "One sidebar, five neighbourhoods",
-    body: "Main is your day (dashboard + counter). Operations runs stock end-to-end. Learn holds the guided tour. Administration keeps stores and people. Account is yours.",
+    body: "Main is your day (dashboard, counter and shift till). Operations runs stock end-to-end. Learn holds the guided tour. Administration keeps stores and people. Account is yours.",
     target: "ph-nav",
   },
   {
@@ -55,6 +56,13 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
     body: "Tap products onto the receipt, take cash, mobile or card, and the shelf drops automatically. Fast enough for the queue at lunch.",
   },
   {
+    id: "ph-shifts",
+    title: "Shift Management — balance the till before handover",
+    page: "shifts",
+    target: "ph-shifts",
+    body: "Open the till with its starting float, ring up sales, then count the cash at close. Pulse compares cash at hand with the system total, records any variance and closes the shift before the next cashier takes over.",
+  },
+  {
     id: "ph-balance",
     title: "Stock Balance — what you hold, what it's worth",
     page: "balance",
@@ -63,10 +71,10 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
   },
   {
     id: "ph-inventory",
-    title: "Inventory — your catalogue and the shelves",
+    title: "Inventory — your product catalogue",
     page: "inventory",
     target: "ph-inventory",
-    body: "One stop for the master product list — add or import products, set packs, shelf prices, prescription flags and low-stock triggers — plus every batch, expiry and status on hand. Quantities themselves change at the next stop.",
+    body: "One stop for the master product list — add or import products, set packs, shelf prices, prescription flags and low-stock triggers. Stock Balance shows what is on hand, and quantities change under Stock Movement.",
   },
   {
     id: "ph-movement",
@@ -101,7 +109,7 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
     title: "Settings — make it yours",
     page: "settings",
     target: "ph-settings",
-    body: "Notifications, dark mode and sign-out live here. Your preferences stay on this device.",
+    body: "Notification preferences and sign-out live here. Your preferences stay on this device.",
   },
   {
     id: "ph-finish",
@@ -118,6 +126,7 @@ const CHAPTER_ICONS: Record<string, typeof Compass> = {
   "ph-nav": Compass,
   "ph-home": LayoutDashboard,
   "ph-pos": ShoppingCart,
+  "ph-shifts": Wallet,
   "ph-balance": Boxes,
   "ph-inventory": Package,
   "ph-movement": ArrowLeftRight,

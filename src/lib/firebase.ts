@@ -159,6 +159,10 @@ const AUDIT_MIRROR: Record<string, { title: string; action: "View" | "Update" | 
   user_status_changed: { title: "User Status Changed", action: "Update" },
   user_removed: { title: "User Removed", action: "Update" },
   pharmacy_status_changed: { title: "Pharmacy Status Changed", action: "Update" },
+  pharmacy_deleted: { title: "Pharmacy Deleted", action: "Update" },
+  pharmacies_bulk_deleted: { title: "Duplicate Pharmacies Deleted", action: "Update" },
+  pharmacy_restored: { title: "Pharmacy Restored", action: "Update" },
+  pharmacy_hard_deleted: { title: "Pharmacy Permanently Deleted", action: "Update" },
   pharmacies_imported: { title: "Pharmacies Imported", action: "Update" },
   pharmacies_template_downloaded: { title: "Registry Template Downloaded", action: "View" },
 };

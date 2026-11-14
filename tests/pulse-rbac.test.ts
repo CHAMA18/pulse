@@ -13,10 +13,12 @@ import {
   type PulseRole,
 } from "../src/lib/pulse-rbac.ts";
 
-const ADMIN_PAGES: PulsePage[] = ["audit", "users", "sales"];
+const ADMIN_PAGES: PulsePage[] = ["audit", "users", "sales", "transactions"];
 const STAFF_PAGES: PulsePage[] = [
   "home",
   "pharmacies",
+  "requests",
+  "reconciliation",
   "catalogue",
   "inventory",
   "movement",

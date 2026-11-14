@@ -7,7 +7,10 @@ export type PulseRole = "owner" | "admin" | "staff";
 export type PulsePage =
   | "home"
   | "pharmacies"
+  | "requests"
+  | "reconciliation"
   | "sales"
+  | "transactions"
   | "catalogue"
   | "inventory"
   | "movement"
@@ -39,7 +42,10 @@ export const ALL_PULSE_PAGES: readonly PulsePage[] = [
   "audit",
   "users",
   "pharmacies",
+  "requests",
+  "reconciliation",
   "sales",
+  "transactions",
   "catalogue",
   "inventory",
   "movement",
@@ -59,6 +65,8 @@ export const PULSE_ROLE_PAGES: Record<PulseRole, ReadonlySet<PulsePage>> = {
   staff: new Set<PulsePage>([
     "home",
     "pharmacies",
+    "requests",
+    "reconciliation",
     "catalogue",
     "inventory",
     "movement",

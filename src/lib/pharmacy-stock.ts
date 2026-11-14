@@ -1,7 +1,20 @@
 /* Pure stock-flow helpers shared by the pharmacy console and its tests.
    No browser or React imports — safe to load under `node --test`. */
 
-export type ReceivedLine = { name: string; qty: number; unitCost?: number; productId?: string };
+export type ReceivedLine = {
+  name: string;
+  qty: number;
+  /** Supplier cost, when known. */
+  unitCost?: number;
+  productId?: string;
+  /** Exact warehouse batch and expiry carried on a hub transfer. */
+  batch?: string;
+  expiry?: string;
+  /** Duniya markup for this line; unset means the standard 20%. */
+  markupPercent?: number;
+  /** Pharmacy's chosen shelf price, applied when goods are received. */
+  retailPrice?: number;
+};
 
 export type ShelfItem = {
   id: string;
@@ -11,7 +24,12 @@ export type ShelfItem = {
   expiry: string;
   qty: number;
   reorderLevel: number;
+  /** Retail shelf price. */
   unitPrice: number;
+  /** Supplier cost; optional on legacy rows. */
+  costPrice?: number;
+  /** Duniya markup; optional on legacy rows (defaults to 20%). */
+  markupPercent?: number;
   storeId?: string;
   productId?: string;
 };
@@ -59,19 +77,28 @@ export function creditReceivedStock<T extends ShelfItem>(
     if (existing) {
       existing.qty += line.qty;
       if (line.productId && !existing.productId) existing.productId = line.productId;
+      if (line.unitCost !== undefined) existing.costPrice = line.unitCost;
+      if (line.markupPercent !== undefined) existing.markupPercent = line.markupPercent;
+      if (line.retailPrice !== undefined && line.retailPrice > 0) {
+        existing.unitPrice = line.retailPrice;
+      }
       credited.push({ itemId: existing.id, name: existing.name, qty: line.qty, batch: existing.batch });
       return;
     }
-    const batch = `RCV-${now}-${index + 1}`;
+    const batch = line.batch?.trim() || `RCV-${now}-${index + 1}`;
     const created = {
       id: makeId(index),
       name: line.name,
       category: "General",
       batch,
-      expiry: new Date(now + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      expiry:
+        line.expiry?.trim() ||
+        new Date(now + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
       qty: line.qty,
       reorderLevel: Math.max(1, Math.round(line.qty * 0.25)),
-      unitPrice: line.unitCost ?? 0,
+      unitPrice: line.retailPrice ?? line.unitCost ?? 0,
+      ...(line.unitCost !== undefined ? { costPrice: line.unitCost } : {}),
+      ...(line.markupPercent !== undefined ? { markupPercent: line.markupPercent } : {}),
       storeId,
       ...(line.productId ? { productId: line.productId } : {}),
     } as T;
@@ -81,14 +108,21 @@ export function creditReceivedStock<T extends ShelfItem>(
   return { items: next, credited };
 }
 
-export type StockRequestStatus = "pending" | "approved" | "dispatched" | "delivered" | "cancelled";
-export type StockRequestAction = "approve" | "dispatch" | "deliver" | "cancel";
+export type StockRequestStatus =
+  | "pending"
+  | "approved"
+  | "dispatched"
+  | "delivered"
+  | "rejected"
+  | "cancelled";
+export type StockRequestAction = "approve" | "dispatch" | "deliver" | "cancel" | "reject";
 
 const REQUEST_TRANSITIONS: Record<StockRequestStatus, Partial<Record<StockRequestAction, StockRequestStatus>>> = {
-  pending: { approve: "approved", cancel: "cancelled" },
-  approved: { dispatch: "dispatched", cancel: "cancelled" },
+  pending: { approve: "approved", cancel: "cancelled", reject: "rejected" },
+  approved: { dispatch: "dispatched", cancel: "cancelled", reject: "rejected" },
   dispatched: { deliver: "delivered" },
   delivered: {},
+  rejected: {},
   cancelled: {},
 };
 

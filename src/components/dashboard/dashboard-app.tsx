@@ -8,6 +8,7 @@ import {
   Building2,
   Calculator,
   CheckCircle2,
+  ClipboardCheck,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
@@ -15,6 +16,7 @@ import {
   Eye,
   History,
   Home,
+  Inbox,
   LayoutGrid,
   LogOut,
   Menu,
@@ -45,8 +47,11 @@ import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-vis
 import { UserManagement } from "@/components/dashboard/user-management";
 import { AuditLogs } from "@/components/dashboard/audit-logs";
 import { PharmacySalesReport } from "@/components/dashboard/pharmacy-sales-report";
+import { PharmacyPosTransactions } from "@/components/dashboard/pharmacy-pos-transactions";
 import { listNetworkPharmacySales } from "@/lib/cloud/pharmacy-sales";
 import { PharmaciesInventory } from "@/components/dashboard/pharmacies-inventory";
+import { StockRequestsReceived } from "@/components/dashboard/stock-requests-received";
+import { StockReconciliation } from "@/components/dashboard/stock-reconciliation";
 import { WarehouseCatalogue } from "@/components/dashboard/warehouse-catalogue";
 import { WarehouseMovements } from "@/components/dashboard/warehouse-movements";
 import {
@@ -62,7 +67,6 @@ import {
   type StockMovement,
 } from "@/components/pharmacy/pharmacy-data";
 import { WalkthroughTour } from "@/components/walkthrough/walkthrough";
-import { CachedNotice } from "@/components/offline/cached-notice";
 import { recordAudit, WORKSPACE_NAME } from "@/lib/audit-log";
 import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import { useToast } from "@/hooks/use-toast";
@@ -84,6 +88,7 @@ import {
   trackEvent,
 } from "@/lib/firebase";
 import {
+  ALL_PULSE_PAGES,
   canOpenPulsePage,
   normalizePulseRole,
   PULSE_ROLE_META,
@@ -201,7 +206,10 @@ const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   audit: "Audit Logs",
   users: "User Management",
   pharmacies: "Pulse Pharmacies",
+  requests: "Stock Requests Received",
+  reconciliation: "Stock Reconciliation",
   sales: "Sales Report",
+  transactions: "POS Transactions",
   catalogue: "Warehouse Catalogue",
   inventory: "Pharmacies Inventory",
   movement: "Stock Movement",
@@ -215,7 +223,10 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
     section: "Pulse",
     items: [
       { label: "Pulse Pharmacies", page: "pharmacies", icon: LayoutGrid },
-      { label: "Sales Report", page: "sales", icon: Receipt },
+      { label: "Stock Requests Received", page: "requests", icon: Inbox },
+      { label: "Stock Reconciliation", page: "reconciliation", icon: ClipboardCheck },
+      { label: "Sales Report", page: "sales", icon: TrendingUp },
+      { label: "POS Transactions", page: "transactions", icon: Receipt },
       { label: "Warehouse Catalogue", page: "catalogue", icon: PackageSearch },
       { label: "Pharmacies Inventory", page: "inventory", icon: Building2 },
       { label: "Stock Movement", page: "movement", icon: ArrowLeftRight },
@@ -603,7 +614,6 @@ const NETWORK_SALES_CACHE_KEY = "dashboard-network-sales";
 function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) {
   const [rows, setRows] = useState<NetworkSalesRow[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -631,7 +641,6 @@ function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) 
           (a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name)
         );
         setRows(nextRows);
-        setSavedAt(null);
         saveCachedRead(NETWORK_SALES_CACHE_KEY, nextRows);
       } catch {
         if (!active) return;
@@ -639,7 +648,6 @@ function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) 
         const cached = loadCachedRead<NetworkSalesRow[]>(NETWORK_SALES_CACHE_KEY);
         if (cached) {
           setRows(cached.data);
-          setSavedAt(cached.cachedAt);
         } else {
           setFailed(true);
         }
@@ -654,7 +662,6 @@ function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) 
     <motion.section variants={item} aria-labelledby="network-sales">
       <SectionHeader icon={Receipt} title="Network Sales by Pharmacy" subtitle="Every registered pharmacy, live from the central sales feed" />
       <div className={cn(cardCls, "mt-4 p-5")}>
-        {savedAt !== null && <CachedNotice cachedAt={savedAt} className="mb-3" />}
         {failed ? (
           <p className="text-[13.5px] text-slate-500 dark:text-slate-400">
             Network sales are unavailable right now. Open the full Sales Report to retry.
@@ -809,6 +816,16 @@ export function DashboardApp() {
   useEffect(() => {
     if (!canOpenPulsePage(user.role, page)) setPage("home");
   }, [user.role, page]);
+
+  // Email notifications deep-link straight to the receiving desk, e.g.
+  // /dashboard/?page=requests. Only known, permitted pages are honoured.
+  useEffect(() => {
+    if (!user.email) return;
+    const requested = new URLSearchParams(window.location.search).get("page");
+    if (!requested || !ALL_PULSE_PAGES.includes(requested as DashboardPage)) return;
+    const target = requested as DashboardPage;
+    if (canOpenPulsePage(user.role, target)) setPage(target);
+  }, [user.email, user.role]);
 
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
@@ -1039,8 +1056,14 @@ export function DashboardApp() {
           >
             {page === "pharmacies" ? (
               <PulsePharmacies />
+            ) : page === "requests" ? (
+              <StockRequestsReceived />
+            ) : page === "reconciliation" ? (
+              <StockReconciliation />
             ) : page === "sales" ? (
               <PharmacySalesReport />
+            ) : page === "transactions" ? (
+              <PharmacyPosTransactions />
             ) : page === "stock" ? (
               <StockBalanceVisibility />
             ) : page === "catalogue" ? (

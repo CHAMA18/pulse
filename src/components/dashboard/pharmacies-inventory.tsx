@@ -6,8 +6,13 @@ import {
   listNetworkInventory,
   type NetworkInventoryItem,
 } from "@/lib/cloud/pharmacy-inventory";
-import { CachedNotice } from "@/components/offline/cached-notice";
 import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
+import {
+  duniyaUnitPrice,
+  formatZmw,
+  impliedCostPrice,
+  normaliseMarkup,
+} from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -33,14 +38,15 @@ type PharmacyGroup = {
   outlets: OutletGroup[];
   skus: number;
   units: number;
+  /** Duniya value: cost + the standard markup. */
   value: number;
+  retailValue: number;
 };
 
 export function PharmaciesInventory() {
   const [items, setItems] = useState<NetworkInventoryItem[]>([]);
   const [directory, setDirectory] = useState<{ id: string; name: string }[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
-  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [pharmacyFilter, setPharmacyFilter] = useState("all");
 
@@ -50,7 +56,6 @@ export function PharmaciesInventory() {
       const page = await listNetworkInventory(1000);
       setItems(page.items);
       setDirectory(page.pharmacies);
-      setSavedAt(null);
       setState("ready");
       saveCachedRead<CachedInventoryPage>(NETWORK_INVENTORY_CACHE_KEY, page);
     } catch {
@@ -59,7 +64,6 @@ export function PharmaciesInventory() {
       if (cached) {
         setItems(cached.data.items);
         setDirectory(cached.data.pharmacies);
-        setSavedAt(cached.cachedAt);
         setState("ready");
       } else {
         setState("failed");
@@ -77,7 +81,7 @@ export function PharmaciesInventory() {
   const groups = useMemo<PharmacyGroup[]>(() => {
     const byPharmacy = new Map<string, PharmacyGroup>();
     for (const pharmacy of directory) {
-      byPharmacy.set(pharmacy.id, { id: pharmacy.id, name: pharmacy.name, outlets: [], skus: 0, units: 0, value: 0 });
+      byPharmacy.set(pharmacy.id, { id: pharmacy.id, name: pharmacy.name, outlets: [], skus: 0, units: 0, value: 0, retailValue: 0 });
     }
     const q = query.trim().toLowerCase();
     for (const item of items) {
@@ -89,6 +93,7 @@ export function PharmaciesInventory() {
         skus: 0,
         units: 0,
         value: 0,
+        retailValue: 0,
       };
       const outletName = item.storeName?.trim() || item.storeId || "Main store";
       let outlet = group.outlets.find((entry) => entry.key === (item.storeId ?? outletName));
@@ -97,9 +102,12 @@ export function PharmaciesInventory() {
         group.outlets.push(outlet);
       }
       outlet.items.push(item);
+      const markup = normaliseMarkup(item.markupPercent);
+      const cost = item.costPrice ?? impliedCostPrice(item.unitPrice, markup);
       group.skus += 1;
       group.units += item.qty;
-      group.value += item.qty * item.unitPrice;
+      group.value += item.qty * duniyaUnitPrice(cost, markup);
+      group.retailValue += item.qty * item.unitPrice;
       byPharmacy.set(item.pharmacyId, group);
     }
     return [...byPharmacy.values()]
@@ -113,7 +121,12 @@ export function PharmaciesInventory() {
       outlets: new Set(items.map((item) => `${item.pharmacyId}:${item.storeId ?? ""}`)).size,
       skus: items.length,
       units: items.reduce((acc, item) => acc + item.qty, 0),
-      value: items.reduce((acc, item) => acc + item.qty * item.unitPrice, 0),
+      value: items.reduce((acc, item) => {
+        const markup = normaliseMarkup(item.markupPercent);
+        const cost = item.costPrice ?? impliedCostPrice(item.unitPrice, markup);
+        return acc + item.qty * duniyaUnitPrice(cost, markup);
+      }, 0),
+      retail: items.reduce((acc, item) => acc + item.qty * item.unitPrice, 0),
     }),
     [items, directory]
   );
@@ -132,14 +145,12 @@ export function PharmaciesInventory() {
         </button>
       </div>
 
-      {savedAt !== null && <CachedNotice cachedAt={savedAt} />}
-
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
         {[
           { label: "Registered pharmacies", value: state === "ready" ? String(totals.pharmacies) : "—", desc: "On the Pulse network" },
           { label: "Outlets", value: state === "ready" ? String(totals.outlets) : "—", desc: "Stores reporting stock" },
           { label: "Products listed", value: state === "ready" ? totals.skus.toLocaleString() : "—", desc: "Shelf lines across the network" },
-          { label: "Network stock value", value: state === "ready" ? `ZMW ${Math.round(totals.value).toLocaleString()}` : "—", desc: `${totals.units.toLocaleString()} units on hand` },
+          { label: "Network Duniya value", value: state === "ready" ? formatZmw(totals.value) : "—", desc: `${totals.units.toLocaleString()} units · ${formatZmw(totals.retail)} retail` },
         ].map((card) => (
           <div key={card.label} className={cn(cardCls, "p-5")}>
             <p className="text-2xl font-bold leading-none tracking-tight">{card.value}</p>
@@ -192,7 +203,10 @@ export function PharmaciesInventory() {
                   {pharmacy.outlets.length} outlet{pharmacy.outlets.length === 1 ? "" : "s"} · {pharmacy.skus} products · {pharmacy.units.toLocaleString()} units
                 </p>
               </div>
-              <p className="text-[15px] font-bold tabular-nums">ZMW {Math.round(pharmacy.value).toLocaleString()}</p>
+              <div className="text-right">
+                <p className="text-[15px] font-bold tabular-nums text-purple-700 dark:text-purple-300">{formatZmw(pharmacy.value)}</p>
+                <p className="text-[11.5px] text-slate-400">{formatZmw(pharmacy.retailValue)} retail</p>
+              </div>
             </header>
             {pharmacy.outlets.length === 0 ? (
               <p className="px-5 py-5 text-[13.5px] text-slate-500 dark:text-slate-400">
@@ -206,18 +220,25 @@ export function PharmaciesInventory() {
                     <span className="font-medium text-slate-400">{outlet.items.length} products</span>
                   </p>
                   <div className="mt-2 overflow-x-auto">
-                    <table className="w-full min-w-[680px] text-left text-[13.5px]">
+                    <table className="w-full min-w-[860px] text-left text-[13.5px]">
                       <thead>
                         <tr className="border-y border-slate-100 text-[11.5px] uppercase tracking-[0.12em] text-slate-400 dark:border-white/5">
                           <th className="py-2.5 pr-3 font-semibold">Product</th>
                           <th className="px-3 py-2.5 font-semibold">Batch</th>
                           <th className="px-3 py-2.5 font-semibold">Expiry</th>
                           <th className="px-3 py-2.5 text-right font-semibold">Qty</th>
-                          <th className="py-2.5 pl-3 text-right font-semibold">Value</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Cost</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Duniya</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Retail</th>
+                          <th className="py-2.5 pl-3 text-right font-semibold">Duniya value</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                        {outlet.items.map((item) => (
+                        {outlet.items.map((item) => {
+                          const markup = normaliseMarkup(item.markupPercent);
+                          const cost = item.costPrice ?? impliedCostPrice(item.unitPrice, markup);
+                          const duniya = duniyaUnitPrice(cost, markup);
+                          return (
                           <tr key={item.docId}>
                             <td className="py-2.5 pr-3">
                               <span className="font-semibold text-slate-900 dark:text-white">{item.name}</span>
@@ -233,9 +254,13 @@ export function PharmaciesInventory() {
                                 <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Low</span>
                               ) : null}
                             </td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums">ZMW {Math.round(item.qty * item.unitPrice).toLocaleString()}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatZmw(cost)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-purple-700 dark:text-purple-300">{formatZmw(duniya)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700 dark:text-emerald-300">{formatZmw(item.unitPrice)}</td>
+                            <td className="py-2.5 pl-3 text-right tabular-nums">{formatZmw(item.qty * duniya)}</td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

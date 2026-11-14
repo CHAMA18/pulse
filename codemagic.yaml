@@ -1,6 +1,11 @@
-# Pulse desktop releases — signed installers are built on Codemagic's macOS
-# and Windows machines. Builds are triggered by the Codemagic REST API, so no
-# branch or tag triggers are defined here; the API passes the branch explicitly.
+# Pulse desktop releases — installers are built on Codemagic's macOS runner.
+# Builds are triggered by the Codemagic REST API, so no branch or tag triggers
+# are defined here; the API passes the branch explicitly.
+#
+# Optional code signing: add CSC_LINK/CSC_KEY_PASSWORD (and APPLE_ID,
+# APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID for notarization) to the Codemagic
+# environment. Without them the macOS app is ad-hoc signed so it is not reported
+# as damaged, and the Windows build is unsigned.
 workflows:
   pulse_macos:
     name: Pulse for macOS
@@ -27,6 +32,12 @@ workflows:
         script: npm run desktop:stage
       - name: Package macOS app
         script: npm --prefix desktop run dist:mac
+      - name: Verify macOS app signature
+        script: |
+          APP="desktop/release/mac-universal/Pulse.app"
+          test -d "$APP"
+          codesign --verify --deep --strict "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E 'Identifier|Signature|TeamIdentifier'
     artifacts:
       - desktop/release/*.dmg
       - desktop/release/*.zip
@@ -58,5 +69,8 @@ workflows:
         script: npm run desktop:stage
       - name: Package Windows app
         script: npm --prefix desktop run dist:win
+      - name: Verify Windows artifacts
+        script: test -n "$(find desktop/release -maxdepth 1 -name '*.exe' -print -quit)"
     artifacts:
+      - desktop/release/*.exe
       - desktop/release/*.zip

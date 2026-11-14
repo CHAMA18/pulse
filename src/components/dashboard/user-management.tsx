@@ -33,7 +33,6 @@ import {
   updatePulseConsoleUserRole,
   type PulseConsoleUser,
 } from "@/lib/cloud/pulse-users";
-import { CachedNotice } from "@/components/offline/cached-notice";
 import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import {
   assignablePulseRoles,
@@ -89,6 +88,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const ROLE_META = PULSE_ROLE_META;
 const ROLE_OPTIONS: UserRole[] = ["owner", "admin", "staff"];
+const ROLE_PRIORITY: Record<UserRole, number> = { owner: 3, admin: 2, staff: 1 };
 
 /** Only pending invitations live locally; active accounts come from Firestore. */
 function loadUsers(): PulseUser[] {
@@ -414,22 +414,43 @@ function mergeConsoleProfiles(
   previous: PulseUser[]
 ): PulseUser[] {
   const invitations = previous.filter((user) => user.source === "invitation");
+
+  // Auth providers can leave more than one UID for the same email. Collapse
+  // them into one account row and keep the highest role, never two roles.
+  const byEmail = new Map<string, PulseUser>();
+  for (const profile of profiles) {
+    const email = profile.email.trim().toLowerCase();
+    const key = email || `uid:${profile.uid}`;
+    const candidate: PulseUser = {
+      id: profile.uid,
+      name: profile.name,
+      email: profile.email,
+      role: profile.role,
+      status: "active",
+      source: "profile",
+    };
+    const current = byEmail.get(key);
+    if (!current || ROLE_PRIORITY[candidate.role] > ROLE_PRIORITY[current.role]) {
+      byEmail.set(key, candidate);
+    }
+  }
+
+  const activeProfiles = [...byEmail.values()];
   const activeEmails = new Set(
-    profiles.map((user) => user.email.trim().toLowerCase()).filter(Boolean)
+    activeProfiles.map((user) => user.email.trim().toLowerCase()).filter(Boolean)
   );
-  return [
-    ...profiles.map((user) => ({
-      id: user.uid,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      status: "active" as const,
-      source: "profile" as const,
-    })),
-    ...invitations.filter(
-      (user) => !activeEmails.has(user.email.trim().toLowerCase())
-    ),
-  ];
+
+  const pendingByEmail = new Map<string, PulseUser>();
+  for (const invitation of invitations) {
+    const email = invitation.email.trim().toLowerCase();
+    if (!email || activeEmails.has(email)) continue;
+    const current = pendingByEmail.get(email);
+    if (!current || ROLE_PRIORITY[invitation.role] > ROLE_PRIORITY[current.role]) {
+      pendingByEmail.set(email, invitation);
+    }
+  }
+
+  return [...activeProfiles, ...pendingByEmail.values()];
 }
 
 export function UserManagement({
@@ -445,7 +466,6 @@ export function UserManagement({
   const [hydrated, setHydrated] = useState(false);
   const [loadingDirectory, setLoadingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
-  const [directorySavedAt, setDirectorySavedAt] = useState<number | null>(null);
   const [savingUid, setSavingUid] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<PulseUser | null>(null);
   const [resetTarget, setResetTarget] = useState<PulseUser | null>(null);
@@ -501,13 +521,11 @@ export function UserManagement({
     try {
       const profiles = await listPulseConsoleUsers();
       saveCachedRead(CONSOLE_USERS_CACHE_KEY, profiles);
-      setDirectorySavedAt(null);
       setUsers((prev) => mergeConsoleProfiles(profiles, prev));
     } catch (error) {
       // Offline: use the last authoritative directory saved on this device.
       const cached = loadCachedRead<PulseConsoleUser[]>(CONSOLE_USERS_CACHE_KEY);
       if (cached) {
-        setDirectorySavedAt(cached.cachedAt);
         setDirectoryError(null);
         setUsers((prev) => mergeConsoleProfiles(cached.data, prev));
       } else {
@@ -842,10 +860,6 @@ export function UserManagement({
           </div>
         )}
       </motion.section>
-
-      {directorySavedAt !== null && (
-        <CachedNotice cachedAt={directorySavedAt} className="mt-6" />
-      )}
 
       {/* — Stat cards — */}
       <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">

@@ -13,6 +13,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { listNetworkInventory } from "@/lib/cloud/pharmacy-inventory";
 import { listNetworkPharmacySales } from "@/lib/cloud/pharmacy-sales";
+import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
 import {
   loadWarehouseItems,
   loadWarehouseMovements,
@@ -149,6 +150,19 @@ export function WarehouseMovements({ actor }: { actor: { name: string; email: st
   }, [movements, filter, query]);
 
   const needsDestination = form.type === "issue" || form.type === "transfer";
+  const selectedItem = items.find((item) => item.id === form.itemId);
+  const outboundPricing =
+    selectedItem && (form.type === "issue" || form.type === "transfer")
+      ? {
+          cost: selectedItem.unitPrice,
+          markup: selectedItem.markupPercent ?? DUNIYA_MARKUP_PERCENT,
+          duniya: duniyaUnitPrice(
+            selectedItem.unitPrice,
+            selectedItem.markupPercent ?? DUNIYA_MARKUP_PERCENT
+          ),
+          qty: Math.max(0, Math.abs(Number(form.qty) || 0)),
+        }
+      : null;
 
   const submit = () => {
     const qty = Number(form.qty);
@@ -172,6 +186,12 @@ export function WarehouseMovements({ actor }: { actor: { name: string; email: st
         ? {
             destinationPharmacyName: destinationName,
             ...(destination ? { destinationPharmacyId: destination.id } : {}),
+          }
+        : {}),
+      ...(outboundPricing
+        ? {
+            unitCost: outboundPricing.cost,
+            markupPercent: outboundPricing.markup,
           }
         : {}),
       actor,
@@ -264,6 +284,13 @@ export function WarehouseMovements({ actor }: { actor: { name: string; email: st
                     ) : null}
                     {entry.note ? ` · ${entry.note}` : ""} · {entry.actor.name}
                   </p>
+                  {entry.unitCost !== undefined && entry.duniyaUnitPrice !== undefined && (
+                    <p className="truncate text-[11.5px] font-medium text-purple-600 dark:text-purple-300">
+                      Cost {formatZmw(entry.unitCost)} → Duniya {formatZmw(entry.duniyaUnitPrice)}
+                      {entry.markupPercent !== undefined ? ` (+${entry.markupPercent}%)` : ""}
+                      {entry.totalDuniya !== undefined ? ` · total ${formatZmw(entry.totalDuniya)}` : ""}
+                    </p>
+                  )}
                 </div>
                 <p className={cn("text-[14px] font-bold tabular-nums", entry.qty > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
                   {entry.qty > 0 ? "+" : ""}{entry.qty}
@@ -342,6 +369,30 @@ export function WarehouseMovements({ actor }: { actor: { name: string; email: st
                       Registered pharmacies appear here once they join the network.
                     </p>
                   )}
+                </div>
+              )}
+              {outboundPricing && (
+                <div className="grid gap-3 sm:col-span-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 dark:border-white/10 dark:bg-white/5">
+                    <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-slate-400">Supplier cost</p>
+                    <p className="mt-1 text-[15px] font-bold tabular-nums">{formatZmw(outboundPricing.cost)}</p>
+                  </div>
+                  <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-3 dark:border-purple-500/30 dark:bg-purple-500/10">
+                    <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-purple-500 dark:text-purple-300">
+                      Duniya · +{outboundPricing.markup}%
+                    </p>
+                    <p className="mt-1 text-[15px] font-bold tabular-nums text-purple-700 dark:text-purple-200">
+                      {formatZmw(outboundPricing.duniya)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                    <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-emerald-600 dark:text-emerald-300">
+                      Transfer total · {outboundPricing.qty} units
+                    </p>
+                    <p className="mt-1 text-[15px] font-bold tabular-nums text-emerald-700 dark:text-emerald-200">
+                      {formatZmw(outboundPricing.duniya * outboundPricing.qty)}
+                    </p>
+                  </div>
                 </div>
               )}
               <div className="sm:col-span-2">

@@ -4,6 +4,8 @@
    change is a ledger entry, and every ledger entry moves a shelf.
    Pure logic only — safe under `node --test`. */
 
+import { duniyaUnitPrice as computeDuniyaPrice, normaliseMarkup, roundMoney } from "./pricing.ts";
+
 export type WarehouseMovementType = "receipt" | "issue" | "transfer" | "adjustment" | "return";
 
 export type WarehouseItem = {
@@ -14,7 +16,10 @@ export type WarehouseItem = {
   expiry: string;
   qty: number;
   reorderLevel: number;
+  /** Supplier cost for one unit. The Duniya price is derived from this. */
   unitPrice: number;
+  /** Standard Duniya markup; unset means 20%. */
+  markupPercent?: number;
   productId?: string;
 };
 
@@ -32,6 +37,14 @@ export type WarehouseMovement = {
   /** Registered pharmacy the stock is going to (issues and transfers). */
   destinationPharmacyId?: string;
   destinationPharmacyName?: string;
+  /** Price evidence captured when stock leaves for a pharmacy. */
+  unitCost?: number;
+  markupPercent?: number;
+  duniyaUnitPrice?: number;
+  totalCost?: number;
+  totalDuniya?: number;
+  /** Stock request this movement fulfilled, when it came from the queue. */
+  requestDocId?: string;
   actor: { name: string; email: string };
 };
 
@@ -62,6 +75,10 @@ export function applyWarehouseMovement(
     note?: string;
     destinationPharmacyId?: string;
     destinationPharmacyName?: string;
+    /** Override the shelf's cost/markup, e.g. a negotiated batch. */
+    unitCost?: number;
+    markupPercent?: number;
+    requestDocId?: string;
     actor: { name: string; email: string };
     at: number;
     id: string;
@@ -72,6 +89,15 @@ export function applyWarehouseMovement(
   const delta = movementDelta(input.type, input.qty);
   if (delta === 0) return null;
   if (item.qty + delta < 0) return null;
+
+  // Outbound pharmacy transfers carry the three price layers in the ledger,
+  // so a later audit can settle without guessing what a batch cost.
+  const outbound = input.type === "issue" || input.type === "transfer";
+  const unitCost = Math.max(0, roundMoney(input.unitCost ?? item.unitPrice));
+  const markupPercent = normaliseMarkup(input.markupPercent ?? item.markupPercent);
+  const duniyaUnitPrice = computeDuniyaPrice(unitCost, markupPercent);
+  const movedUnits = Math.abs(delta);
+
   const movement: WarehouseMovement = {
     id: input.id,
     at: input.at,
@@ -84,6 +110,16 @@ export function applyWarehouseMovement(
     ...(input.note ? { note: input.note } : {}),
     ...(input.destinationPharmacyId ? { destinationPharmacyId: input.destinationPharmacyId } : {}),
     ...(input.destinationPharmacyName ? { destinationPharmacyName: input.destinationPharmacyName } : {}),
+    ...(outbound
+      ? {
+          unitCost,
+          markupPercent,
+          duniyaUnitPrice,
+          totalCost: roundMoney(unitCost * movedUnits),
+          totalDuniya: roundMoney(duniyaUnitPrice * movedUnits),
+        }
+      : {}),
+    ...(input.requestDocId ? { requestDocId: input.requestDocId } : {}),
     actor: input.actor,
   };
   return {
@@ -148,9 +184,12 @@ export function recordWarehouseMovement(input: {
   reason: string;
   note?: string;
   destinationPharmacyId?: string;
-  destinationPharmacyName?: string;
-  actor: { name: string; email: string };
-}): WarehouseMovement | null {
+    destinationPharmacyName?: string;
+    unitCost?: number;
+    markupPercent?: number;
+    requestDocId?: string;
+    actor: { name: string; email: string };
+  }): WarehouseMovement | null {
   const items = loadWarehouseItems();
   const movements = loadWarehouseMovements();
   const applied = applyWarehouseMovement(items, movements, {

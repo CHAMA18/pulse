@@ -3,32 +3,50 @@
 import { motion } from "framer-motion";
 import {
   AlertCircle,
+  CheckCircle2,
   ClipboardList,
   FileDown,
+  Loader2,
   PackagePlus,
   Plus,
+  RefreshCw,
   Trash2,
+  Truck,
   Upload,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  creditReceivedLines,
   DEFAULT_STORE_ID,
   formatDay,
   loadInventory,
+  loadMovements,
   loadStockRequests,
+  loadStores,
   nextId,
+  nextMovementId,
   resolveStoreId,
+  saveInventory,
+  saveMovements,
   saveStockRequests,
   type InventoryItem,
   type RequestPriority,
   type RequestStatus,
   type StockRequest,
+  type StockMovement,
 } from "@/components/pharmacy/pharmacy-data";
 import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
-import { nextRequestStatus, type StockRequestAction } from "@/lib/pharmacy-stock";
+import {
+  cancelPharmacyStockRequest,
+  listMyPharmacyStockRequests,
+  receivePharmacyStockRequest,
+  submitPharmacyStockRequests,
+  type NetworkStockRequest,
+  type StockRequestSubmitResult,
+} from "@/lib/cloud/stock-requests";
+import { flushOutbox, queueInventorySync } from "@/lib/offline/outbox";
+import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
 import {
   PageHeader,
   pharmacyCardCls,
@@ -74,6 +92,68 @@ const newLine = (): RequestLine => ({
   item: "",
   qty: "",
 });
+
+function newSyncId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Merge the network's source-of-truth fields over the local row. */
+function mergeNetworkRequests(
+  local: StockRequest[],
+  network: NetworkStockRequest[]
+): StockRequest[] {
+  const next = [...local];
+  for (const remote of network) {
+    const key = remote.syncId ?? remote.requestId;
+    const index = next.findIndex(
+      (entry) =>
+        entry.networkDocId === remote.docId ||
+        (entry.syncId ?? `${entry.id}-${entry.submittedAt.toString(36)}`) === key
+    );
+    const merged: StockRequest = {
+      id: remote.requestId,
+      item: remote.item,
+      qty: remote.qty,
+      priority: remote.priority,
+      status: remote.status,
+      submittedAt: remote.submittedAt,
+      storeId: remote.storeId,
+      storeName: remote.storeName,
+      productId: remote.productId,
+      notes: remote.notes,
+      syncId: remote.syncId ?? key,
+      submittedByName: remote.submittedByName,
+      submittedByEmail: remote.submittedByEmail,
+      networkDocId: remote.docId,
+      batch: remote.batch,
+      expiry: remote.expiry,
+      unitCost: remote.unitCost,
+      markupPercent: remote.markupPercent,
+      duniyaUnitPrice: remote.duniyaUnitPrice,
+      totalDuniya: remote.totalDuniya,
+      retailUnitPrice: remote.retailUnitPrice,
+      totalRetail: remote.totalRetail,
+      dispatchedAt: remote.dispatchedAt,
+      deliveredAt: remote.deliveredAt,
+      decisionNote: remote.decisionNote,
+    };
+    if (index >= 0) next[index] = { ...next[index], ...merged };
+    else next.push(merged);
+  }
+  return next.sort((a, b) => b.submittedAt - a.submittedAt);
+}
+
+const STATUS_ORDER: RequestStatus[] = [
+  "pending",
+  "approved",
+  "dispatched",
+  "delivered",
+  "rejected",
+  "cancelled",
+];
 
 /**
  * "item,quantity" CSV → rows. A header row is optional and tolerant of the
@@ -128,7 +208,7 @@ function parseRequestCsv(text: string): { item: string; qty: string }[] {
     .filter((row) => row.item.length > 0);
 }
 
-const STATUS_ORDER: RequestStatus[] = ["pending", "approved", "dispatched", "delivered", "cancelled"];
+
 
 /* ------------------------------------------------------------------ */
 /* New request dialog                                                  */
@@ -145,7 +225,7 @@ function NewRequestDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   requests: StockRequest[];
-  onCreated: (requests: StockRequest[]) => void;
+  onCreated: (requests: StockRequest[]) => Promise<StockRequestSubmitResult>;
   actor: { name: string; email: string };
   /** Destination store for the request ("all" records into the main store). */
   storeId: string;
@@ -158,6 +238,7 @@ function NewRequestDialog({
   const [errors, setErrors] = useState<Record<string, LineErrors>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Shelves are read when the dialog opens so the dropdown always lists what
@@ -189,6 +270,7 @@ function NewRequestDialog({
       setNotes("");
       setErrors({});
       setFormError(null);
+      setSubmitting(false);
     }
   }
 
@@ -242,7 +324,7 @@ function NewRequestDialog({
     return next;
   };
 
-  const submit = () => {
+  const submit = async () => {
     const nextErrors = validate();
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -253,9 +335,17 @@ function NewRequestDialog({
       return;
     }
 
+    const stores = loadStores();
+    const destinationStore =
+      storeId !== "all"
+        ? storeId
+        : stores.find((store) => store.isMain)?.id ?? stores[0]?.id ?? DEFAULT_STORE_ID;
+    const destinationName =
+      stores.find((store) => store.id === destinationStore)?.name ?? "Main store";
     const created: StockRequest[] = [];
     let pool = requests;
     for (const line of filled) {
+      const shelfItem = inventory.find((entry) => entry.name === line.item);
       const request: StockRequest = {
         id: nextId(pool, "REQ"),
         item: line.item.trim(),
@@ -263,22 +353,51 @@ function NewRequestDialog({
         priority,
         status: "pending",
         submittedAt: Date.now(),
-        ...(storeId !== "all" ? { storeId } : {}),
+        syncId: newSyncId(),
+        storeId: destinationStore,
+        storeName: destinationName,
+        ...(shelfItem?.productId ? { productId: shelfItem.productId } : {}),
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        submittedByName: actor.name,
+        ...(actor.email ? { submittedByEmail: actor.email } : {}),
       };
       created.push(request);
       pool = [request, ...pool];
     }
 
-    onCreated(created);
+    setSubmitting(true);
+    setFormError(null);
+    let result: StockRequestSubmitResult;
+    try {
+      result = await onCreated(created);
+    } catch (error) {
+      setSubmitting(false);
+      setFormError(
+        error instanceof Error
+          ? `Saved on this device, but Pulse could not be reached: ${error.message}`
+          : "Saved on this device, but Pulse could not be reached. Try again from the queue."
+      );
+      return;
+    }
+    setSubmitting(false);
+
+    const units = created.reduce((acc, request) => acc + request.qty, 0);
+    const noun = created.length === 1 ? "request" : `${created.length} requests`;
     toast({
-      title:
-        created.length === 1
-          ? "Stock request submitted"
-          : `${created.length} stock requests submitted`,
-      description:
-        created.length === 1
-          ? `${created[0].item} × ${created[0].qty} is with the Pulse hub for approval.`
-          : `${created.reduce((acc, request) => acc + request.qty, 0)} units across ${created.length} items are with the Pulse hub for approval.`,
+      title: result.error
+        ? "Request saved — not yet delivered"
+        : result.queued
+          ? "Request saved for sending"
+          : result.created > 0
+            ? `${noun[0]?.toUpperCase()}${noun.slice(1)} sent to Pulse`
+            : "Request already in the queue",
+      description: result.error
+        ? result.error
+        : result.queued
+          ? `${units} unit${units === 1 ? "" : "s"} will reach the Pulse hub when the connection returns.`
+          : result.emailError
+            ? `The hub received ${units} unit${units === 1 ? "" : "s"}, but the admin email could not be sent.`
+            : `${units} unit${units === 1 ? "" : "s"} ${created.length === 1 ? "is" : "are"} with the Pulse hub. The receiving desk has been emailed.`,
     });
     if (actor.email) {
       recordAudit({
@@ -293,8 +412,9 @@ function NewRequestDialog({
     }
     void trackEvent("pharmacy_stock_requested", {
       priority,
-      qty: created.reduce((acc, request) => acc + request.qty, 0),
+      qty: units,
       lines: created.length,
+      queued: result.queued,
     });
     onOpenChange(false);
   };
@@ -626,15 +746,158 @@ function NewRequestDialog({
           </button>
           <button
             type="button"
-            onClick={submit}
-            disabled={itemOptions.length === 0}
+            onClick={() => void submit()}
+            disabled={itemOptions.length === 0 || submitting}
             className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 disabled:opacity-50"
           >
-            <PackagePlus className="h-4 w-4" aria-hidden="true" />
-            {(() => {
-              const filled = lines.filter((line) => line.item.trim()).length;
-              return filled > 1 ? `Submit ${filled} requests` : "Submit request";
-            })()}
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <PackagePlus className="h-4 w-4" aria-hidden="true" />
+            )}
+            {submitting
+              ? "Sending…"
+              : (() => {
+                  const filled = lines.filter((line) => line.item.trim()).length;
+                  return filled > 1 ? `Submit ${filled} requests` : "Submit request";
+                })()}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Receive a dispatched request — the pharmacy sets its retail price   */
+/* ------------------------------------------------------------------ */
+
+function ReceiveRequestDialog({
+  request,
+  onOpenChange,
+  onReceive,
+}: {
+  request: StockRequest;
+  onOpenChange: (open: boolean) => void;
+  onReceive: (retailUnitPrice: number) => Promise<void>;
+}) {
+  const cost = Math.max(0, request.unitCost ?? 0);
+  const markup = request.markupPercent ?? DUNIYA_MARKUP_PERCENT;
+  const duniya = request.duniyaUnitPrice ?? duniyaUnitPrice(cost, markup);
+  const [retail, setRetail] = useState(String(request.retailUnitPrice ?? duniya));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const retailValue = Number(retail);
+  const margin = Number.isFinite(retailValue) ? retailValue - duniya : 0;
+
+  const submit = async () => {
+    if (!Number.isFinite(retailValue) || retailValue <= 0) {
+      setError("Enter the price you will charge patients.");
+      return;
+    }
+    if (retailValue < duniya) {
+      setError(`Retail is below the Duniya price of ${formatZmw(duniya)}. Raise it or confirm with Pulse.`);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await onReceive(retailValue);
+      onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The delivery could not be received. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="rounded-2xl p-6 sm:max-w-[520px]">
+        <DialogHeader className="space-y-1.5 text-left sm:text-left">
+          <DialogTitle className="flex items-center gap-2 text-[19px] font-bold tracking-tight text-slate-900 dark:text-white">
+            <Truck className="h-5 w-5 text-purple-600" aria-hidden="true" />
+            Receive {request.item}
+          </DialogTitle>
+          <DialogDescription className="text-[13.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+            {request.qty} units are on the way from the Pulse hub. Confirm your selling price and
+            the batch lands on your shelf with its cost and Duniya price attached.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-white/10 dark:bg-white/5">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">Cost price</p>
+            <p className="mt-1 text-[16px] font-bold tabular-nums">{formatZmw(cost)}</p>
+            <p className="mt-0.5 text-[11.5px] text-slate-500 dark:text-slate-400">What Duniya paid the supplier</p>
+          </div>
+          <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-3.5 dark:border-purple-500/30 dark:bg-purple-500/10">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-purple-500 dark:text-purple-300">
+              Duniya price · +{markup}%
+            </p>
+            <p className="mt-1 text-[16px] font-bold tabular-nums text-purple-700 dark:text-purple-200">{formatZmw(duniya)}</p>
+            <p className="mt-0.5 text-[11.5px] text-purple-600/80 dark:text-purple-200/70">What you settle with Duniya</p>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-200 p-4 dark:border-white/10">
+          <label htmlFor="request-retail" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+            Your retail price (ZMW)
+          </label>
+          <div className="flex items-center gap-3">
+            <input
+              id="request-retail"
+              type="number"
+              min={0}
+              step="0.01"
+              inputMode="decimal"
+              value={retail}
+              onChange={(event) => {
+                setRetail(event.target.value);
+                if (error) setError(null);
+              }}
+              className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-[15px] font-semibold tabular-nums text-slate-900 outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            />
+            <div className="shrink-0 text-right">
+              <p className={`text-[15px] font-bold tabular-nums ${margin < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                {margin >= 0 ? "+" : ""}{formatZmw(margin)}
+              </p>
+              <p className="text-[11px] text-slate-400">margin / unit</p>
+            </div>
+          </div>
+          <p className="mt-2 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+            You control this price. Duniya is paid the Duniya price; the difference is your margin.
+          </p>
+        </div>
+
+        {request.batch && (
+          <p className="mt-3 text-[12px] text-slate-500 dark:text-slate-400">
+            Batch <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">{request.batch}</span>
+            {request.expiry ? ` · expires ${request.expiry}` : ""}
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="mt-3 flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> {error}
+          </p>
+        )}
+
+        <DialogFooter className="mt-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="h-10 rounded-md border border-slate-200 px-4 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+          >
+            Not yet
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={busy}
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-emerald-600 to-teal-600 px-4 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(5,150,105,0.7)] disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            {busy ? "Receiving…" : "Receive & set retail"}
           </button>
         </DialogFooter>
       </DialogContent>
@@ -652,8 +915,22 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [tab, setTab] = useState<"requests" | "orders">("requests");
+  const [receiveTarget, setReceiveTarget] = useState<StockRequest | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [actor, setActor] = useState({ name: "", email: "" });
+
+  const refreshNetwork = useCallback(async () => {
+    try {
+      const network = await listMyPharmacyStockRequests();
+      setRequests((prev) => {
+        const merged = mergeNetworkRequests(prev, network);
+        saveStockRequests(merged);
+        return merged;
+      });
+    } catch {
+      /* offline or unauthenticated — local rows remain the source of truth */
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -676,12 +953,15 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
     const raf = requestAnimationFrame(() => {
       setRequests(loadStockRequests());
       setHydrated(true);
+      void refreshNetwork();
     });
+    const timer = window.setInterval(() => void refreshNetwork(), 30_000);
     return () => {
       active = false;
       cancelAnimationFrame(raf);
+      window.clearInterval(timer);
     };
-  }, []);
+  }, [refreshNetwork]);
 
   // The queue follows the sidebar's store view; new requests are recorded for it.
   const visible = useMemo(
@@ -708,57 +988,227 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
     saveStockRequests(next);
   };
 
-  const onCreated = (created: StockRequest[]) => {
-    persist([...created, ...requests]);
+  const onCreated = async (created: StockRequest[]): Promise<StockRequestSubmitResult> => {
+    // Local-first: the device owns the row immediately, then the queue syncs.
+    // Use the functional form so a background network refresh cannot be lost.
+    setRequests((prev) => {
+      const next = [...created, ...prev];
+      saveStockRequests(next);
+      return next;
+    });
+    try {
+      const result = await submitPharmacyStockRequests(created);
+      if (result.created > 0 || result.queued) void refreshNetwork();
+      return result;
+    } catch (error) {
+      return {
+        created: 0,
+        skipped: 0,
+        emailed: 0,
+        queued: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "The request is saved on this device but could not reach Pulse.",
+      };
+    }
   };
 
-  /** Hub lifecycle: approve → dispatch → deliver. Delivery credits the shelf. */
-  const onHubAction = (request: StockRequest, action: StockRequestAction) => {
-    const next = nextRequestStatus(request.status, action);
-    if (!next) return;
-    persist(requests.map((r) => (r.id === request.id ? { ...r, status: next } : r)));
-    if (next === "delivered") {
-      const credited = creditReceivedLines(
-        [{ name: request.item, qty: request.qty }],
-        request.storeId ?? DEFAULT_STORE_ID,
-        actor,
-        "Central hub restock"
+  const onCancel = async (request: StockRequest) => {
+    setCancellingId(request.networkDocId ?? request.id);
+    try {
+      const cancelled = request.networkDocId
+        ? await cancelPharmacyStockRequest(request.networkDocId)
+        : null;
+      if (!request.networkDocId) {
+        // The request never reached Pulse; remove it from the retry queue so a
+        // later reconnect does not submit stock the pharmacy already withdrew.
+        const { discardQueuedStockRequests } = await import("@/lib/offline/outbox");
+        discardQueuedStockRequests([request.syncId ?? request.id]);
+      }
+      const next = requests.map((entry) =>
+        entry.networkDocId === request.networkDocId || entry.id === request.id
+          ? {
+              ...entry,
+              status: "cancelled" as const,
+              decisionNote: cancelled?.decisionNote ?? "Withdrawn by pharmacy",
+            }
+          : entry
       );
+      persist(next);
       toast({
-        title: "Request delivered",
-        description: `${credited} units of ${request.item} are now on the shelf.`,
+        title: "Request cancelled",
+        description: `${request.id} · ${request.item} was withdrawn.`,
       });
-    } else {
-      toast({ title: `Request ${next}`, description: `${request.id} · ${request.item}` });
-    }
-    if (actor.email) {
-      recordAudit({
-        title: `Stock Request ${next}`,
-        action: "Update",
-        detail: `${request.id} · ${request.item} × ${request.qty}`,
-        actor: actor.name,
-        email: actor.email,
+      if (actor.email) {
+        recordAudit({
+          title: "Stock Request Cancelled",
+          action: "Update",
+          detail: `${request.id} · ${request.item}`,
+          actor: actor.name,
+          email: actor.email,
+        });
+      }
+      void trackEvent("pharmacy_stock_request_cancelled", { request: request.id });
+    } catch (error) {
+      toast({
+        title: "Could not cancel",
+        description: error instanceof Error ? error.message : "The request is still with Pulse.",
+        variant: "destructive",
       });
+    } finally {
+      setCancellingId(null);
     }
-    void trackEvent("pharmacy_stock_request_transition", { request: request.id, to: next });
   };
 
-  const onCancel = (request: StockRequest) => {
-    persist(requests.map((r) => (r.id === request.id ? { ...r, status: "cancelled" } : r)));
+  /** Receive a dispatched line: server first, then the local shelf and ledger. */
+  const onReceive = async (retailUnitPrice: number) => {
+    if (!receiveTarget?.networkDocId) {
+      throw new Error("This request has not reached the Pulse queue yet.");
+    }
+    const received = await receivePharmacyStockRequest(
+      receiveTarget.networkDocId,
+      retailUnitPrice
+    );
+    if (received.alreadyDelivered) {
+      // The server closed this line on an earlier attempt but the local write
+      // did not finish. Never credit the shelf twice.
+      persist(
+        requests.map((entry) =>
+          entry.networkDocId === received.docId || entry.id === received.requestId
+            ? {
+                ...entry,
+                status: "delivered" as const,
+                retailUnitPrice: received.retailUnitPrice ?? retailUnitPrice,
+                deliveredAt: received.deliveredAt ?? Date.now(),
+              }
+            : entry
+        )
+      );
+      setReceiveTarget(null);
+      toast({
+        title: "Already received",
+        description: `${received.qty} units of ${received.item} were already credited. Nothing was added twice.`,
+      });
+      return;
+    }
+    const inventory = loadInventory();
+    const store = resolveStoreId({ storeId: received.storeId });
+    const name = received.item.trim();
+    const batch = received.batch?.trim() || `HUB-${new Date().getFullYear()}`;
+    const expiry =
+      received.expiry?.trim() ||
+      new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const existing = inventory.find(
+      (entry) =>
+        resolveStoreId(entry) === store &&
+        entry.name.trim().toLowerCase() === name.toLowerCase() &&
+        (!received.batch || entry.batch === received.batch)
+    );
+    const itemId = existing?.id ?? nextId(inventory, "inv");
+    const costPrice = received.unitCost ?? 0;
+    const markupPercent = received.markupPercent ?? DUNIYA_MARKUP_PERCENT;
+    const duniya = received.duniyaUnitPrice ?? duniyaUnitPrice(costPrice, markupPercent);
+    const nextInventory: InventoryItem[] = existing
+      ? inventory.map((entry) =>
+          entry.id === existing.id
+            ? {
+                ...entry,
+                qty: entry.qty + received.qty,
+                unitPrice: retailUnitPrice,
+                costPrice,
+                markupPercent,
+                ...(received.productId && !entry.productId
+                  ? { productId: received.productId }
+                  : {}),
+              }
+            : entry
+        )
+      : [
+          ...inventory,
+          {
+            id: itemId,
+            name,
+            category:
+              inventory.find((entry) => entry.name.trim().toLowerCase() === name.toLowerCase())
+                ?.category ?? "General",
+            batch,
+            expiry,
+            qty: received.qty,
+            reorderLevel: 5,
+            unitPrice: retailUnitPrice,
+            costPrice,
+            markupPercent,
+            storeId: store,
+            ...(received.productId ? { productId: received.productId } : {}),
+          },
+        ];
+    const movements = loadMovements();
+    const movement: StockMovement = {
+      id: nextMovementId(movements),
+      at: Date.now(),
+      type: "receipt",
+      itemId,
+      productName: name,
+      batch,
+      qty: received.qty,
+      toStoreId: store,
+      reason: "Pulse hub stock request",
+      note: `${received.requestId} · retail ${formatZmw(retailUnitPrice)}`,
+      unitCost: costPrice,
+      markupPercent,
+      duniyaUnitPrice: duniya,
+      totalCost: costPrice * received.qty,
+      totalDuniya: received.totalDuniya ?? duniya * received.qty,
+      retailUnitPrice,
+      totalRetail: retailUnitPrice * received.qty,
+      ...(received.docId ? { requestDocId: received.docId } : {}),
+      actor,
+    };
+    saveInventory(nextInventory);
+    saveMovements([movement, ...movements]);
+    queueInventorySync(nextInventory, loadStores());
+    void flushOutbox();
+
+    persist(
+      requests.map((entry) =>
+        entry.networkDocId === received.docId || entry.id === received.requestId
+          ? {
+              ...entry,
+              status: "delivered" as const,
+              batch,
+              expiry,
+              unitCost: costPrice,
+              markupPercent,
+              duniyaUnitPrice: duniya,
+              totalDuniya: received.totalDuniya,
+              retailUnitPrice,
+              totalRetail: retailUnitPrice * received.qty,
+              deliveredAt: received.deliveredAt ?? Date.now(),
+            }
+          : entry
+      )
+    );
+    setReceiveTarget(null);
     toast({
-      title: "Request cancelled",
-      description: `${request.id} · ${request.item} was withdrawn.`,
+      title: "Stock received",
+      description: `${received.qty} units of ${name} are on the shelf at ${formatZmw(retailUnitPrice)} retail.`,
     });
     if (actor.email) {
       recordAudit({
-        title: "Stock Request Cancelled",
+        title: "Stock Request Received",
         action: "Update",
-        detail: `${request.id} · ${request.item}`,
+        detail: `${received.requestId} · ${name} × ${received.qty} · Duniya ${formatZmw(duniya)} · retail ${formatZmw(retailUnitPrice)}`,
         actor: actor.name,
         email: actor.email,
       });
     }
-    void trackEvent("pharmacy_stock_request_cancelled", { request: request.id });
+    void trackEvent("pharmacy_stock_request_received", {
+      request: received.requestId,
+      qty: received.qty,
+      duniya,
+      retail: retailUnitPrice,
+    });
   };
 
   const EmptyIcon: LucideIcon = ClipboardList;
@@ -768,10 +1218,18 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
       <PageHeader
         icon={ClipboardList}
         title="Stock Requests"
-        subtitle="Replenishment from the hub and purchase orders to suppliers — one page"
+        subtitle="Replenishment from the Pulse hub and purchase orders to suppliers — one page"
         tourId="ph-requests"
         actions={
-          tab === "requests" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void refreshNetwork()}
+              className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-[13px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Sync
+            </button>
             <button
               type="button"
               onClick={() => setAddOpen(true)}
@@ -780,45 +1238,27 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
               <PackagePlus className="h-4 w-4" aria-hidden="true" />
               New request
             </button>
-          ) : undefined
+          </div>
         }
       />
       <h2 id="pharmacy-requests-title" className="sr-only">
         Stock Requests
       </h2>
 
-      {/* One page, two queues: replenishment from the hub, orders to suppliers. */}
-      <div
-        role="tablist"
-        aria-label="Stock requests and purchase orders"
-        className="mt-5 flex w-fit gap-1 rounded-full border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/5"
-      >
-        {([
-          { id: "requests" as const, label: "Stock requests" },
-          { id: "orders" as const, label: "Purchase orders" },
-        ]).map(({ id, label }) => {
-          const active = tab === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(id)}
-              className={cn(
-                "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
-                active
-                  ? "bg-purple-600 text-white shadow-[0_6px_16px_-6px_rgba(147,51,234,0.7)]"
-                  : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/10"
-              )}
-            >
-              {label}
-            </button>
-          );
-        })}
+      {/* Plain-language contract between the two portals. */}
+      <div className={cn(pharmacyCardCls, "mt-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 text-[13px]")}>
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
+          <Truck className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        <p className="text-slate-600 dark:text-slate-300">
+          <span className="font-semibold text-slate-900 dark:text-white">Sent straight to the Pulse desk.</span>{" "}
+          When the hub dispatches, confirm the delivery here and set your retail price — the cost
+          and Duniya price are already attached to the batch.
+        </p>
       </div>
 
-      <div role="tabpanel" aria-label="Stock requests" hidden={tab !== "requests"}>
+      {/* One page, two queues: replenishment from the hub, orders to suppliers. */}
+      <section aria-label="Stock requests">
 
       {/* Status chips */}
       <div className={cn(pharmacyCardCls, "mt-5 flex flex-wrap gap-3 p-4")}>
@@ -848,12 +1288,13 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-[13.5px]">
+            <table className="w-full min-w-[860px] text-left text-[13.5px]">
               <thead>
                 <tr className="border-b border-slate-100 text-[11.5px] uppercase tracking-[0.12em] text-slate-400 dark:border-white/5">
                   <th scope="col" className="px-5 py-3 font-semibold">Request</th>
                   <th scope="col" className="px-3 py-3 font-semibold text-right">Qty</th>
                   <th scope="col" className="px-3 py-3 font-semibold">Priority</th>
+                  <th scope="col" className="px-3 py-3 font-semibold text-right">Duniya value</th>
                   <th scope="col" className="px-3 py-3 font-semibold">Submitted</th>
                   <th scope="col" className="px-3 py-3 font-semibold">Status</th>
                   <th scope="col" className="px-5 py-3 text-right font-semibold sr-only">
@@ -863,39 +1304,81 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
                 {sorted.map((request) => (
-                  <tr key={request.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-white/5">
+                  <tr
+                    key={request.networkDocId ?? `${request.id}-${request.submittedAt}`}
+                    className="transition-colors hover:bg-slate-50/80 dark:hover:bg-white/5"
+                  >
                     <td className="max-w-[280px] px-5 py-3">
                       <p className="truncate font-semibold text-slate-900 dark:text-white">{request.item}</p>
                       <p className="font-mono text-[12px] text-slate-500 dark:text-slate-400">{request.id}</p>
+                      {request.batch && (
+                        <p className="truncate text-[11.5px] text-slate-400 dark:text-slate-500">
+                          Batch {request.batch}{request.expiry ? ` · ${request.expiry}` : ""}
+                        </p>
+                      )}
                     </td>
                     <td className="px-3 py-3 text-right font-bold tabular-nums">{request.qty}</td>
                     <td className="px-3 py-3">
                       <StatusPill status={request.priority} />
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      {request.unitCost ? (
+                        <>
+                          <p className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                            {formatZmw(request.totalDuniya ?? request.duniyaUnitPrice! * request.qty)}
+                          </p>
+                          <p className="text-[11.5px] text-slate-400 dark:text-slate-500">
+                            Duniya {formatZmw(request.duniyaUnitPrice ?? 0)}
+                          </p>
+                        </>
+                      ) : (
+                        <span className="text-slate-300 dark:text-slate-600">—</span>
+                      )}
+                      {request.retailUnitPrice ? (
+                        <p className="text-[11.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                          Retail {formatZmw(request.retailUnitPrice)}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-slate-600 dark:text-slate-300">
                       {formatDay(request.submittedAt)}
                     </td>
                     <td className="px-3 py-3">
                       <StatusPill status={request.status} />
+                      {request.decisionNote &&
+                      (request.status === "rejected" || request.status === "cancelled") ? (
+                        <p className="mt-1 max-w-[160px] text-[11.5px] text-slate-400 dark:text-slate-500">
+                          {request.decisionNote}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <span className="inline-flex flex-wrap justify-end gap-1.5">
-                        {request.status === "pending" && (
-                          <button type="button" onClick={() => onHubAction(request, "approve")} className="inline-flex items-center rounded-md border border-violet-200 px-2.5 py-1.5 text-[12px] font-semibold text-violet-600 transition-colors hover:bg-violet-50 dark:border-violet-500/30 dark:text-violet-300 dark:hover:bg-violet-500/10">Hub: approve</button>
+                        {request.status === "dispatched" && request.networkDocId && (
+                          <button
+                            type="button"
+                            onClick={() => setReceiveTarget(request)}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-50 dark:border-emerald-500/30 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                          >
+                            <Truck className="h-3.5 w-3.5" aria-hidden="true" />
+                            Receive stock
+                          </button>
                         )}
-                        {request.status === "approved" && (
-                          <button type="button" onClick={() => onHubAction(request, "dispatch")} className="inline-flex items-center rounded-md border border-purple-200 px-2.5 py-1.5 text-[12px] font-semibold text-purple-600 transition-colors hover:bg-purple-50 dark:border-purple-500/30 dark:text-purple-300 dark:hover:bg-purple-500/10">Hub: dispatch</button>
-                        )}
-                        {request.status === "dispatched" && (
-                          <button type="button" onClick={() => onHubAction(request, "deliver")} className="inline-flex items-center rounded-md border border-emerald-200 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-50 dark:border-emerald-500/30 dark:text-emerald-300 dark:hover:bg-emerald-500/10">Deliver to shelf</button>
+                        {request.status === "dispatched" && !request.networkDocId && (
+                          <span className="text-[12px] text-slate-400">Syncing dispatch…</span>
                         )}
                         {(request.status === "pending" || request.status === "approved") && (
                           <button
                             type="button"
-                            onClick={() => onCancel(request)}
-                            className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 px-2.5 py-1.5 text-[12px] font-semibold text-rose-600 transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
+                            onClick={() => void onCancel(request)}
+                            disabled={cancellingId === (request.networkDocId ?? request.id)}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 px-2.5 py-1.5 text-[12px] font-semibold text-rose-600 transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
                           >
-                            <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            {cancellingId === (request.networkDocId ?? request.id) ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            )}
                             Cancel
                           </button>
                         )}
@@ -911,8 +1394,19 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
 
       {hydrated && (
         <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
-          {visible.length} requests in this store view · newest first · changes persist on this device
+          {visible.length} requests in this store view · newest first · synced with the Pulse desk
         </p>
+      )}
+
+      {receiveTarget && (
+        <ReceiveRequestDialog
+          key={receiveTarget.networkDocId ?? receiveTarget.id}
+          request={receiveTarget}
+          onOpenChange={(open) => {
+            if (!open) setReceiveTarget(null);
+          }}
+          onReceive={onReceive}
+        />
       )}
 
       <NewRequestDialog
@@ -923,11 +1417,11 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
         actor={actor}
         storeId={storeId}
       />
-      </div>
+      </section>
 
-      <div role="tabpanel" aria-label="Purchase orders" hidden={tab !== "orders"}>
+      <section aria-label="Purchase orders">
         <PharmacyPurchaseOrders storeId={storeId} />
-      </div>
+      </section>
     </div>
   );
 }

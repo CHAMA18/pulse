@@ -321,11 +321,14 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
 
   return (
     <div aria-labelledby="pharmacy-po-title">
-      <h2 id="pharmacy-po-title" className="sr-only">
+      <h2
+        id="pharmacy-po-title"
+        className="mt-8 text-[18px] font-bold tracking-tight text-slate-900 dark:text-white"
+      >
         Purchase Orders
       </h2>
 
-      <div className="mt-5 flex justify-end">
+      <div className="mt-4 flex justify-end">
         <button
           type="button"
           onClick={openCreate}

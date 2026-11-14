@@ -14,18 +14,20 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
 import {
   AUDIT_EVENT_NAME,
+  flushAuditQueue,
   formatRelative,
   isToday,
   loadAuditEvents,
   type AuditAction,
   type AuditEvent,
 } from "@/lib/audit-log";
+import { listAuditLogs, recordAuditEvents } from "@/lib/cloud/audit-logs";
 import {
   Select,
   SelectContent,
@@ -63,6 +65,15 @@ const ACTION_META: Record<
 
 const PAGE_SIZE = 60;
 
+/** Merge Firestore events with recent local events that are still queued. */
+function mergeWithLocal(events: AuditEvent[]): AuditEvent[] {
+  const byId = new Map(events.map((event) => [event.id, event]));
+  for (const event of loadAuditEvents()) {
+    if (!byId.has(event.id)) byId.set(event.id, event);
+  }
+  return [...byId.values()].sort((a, b) => b.ts - a.ts);
+}
+
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
 /* ------------------------------------------------------------------ */
@@ -98,29 +109,67 @@ export function AuditLogs() {
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [, forceTick] = useState(0);
 
-  // Hydrate once on mount. Deferred to a frame so we never setState
-  // synchronously inside the effect body.
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      setEvents(loadAuditEvents());
-      setHydrated(true);
-    });
-    return () => cancelAnimationFrame(raf);
+  const loadFeed = useCallback(async (backfill = false) => {
+    await flushAuditQueue();
+    const feed = await listAuditLogs();
+
+    // Move any pre-Firestore history from this device into the shared trail.
+    // The server only accepts events attributed to the signed-in email.
+    if (backfill) {
+      const remoteIds = new Set(feed.events.map((event) => event.id));
+      const missing = loadAuditEvents().filter((event) => !remoteIds.has(event.id));
+      if (missing.length > 0) {
+        try {
+          await recordAuditEvents(missing);
+        } catch {
+          /* keep the local copy; retry on the next page load */
+        }
+      }
+    }
+
+    return mergeWithLocal(feed.events);
   }, []);
 
-  // Live feed — navigation and mutations record themselves app-wide; this
-  // page reflects them the moment they land. Also re-renders relative
-  // timestamps every 30s so "Just now" ages gracefully.
+  // Hydrate from Firestore, then fall back to the recent local cache when the
+  // console is offline or the callable is unavailable.
+  useEffect(() => {
+    let active = true;
+    const raf = requestAnimationFrame(() => {
+      void loadFeed(true)
+        .catch(() => mergeWithLocal([]))
+        .then((next) => {
+          if (!active) return;
+          setEvents(next);
+          setHydrated(true);
+        });
+    });
+    return () => {
+      active = false;
+      cancelAnimationFrame(raf);
+    };
+  }, [loadFeed]);
+
+  // Live feed — navigation and mutations record themselves app-wide. The
+  // debounce gives the queued Firestore batch time to land first.
   useEffect(() => {
     if (!hydrated) return;
-    const onAudit = () => setEvents(loadAuditEvents());
+    let timer: number | undefined;
+    const onAudit = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void loadFeed()
+          .then(setEvents)
+          .catch(() => setEvents(mergeWithLocal([])));
+      }, 1_200);
+    };
     window.addEventListener(AUDIT_EVENT_NAME, onAudit);
     const tick = window.setInterval(() => forceTick((v) => v + 1), 30_000);
     return () => {
       window.removeEventListener(AUDIT_EVENT_NAME, onAudit);
+      if (timer) window.clearTimeout(timer);
       window.clearInterval(tick);
     };
-  }, [hydrated]);
+  }, [hydrated, loadFeed]);
 
   /* ---------------- derived data ---------------- */
 
@@ -147,12 +196,22 @@ export function AuditLogs() {
   /* ---------------- mutations ---------------- */
 
   const refresh = () => {
-    setEvents(loadAuditEvents());
-    setVisible(PAGE_SIZE);
-    toast({
-      title: "Activity refreshed",
-      description: `${events.length} events re-synced from the audit trail.`,
-    });
+    void loadFeed()
+      .then((next) => {
+        setEvents(next);
+        setVisible(PAGE_SIZE);
+        toast({
+          title: "Activity refreshed",
+          description: `${next.length} events re-synced from the audit trail.`,
+        });
+      })
+      .catch(() => {
+        toast({
+          title: "Refresh failed",
+          description: "The audit trail could not be reached. Showing local activity.",
+          variant: "destructive",
+        });
+      });
     void trackEvent("audit_logs_refreshed");
   };
 
@@ -276,7 +335,24 @@ export function AuditLogs() {
       </motion.section>
 
       {/* — Activity feed — */}
-      {shown.length === 0 ? (
+      {!hydrated ? (
+        <motion.div
+          variants={item}
+          aria-busy="true"
+          className={cn(
+            cardCls,
+            "mt-6 flex min-h-[180px] flex-col items-center justify-center gap-2.5 p-8 text-center"
+          )}
+        >
+          <span
+            className="h-5 w-5 animate-spin rounded-full border-2 border-purple-200 border-t-purple-600"
+            aria-hidden="true"
+          />
+          <p className="text-[13.5px] text-slate-500 dark:text-slate-400">
+            Loading the audit trail…
+          </p>
+        </motion.div>
+      ) : shown.length === 0 ? (
         <motion.div
           variants={item}
           className={cn(
@@ -356,20 +432,32 @@ export function AuditLogs() {
             );
           })}
 
-          {visible < filtered.length && (
-            <div className="flex justify-center px-6 py-4">
-              <button
-                type="button"
-                onClick={() => setVisible((v) => v + PAGE_SIZE)}
-                className="inline-flex h-10 items-center rounded-full border border-slate-200 bg-white px-5 text-[13.5px] font-semibold text-slate-700 shadow-sm transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
-              >
-                Show more
-                <span className="ml-2 text-[12px] font-medium text-slate-400">
-                  {filtered.length - visible} older
-                </span>
-              </button>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-center gap-3 px-6 py-4">
+            <p className="text-[12.5px] text-slate-400 dark:text-slate-500">
+              Showing {shown.length} of {filtered.length} events
+            </p>
+            {visible < filtered.length && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setVisible((v) => v + PAGE_SIZE)}
+                  className="inline-flex h-10 items-center rounded-full border border-slate-200 bg-white px-5 text-[13.5px] font-semibold text-slate-700 shadow-sm transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
+                >
+                  Show more
+                  <span className="ml-2 text-[12px] font-medium text-slate-400">
+                    {filtered.length - visible} older
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisible(filtered.length)}
+                  className="inline-flex h-10 items-center rounded-full px-4 text-[13px] font-semibold text-purple-600 transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:text-purple-300 dark:hover:bg-purple-500/10"
+                >
+                  Show all
+                </button>
+              </>
+            )}
+          </div>
         </motion.section>
       )}
     </motion.div>

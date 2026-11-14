@@ -463,6 +463,119 @@ export function pulseAdminInviteEmail(params: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Stock request — the Pulse receiving desk is notified immediately     */
+/* ------------------------------------------------------------------ */
+
+export type StockRequestEmailItem = {
+  requestId: string;
+  item: string;
+  qty: number;
+  priority: "routine" | "urgent";
+  note?: string;
+};
+
+export type StockRequestEmailParams = {
+  pharmacyName: string;
+  storeName: string;
+  submittedBy: string;
+  submittedByEmail: string;
+  submittedAt: string;
+  items: StockRequestEmailItem[];
+  consoleUrl: string;
+};
+
+function requestItemRows(items: StockRequestEmailItem[]): string {
+  return items
+    .map((item, index) => {
+      const border = index === items.length - 1 ? "none" : `1px solid ${BORDER}`;
+      const urgent = item.priority === "urgent";
+      return `<tr>
+  <td style="padding:13px 0;border-bottom:${border};font-family:${FONT};">
+    <div style="font-size:13.5px;font-weight:700;line-height:1.35;color:${INK};">${esc(item.item)}</div>
+    <div style="padding-top:3px;font-size:11.5px;line-height:1.5;color:${MUTED};">${esc(item.requestId)}${item.note ? ` &middot; ${esc(item.note)}` : ""}</div>
+  </td>
+  <td align="right" style="padding:13px 0 13px 12px;border-bottom:${border};font-family:${FONT};white-space:nowrap;">
+    <span style="font-size:15px;font-weight:800;color:${INK};">${esc(String(item.qty))}</span>
+    <span style="font-size:11px;color:${FAINT};"> units</span>
+  </td>
+  <td align="right" style="padding:13px 0 13px 12px;border-bottom:${border};font-family:${FONT};">
+    <span style="display:inline-block;border-radius:999px;padding:4px 9px;font-size:8.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;background-color:${urgent ? "#fef2f2" : "#f5f3ff"};color:${urgent ? "#b91c1c" : BRAND_PURPLE};border:1px solid ${urgent ? "#fecaca" : "#ddd6fe"};">${esc(item.priority)}</span>
+  </td>
+</tr>`;
+    })
+    .join("");
+}
+
+export function stockRequestEmail(params: StockRequestEmailParams): EmailContent {
+  const count = params.items.length;
+  const units = params.items.reduce((acc, item) => acc + item.qty, 0);
+  const urgent = params.items.filter((item) => item.priority === "urgent").length;
+  const heading = `${params.pharmacyName} requested ${count === 1 ? "stock" : `${count} lines of stock`}`;
+  const preheader = `${units} unit${units === 1 ? "" : "s"} from ${params.storeName}${urgent ? ` · ${urgent} urgent` : ""}. Review the request in Pulse.`;
+  const refs = params.items.map((item) => item.requestId).join(" · ");
+
+  return {
+    subject:
+      count === 1
+        ? `Stock request: ${params.items[0]?.item ?? "1 item"} · ${params.pharmacyName}`
+        : `Stock request: ${count} items · ${params.pharmacyName}`,
+    html: layout({
+      preheader,
+      eyebrow: "Stock request received",
+      heading,
+      intro: `<strong style="color:${INK};">${esc(params.submittedBy)}</strong> raised a replenishment request for <strong style="color:${INK};">${esc(params.storeName)}</strong> at <strong style="color:${INK};">${esc(params.pharmacyName)}</strong>. It is waiting in the Pulse receiving queue.`,
+      bodyHtml: `${detailsCard(
+        "Request details",
+        [
+          { label: "Pharmacy", value: params.pharmacyName },
+          { label: "Store", value: params.storeName },
+          { label: "Submitted by", value: `${params.submittedBy} · ${params.submittedByEmail}` },
+          { label: "Raised", value: params.submittedAt },
+          { label: "Total units", value: String(units), accent: true },
+          { label: "Reference", value: refs, mono: true },
+        ],
+        urgent ? `${urgent} urgent` : "Awaiting review"
+      )}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0;">
+        <tr>
+          <td style="padding:0 0 8px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">Item</td>
+          <td align="right" style="padding:0 0 8px 12px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">Qty</td>
+          <td align="right" style="padding:0 0 8px 12px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">Priority</td>
+        </tr>
+        ${requestItemRows(params.items)}
+      </table>`,
+      ctaLabel: "Open receiving queue",
+      ctaHref: params.consoleUrl,
+      ctaNote: `Approve, dispatch and price the request from <strong style="color:${INK};">Stock Requests Received</strong>. The pharmacy sets its retail price when the delivery arrives.`,
+      footerNote: `You are receiving this because you are an Owner or Admin on the Pulse console. Stock requests notify the receiving desk immediately.`,
+      reason: `${params.pharmacyName} raised a stock request on Pulse.`,
+    }),
+    text: [
+      `Stock request received — ${params.pharmacyName}`,
+      "",
+      `${params.submittedBy} (${params.submittedByEmail}) raised a request for ${params.storeName}.`,
+      `Raised: ${params.submittedAt}`,
+      `Total units: ${units}`,
+      urgent ? `Urgent lines: ${urgent}` : "",
+      `Reference: ${refs}`,
+      "",
+      "ITEMS",
+      ...params.items.map(
+        (item) => `- ${item.item} — ${item.qty} units · ${item.priority}${item.note ? ` · ${item.note}` : ""} (${item.requestId})`
+      ),
+      "",
+      `Open the receiving queue: ${params.consoleUrl}`,
+      "",
+      "Approve, dispatch and price the request in Stock Requests Received. The pharmacy sets its retail price when the delivery arrives.",
+      "",
+      "— Pulse · Pharmacy intelligence, delivered",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Low stock alert — one consolidated email per trigger                 */
 /* ------------------------------------------------------------------ */
 

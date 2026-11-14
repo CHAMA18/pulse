@@ -17,7 +17,14 @@ import { cn } from "@/lib/utils";
 /* drains the Firebase sync outbox whenever the app is online. The     */
 /* banner only appears when there is something the user should know.   */
 
-const EMPTY_SUMMARY: OutboxSummary = { total: 0, inventory: 0, sales: 0, alerts: 0 };
+const EMPTY_SUMMARY: OutboxSummary = {
+  total: 0,
+  inventory: 0,
+  sales: 0,
+  shifts: 0,
+  alerts: 0,
+  requests: 0,
+};
 
 function subscribeOnline(onChange: () => void): () => void {
   window.addEventListener("online", onChange);
