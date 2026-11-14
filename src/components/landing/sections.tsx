@@ -455,18 +455,18 @@ const PORTALS = [
   {
     name: "Pharmacy portal",
     tag: "For the counter",
-    desc: "Point of Sale, Stock Balance, Inventory, Stock Movement, Purchase Orders, Deliveries, Suppliers, Stores, Team — the daily heartbeat of one pharmacy.",
+    desc: "Point of Sale, Stock Balance, Inventory, Stock Movement, Stock Requests, Stores, Team — the daily heartbeat of one pharmacy.",
     href: "/login?intent=register",
     cta: "Register your pharmacy",
-    items: ["Point of Sale", "Stock Movement", "Purchase Orders", "User Management"],
+    items: ["Point of Sale", "Stock Movement", "Stock Requests", "User Management"],
   },
   {
     name: "Pulse console",
     tag: "For the network",
-    desc: "Every pharmacy on the map — onboarding requests, stock-balance visibility, network analytics, supplier management and a tamper-evident audit log.",
+    desc: "Every pharmacy on the map — onboarding requests, stock-balance visibility, network analytics and a tamper-evident audit log.",
     href: "/login",
     cta: "Sign in to the console",
-    items: ["Pulse Pharmacies", "Network Analytics", "Audit Logs", "Suppliers"],
+    items: ["Pulse Pharmacies", "Network Analytics", "Audit Logs", "Warehouse Catalogue"],
   },
 ];
 

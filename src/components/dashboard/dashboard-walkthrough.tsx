@@ -13,7 +13,6 @@ import {
   Play,
   RotateCcw,
   Sparkles,
-  Store,
   UserCog,
   type LucideIcon,
 } from "lucide-react";
@@ -33,7 +32,7 @@ export const PULSE_TOUR_STEPS: WalkthroughStep[] = [
   {
     id: "pulse-nav",
     title: "One sidebar, three neighbourhoods",
-    body: "Main is the network overview. Admin keeps the record straight. Pulse Network brings together pharmacy sales, pharmacies, the product catalogue, stock movements, stock visibility and suppliers.",
+    body: "Main is the network overview. Admin keeps the record straight. Pulse Network brings together pharmacy sales, pharmacies, the product catalogue, stock movements and stock visibility.",
     target: "pulse-nav",
   },
   {
@@ -79,13 +78,6 @@ export const PULSE_TOUR_STEPS: WalkthroughStep[] = [
     body: "See the stock health of every member pharmacy — healthy, low and out of stock — to steer the network's supply.",
   },
   {
-    id: "pulse-suppliers",
-    title: "Supplier Management — the supply side",
-    page: "suppliers",
-    target: "pulse-suppliers",
-    body: "The wholesalers behind the network: verification, categories and lead times in a single directory.",
-  },
-  {
     id: "pulse-finish",
     title: "That's the Pulse console",
     body: "Replay this tour any time from Walkthrough in the sidebar. Pharmacies get their own walkthrough inside the Pharmacy portal.",
@@ -104,7 +96,6 @@ const CHAPTER_ICONS: Record<string, LucideIcon> = {
   "pulse-pharmacies": LayoutGrid,
   "pulse-sales": BarChart3,
   "pulse-stock": Eye,
-  "pulse-suppliers": Store,
 };
 
 export function DashboardWalkthrough({
@@ -180,7 +171,7 @@ export function DashboardWalkthrough({
             </h3>
             <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-slate-600 dark:text-slate-300">
               The tour moves through the real console — the overview, the audit trail, the people,
-              the pharmacies, their stock and the suppliers — spotlighting exactly the section being
+              the pharmacies and their stock — spotlighting exactly the section being
               discussed and dimming everything else.
             </p>
           </div>

@@ -2,15 +2,9 @@
 
 import { motion } from "framer-motion";
 import { AppleLogo, WindowsLogo } from "@/components/login/platform-icons";
+import { DESKTOP_DOWNLOADS } from "@/lib/desktop-downloads";
 import { trackEvent } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
-
-/**
- * Release channel — every download button points at the project's real
- * GitHub releases page, where signed installers for each platform are
- * published alongside their checksums.
- */
-export const RELEASES_URL = "https://github.com/CHAMA18/pulse/releases";
 
 const fadeUp = (delay: number) => ({
   initial: { opacity: 0, y: 18, filter: "blur(5px)" },
@@ -38,31 +32,23 @@ export function DownloadButtons({ className }: { className?: string }) {
         {BUTTONS.map(({ platform, label, Icon }) => (
           <motion.a
             key={platform}
-            href={RELEASES_URL}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={DESKTOP_DOWNLOADS[platform]}
             onClick={() => void trackEvent("download_click", { location: "hero", platform })}
             whileHover={{ y: -2 }}
             whileTap={{ scale: 0.98 }}
             className={cn(
-              "group inline-flex h-11 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.07] px-5",
-              "text-[13.5px] font-semibold text-white/90 backdrop-blur-sm",
-              "shadow-[0_10px_30px_-12px_rgba(168,85,247,0.45)] transition-colors duration-300",
-              "hover:border-white/30 hover:bg-white/[0.13] hover:text-white",
+              "group inline-flex h-11 items-center gap-2.5 rounded-full border border-white/20 bg-black px-5",
+              "text-[13.5px] font-semibold text-white",
+              "shadow-[0_10px_30px_-12px_rgba(0,0,0,0.9)] transition-[border-color,background-color] duration-300",
+              "hover:border-white/35 hover:bg-black",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400"
             )}
           >
-            <Icon className="h-[17px] w-[17px] text-white/80 transition-colors group-hover:text-white" />
+            <Icon className="h-[17px] w-[17px] text-white transition-colors" />
             {label}
           </motion.a>
         ))}
       </motion.div>
-      <motion.p
-        {...fadeUp(0.48)}
-        className="mt-3 font-mono text-[10.5px] uppercase tracking-[0.18em] text-white/35"
-      >
-        v1.0 · Early access · Free for Pulse network pharmacies
-      </motion.p>
     </div>
   );
 }

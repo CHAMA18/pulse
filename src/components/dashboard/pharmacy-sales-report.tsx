@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   FileDown,
+  FileSpreadsheet,
   PackageCheck,
   Receipt,
   Search,
@@ -19,7 +20,10 @@ import {
   type NetworkPharmacy,
   type NetworkPharmacySale,
 } from "@/lib/cloud/pharmacy-sales";
+import { buildSalesReportCsv } from "@/lib/sales-report-csv";
 import { buildSalesReportPrintHtml } from "@/lib/sales-report-print";
+import { CachedNotice } from "@/components/offline/cached-notice";
+import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import { cn } from "@/lib/utils";
 
 type Period = "all" | "day" | "week" | "month" | "custom";
@@ -122,11 +126,14 @@ export function PharmacySalesReport() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
   const [error, setError] = useState("");
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [pharmacyFilter, setPharmacyFilter] = useState("all");
   const [selectedSale, setSelectedSale] = useState<NetworkPharmacySale | null>(null);
   const activeRangeKey = useRef("");
+  const busy = exporting || exportingCsv;
 
   const range = useMemo(() => {
     if (period === "all") return { start: undefined, end: undefined, error: "" };
@@ -166,6 +173,7 @@ export function PharmacySalesReport() {
     setCursor(null);
     setHasMore(false);
     setError("");
+    setCachedAt(null);
     setPharmacyFilter("all");
     if (range.error) {
       setLoading(false);
@@ -183,9 +191,32 @@ export function PharmacySalesReport() {
         setPharmacies(page.pharmacies);
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
+        setCachedAt(null);
+        saveCachedRead(`network-sales:${rangeKey}`, {
+          sales: page.sales,
+          pharmacies: page.pharmacies,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+        });
       })
       .catch(() => {
-        if (active) setError("Network sales could not be loaded. Check the connection and try again.");
+        if (!active) return;
+        // Offline: show the last successful read for this exact date range.
+        const cached = loadCachedRead<{
+          sales: NetworkPharmacySale[];
+          pharmacies: NetworkPharmacy[];
+          nextCursor: string | null;
+          hasMore: boolean;
+        }>(`network-sales:${rangeKey}`);
+        if (cached) {
+          setSales(cached.data.sales);
+          setPharmacies(cached.data.pharmacies);
+          setCursor(cached.data.nextCursor);
+          setHasMore(cached.data.hasMore);
+          setCachedAt(cached.cachedAt);
+        } else {
+          setError("Network sales could not be loaded. Check the connection and try again.");
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -217,8 +248,33 @@ export function PharmacySalesReport() {
     }
   };
 
+  const loadAllReportSales = async () => {
+    const allSales: NetworkPharmacySale[] = [];
+    let reportPharmacies: NetworkPharmacy[] = [];
+    let nextCursor: string | undefined;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const page = await listNetworkPharmacySales({
+        startAt: range.start?.getTime(),
+        endAt: range.end?.getTime(),
+        cursor: nextCursor,
+        limit: 200,
+      });
+      if (!nextCursor) reportPharmacies = page.pharmacies;
+      allSales.push(...page.sales);
+      nextCursor = page.nextCursor ?? undefined;
+      hasNextPage = page.hasMore && Boolean(nextCursor);
+      if (page.hasMore && !nextCursor) {
+        throw new Error("The sales report could not load every page.");
+      }
+    }
+
+    return { allSales, reportPharmacies };
+  };
+
   const exportPdf = async () => {
-    if (exporting || loadingMore || range.error) return;
+    if (busy || loadingMore || range.error) return;
 
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
@@ -233,26 +289,7 @@ export function PharmacySalesReport() {
     setError("");
 
     try {
-      const allSales: NetworkPharmacySale[] = [];
-      let reportPharmacies: NetworkPharmacy[] = [];
-      let nextCursor: string | undefined;
-      let hasNextPage = true;
-
-      while (hasNextPage) {
-        const page = await listNetworkPharmacySales({
-          startAt: range.start?.getTime(),
-          endAt: range.end?.getTime(),
-          cursor: nextCursor,
-          limit: 200,
-        });
-        if (!nextCursor) reportPharmacies = page.pharmacies;
-        allSales.push(...page.sales);
-        nextCursor = page.nextCursor ?? undefined;
-        hasNextPage = page.hasMore && Boolean(nextCursor);
-        if (page.hasMore && !nextCursor) {
-          throw new Error("The sales report could not load every page.");
-        }
-      }
+      const { allSales, reportPharmacies } = await loadAllReportSales();
 
       const pharmacyDirectory = new Map(
         reportPharmacies.map((pharmacy) => [pharmacy.id, pharmacy] as const)
@@ -308,6 +345,35 @@ export function PharmacySalesReport() {
       setError("The PDF export failed while loading sales. Please try again.");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const exportCsv = async () => {
+    if (busy || loadingMore || range.error) return;
+    setExportingCsv(true);
+    setError("");
+
+    try {
+      const { allSales } = await loadAllReportSales();
+      const scopedSales =
+        pharmacyFilter === "all"
+          ? allSales
+          : allSales.filter((sale) => sale.pharmacyId === pharmacyFilter);
+      const blob = new Blob([`\uFEFF${buildSalesReportCsv(scopedSales)}`], {
+        type: "text/csv;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `Pulse-Sales-Report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("The CSV export failed while loading sales. Please try again.");
+    } finally {
+      setExportingCsv(false);
     }
   };
 
@@ -407,17 +473,30 @@ export function PharmacySalesReport() {
           title="Sales Report"
           subtitle="All POS sales across the Pulse network, by pharmacy, store, payment method and product."
         />
-        <button
-          type="button"
-          onClick={() => void exportPdf()}
-          disabled={loading || loadingMore || exporting || Boolean(range.error)}
-          aria-label="Export Sales Report as PDF"
-          title="Opens a print dialog where you can save the branded report as a PDF."
-          className="btn-brand inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-[12.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(168,85,247,0.65)] transition hover:brightness-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 disabled:cursor-not-allowed disabled:opacity-55"
-        >
-          <FileDown className="h-4 w-4" aria-hidden="true" />
-          {exporting ? "Preparing PDF…" : "Export PDF"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void exportCsv()}
+            disabled={loading || loadingMore || busy || Boolean(range.error)}
+            aria-label="Export Sales Report as CSV"
+            title="Downloads every sale line in this date range as a CSV spreadsheet."
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-[12.5px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
+          >
+            <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+            {exportingCsv ? "Preparing CSV…" : "Export CSV"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportPdf()}
+            disabled={loading || loadingMore || busy || Boolean(range.error)}
+            aria-label="Export Sales Report as PDF"
+            title="Opens a print dialog where you can save the branded report as a PDF."
+            className="btn-brand inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-[12.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(168,85,247,0.65)] transition hover:brightness-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            <FileDown className="h-4 w-4" aria-hidden="true" />
+            {exporting ? "Preparing PDF…" : "Export PDF"}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Sales date range">
@@ -426,7 +505,7 @@ export function PharmacySalesReport() {
             key={id}
             type="button"
             aria-pressed={period === id}
-            disabled={exporting}
+            disabled={busy}
             onClick={() => choosePeriod(id)}
             className={cn(
               "inline-flex h-9 items-center rounded-full px-4 text-[12.5px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
@@ -447,7 +526,7 @@ export function PharmacySalesReport() {
             <input
               id="network-sales-start"
               type="date"
-              disabled={exporting}
+              disabled={busy}
               value={customStart}
               max={customEnd || undefined}
               onChange={(event) => setCustomStart(event.target.value)}
@@ -459,7 +538,7 @@ export function PharmacySalesReport() {
             <input
               id="network-sales-end"
               type="date"
-              disabled={exporting}
+              disabled={busy}
               value={customEnd}
               min={customStart || undefined}
               onChange={(event) => setCustomEnd(event.target.value)}
@@ -480,6 +559,8 @@ export function PharmacySalesReport() {
           {error}
         </p>
       ) : null}
+
+      {cachedAt !== null ? <CachedNotice cachedAt={cachedAt} /> : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
         <StatCard icon={Store} label="Network pharmacies" value={loading ? "—" : String(pharmacyNames.length)} tile="bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400" />
@@ -568,7 +649,7 @@ export function PharmacySalesReport() {
             <select
               aria-label="Filter by pharmacy"
               value={pharmacyFilter}
-              disabled={exporting}
+              disabled={busy}
               onChange={(event) => setPharmacyFilter(event.target.value)}
               className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[12.5px] text-slate-700 outline-none focus:border-purple-400 dark:border-white/10 dark:bg-white/5 dark:text-slate-200"
             >

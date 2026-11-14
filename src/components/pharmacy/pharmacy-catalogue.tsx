@@ -6,7 +6,6 @@ import {
   Download,
   FileSpreadsheet,
   Info,
-  PackageSearch,
   Plus,
   Search,
   SearchX,
@@ -29,7 +28,6 @@ import {
   type PharmacyStore,
 } from "@/components/pharmacy/pharmacy-data";
 import {
-  PageHeader,
   pharmacyCardCls,
   brandBtnCls,
   StatusPill,
@@ -38,7 +36,13 @@ import {
 import { recordAudit } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 import { trackEvent } from "@/lib/firebase";
+import {
+  findCatalogueProductByName,
+  normaliseProductName,
+  storeHasProduct,
+} from "@/lib/pharmacy-catalogue";
 import {
   Dialog,
   DialogContent,
@@ -77,19 +81,6 @@ const SORTS: { id: SortKey; label: string }[] = [
   { id: "price-asc", label: "Price: low to high" },
   { id: "price-desc", label: "Price: high to low" },
 ];
-
-/** Therapeutic categories offered when adding a product. */
-const CATALOGUE_CATEGORIES = [
-  "Analgesic",
-  "Antibiotic",
-  "Antihistamine",
-  "Antimalarial",
-  "Cold & Flu",
-  "Consumable",
-  "First Aid",
-  "Rehydration",
-  "Supplement",
-] as const;
 
 type SpreadsheetProductRow = {
   rowNumber: number;
@@ -172,7 +163,6 @@ function parseSpreadsheetBoolean(value: string): boolean {
 
 function parseProductSpreadsheet(
   text: string,
-  existingNames: Set<string>,
   hasStores: boolean
 ): SpreadsheetProductRow[] {
   const rows = parseDelimitedText(text);
@@ -210,10 +200,8 @@ function parseProductSpreadsheet(
       issues.push("Add a store before importing positive stock quantities.");
     }
 
-    const normalisedName = name.toLocaleLowerCase();
-    if (normalisedName && existingNames.has(normalisedName)) {
-      issues.push("This product is already in the catalogue.");
-    } else if (normalisedName && seenNames.has(normalisedName)) {
+    const normalisedName = normaliseProductName(name);
+    if (normalisedName && seenNames.has(normalisedName)) {
       issues.push("This product name appears more than once in the spreadsheet.");
     }
     if (normalisedName) seenNames.add(normalisedName);
@@ -264,10 +252,13 @@ function KpiChip({ value, label }: { value: string; label: string }) {
 export function PharmacyCatalogue({
   stores,
   onSell,
+  canManage = true,
 }: {
   stores: PharmacyStore[];
   /** Jump to the counter with this product ready to sell. */
   onSell?: () => void;
+  /** Owners, managers and pharmacists may add or import products. */
+  canManage?: boolean;
 }) {
   const { toast } = useToast();
 
@@ -335,7 +326,7 @@ export function PharmacyCatalogue({
 
   const categoryOptions = useMemo(() => {
     const existing = products.map((product) => product.category).filter(Boolean);
-    return Array.from(new Set<string>([...CATALOGUE_CATEGORIES, ...existing]));
+    return Array.from(new Set<string>([...PRODUCT_CATEGORIES, ...existing]));
   }, [products]);
 
   const visible = useMemo(() => {
@@ -387,8 +378,7 @@ export function PharmacyCatalogue({
         throw new Error("Save the spreadsheet as CSV or TSV, then choose that file here.");
       }
       const text = await file.text();
-      const existingNames = new Set(products.map((product) => product.name.trim().toLocaleLowerCase()));
-      const parsed = parseProductSpreadsheet(text, existingNames, hasStores);
+      const parsed = parseProductSpreadsheet(text, hasStores);
       setImportRows(parsed);
       if (parsed.length === 0) setImportError("No product rows were found in this spreadsheet.");
     } catch (error) {
@@ -434,10 +424,18 @@ export function PharmacyCatalogue({
   const addProduct = () => {
     if (!canSubmit) return;
     const name = form.name.trim();
-    if (products.some((product) => product.name.toLowerCase() === name.toLowerCase())) {
+    const openingQty = hasStores ? Math.max(0, Math.round(Number(form.openingStock) || 0)) : 0;
+    const destinationStoreId = form.storeId || mainStore?.id;
+    const destinationStore = stores.find((store) => store.id === destinationStoreId);
+    const existingProduct = findCatalogueProductByName(products, name);
+    const alreadyInStore = destinationStoreId
+      ? storeHasProduct(destinationStoreId, name, items)
+      : Boolean(existingProduct);
+
+    if (alreadyInStore) {
       toast({
-        title: "Already in the catalogue",
-        description: `"${name}" is on the shelf list — adjust its stock from Inventory instead.`,
+        title: "Already in this store",
+        description: `"${name}" is already stocked${destinationStore ? ` in ${destinationStore.name}` : ""}. Adjust its stock through Stock Movement instead.`,
       });
       return;
     }
@@ -448,7 +446,61 @@ export function PharmacyCatalogue({
       form.lowStockTrigger.trim() === ""
         ? undefined
         : Math.max(0, Math.round(Number(form.lowStockTrigger) || 0));
-    const openingQty = hasStores ? Math.max(0, Math.round(Number(form.openingStock) || 0)) : 0;
+
+    // The catalogue record is shared by every store. Reuse it when the product
+    // is being stocked in a new store instead of creating a duplicate.
+    if (existingProduct) {
+      if (!destinationStoreId || openingQty <= 0) {
+        toast({
+          title: "Already in the catalogue",
+          description: `"${name}" is already in your catalogue. Choose a store and enter opening stock to add it there.`,
+        });
+        return;
+      }
+      const reorderLevel =
+        explicitTrigger ??
+        existingProduct.lowStockTrigger ??
+        Math.max(5, Math.round(openingQty * 0.25));
+      const nextItems: InventoryItem[] = [
+        ...items,
+        {
+          id: nextId(items, "inv"),
+          name: existingProduct.name,
+          category: existingProduct.category,
+          batch: `NEW-${new Date().getFullYear()}-${String(items.length + 1).padStart(2, "0")}`,
+          expiry: new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          qty: openingQty,
+          reorderLevel,
+          unitPrice: existingProduct.price,
+          storeId: destinationStoreId,
+          productId: existingProduct.id,
+        },
+      ];
+      setItems(nextItems);
+      saveInventory(nextItems);
+
+      if (actor.email) {
+        recordAudit({
+          title: "Opening Stock Added",
+          action: "Update",
+          detail: `${existingProduct.name} · ${openingQty} units to ${destinationStore?.name ?? "store"}`,
+          actor: actor.name,
+          email: actor.email,
+        });
+      }
+      void trackEvent("pharmacy_catalogue_store_stocked", {
+        product: existingProduct.id,
+        store: destinationStoreId,
+      });
+      toast({
+        title: `Opening stock added to ${destinationStore?.name ?? "store"}`,
+        description: `${openingQty} units of ${existingProduct.name} are now on that store's shelves.`,
+      });
+      setAddOpen(false);
+      resetForm();
+      return;
+    }
+
     const reorderLevel = explicitTrigger ?? Math.max(5, Math.round(openingQty * 0.25));
 
     const product: CatalogueProduct = {
@@ -467,7 +519,7 @@ export function PharmacyCatalogue({
     saveCatalogue(nextProducts);
 
     // Opening stock lands on the chosen store's shelves as a fresh batch.
-    if (openingQty > 0) {
+    if (openingQty > 0 && destinationStoreId) {
       const nextItems: InventoryItem[] = [
         ...items,
         {
@@ -479,7 +531,7 @@ export function PharmacyCatalogue({
           qty: openingQty,
           reorderLevel,
           unitPrice: product.price,
-          storeId: (form.storeId || mainStore?.id) as string,
+          storeId: destinationStoreId,
           productId: product.id,
         },
       ];
@@ -502,17 +554,32 @@ export function PharmacyCatalogue({
       title: `${product.name} added`,
       description:
         openingQty > 0
-          ? `${openingQty} units booked into ${stores.find((s) => s.id === (form.storeId || mainStore?.id))?.name ?? "the main store"}.`
+          ? `${openingQty} units booked into ${destinationStore?.name ?? "the main store"}.`
           : "Added to the catalogue — book stock in from Inventory when it arrives.",
     });
     setAddOpen(false);
     resetForm();
   };
 
-  const validImportRows = importRows.filter((row) => row.issues.length === 0);
+  const importStore = stores.find(
+    (store) => store.id === (importStoreId || mainStore?.id)
+  );
+  const checkedImportRows = useMemo(
+    () =>
+      importRows.map((row) => {
+        if (!importStore || row.issues.length > 0) return row;
+        if (!storeHasProduct(importStore.id, row.name, items)) return row;
+        return {
+          ...row,
+          issues: [...row.issues, `Already stocked in ${importStore.name}.`],
+        };
+      }),
+    [importRows, importStore, items]
+  );
+  const validImportRows = checkedImportRows.filter((row) => row.issues.length === 0);
   const importProducts = () => {
     if (validImportRows.length === 0) return;
-    const destinationStoreId = importStoreId || mainStore?.id;
+    const destinationStoreId = importStore?.id;
     if (!destinationStoreId && validImportRows.some((row) => row.quantity > 0)) {
       setImportError("Add a store before importing products with stock.");
       return;
@@ -521,31 +588,41 @@ export function PharmacyCatalogue({
     const now = Date.now();
     const nextProducts = [...products];
     const nextItems = [...items];
+    const existingByName = new Map<string, CatalogueProduct>();
+    for (const product of products) {
+      existingByName.set(normaliseProductName(product.name), product);
+    }
+    let catalogueChanged = false;
     let stockLinesAdded = 0;
     let unitsAdded = 0;
     for (const row of validImportRows) {
-      const product: CatalogueProduct = {
-        id: nextCatalogueId(nextProducts),
-        name: row.name,
-        category: row.category,
-        unit: row.unit,
-        price: row.price,
-        prescription: row.prescription,
-        note: row.note || undefined,
-        createdAt: now,
-      };
-      nextProducts.push(product);
+      let product = existingByName.get(normaliseProductName(row.name));
+      if (!product) {
+        product = {
+          id: nextCatalogueId(nextProducts),
+          name: row.name,
+          category: row.category,
+          unit: row.unit,
+          price: row.price,
+          prescription: row.prescription,
+          note: row.note || undefined,
+          createdAt: now,
+        };
+        nextProducts.push(product);
+        existingByName.set(normaliseProductName(product.name), product);
+        catalogueChanged = true;
+      }
 
       if (row.quantity > 0 && destinationStoreId) {
         nextItems.push({
           id: nextId(nextItems, "inv"),
-          name: row.name,
-          category: row.category,
+          name: product.name,
+          category: product.category,
           batch: `IMP-${new Date(now).getFullYear()}-${String(nextItems.length + 1).padStart(3, "0")}`,
           expiry: new Date(now + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
           qty: row.quantity,
           reorderLevel: Math.max(5, Math.round(row.quantity * 0.25)),
-          unitPrice: row.price,
+          unitPrice: product.price,
           storeId: destinationStoreId,
           productId: product.id,
         });
@@ -554,8 +631,10 @@ export function PharmacyCatalogue({
       }
     }
 
-    setProducts(nextProducts);
-    saveCatalogue(nextProducts);
+    if (catalogueChanged) {
+      setProducts(nextProducts);
+      saveCatalogue(nextProducts);
+    }
     if (stockLinesAdded > 0) {
       setItems(nextItems);
       saveInventory(nextItems);
@@ -575,8 +654,8 @@ export function PharmacyCatalogue({
     toast({
       title: `${validImportRows.length} product${validImportRows.length === 1 ? "" : "s"} imported`,
       description: unitsAdded > 0
-        ? `${unitsAdded} opening unit${unitsAdded === 1 ? "" : "s"} added to ${stores.find((store) => store.id === destinationStoreId)?.name ?? "the selected store"}.${skipped > 0 ? ` ${skipped} row${skipped === 1 ? " was" : "s were"} skipped; correct them in the spreadsheet and import again.` : ""}`
-        : `Products were added without opening stock.${skipped > 0 ? ` ${skipped} row${skipped === 1 ? " was" : "s were"} skipped; correct them in the spreadsheet and import again.` : ""}`,
+        ? `${unitsAdded} opening unit${unitsAdded === 1 ? "" : "s"} added to ${importStore?.name ?? "the selected store"}.${skipped > 0 ? ` ${skipped} row${skipped === 1 ? " was" : "s were"} skipped.` : ""}`
+        : `Product data was imported without opening stock.${skipped > 0 ? ` ${skipped} row${skipped === 1 ? " was" : "s were"} skipped.` : ""}`,
     });
     setImportOpen(false);
     resetImport();
@@ -587,13 +666,16 @@ export function PharmacyCatalogue({
 
   return (
     <div aria-labelledby="pharmacy-catalogue-title">
-      <PageHeader
-        icon={PackageSearch}
-        title="Product Catalogue"
-        subtitle="Every product you sell — prices, packs, prescription rules and live stock"
-        tourId="ph-catalogue"
-        actions={
-          <>
+      <h3 id="pharmacy-catalogue-title" className="sr-only">
+        Product Catalogue
+      </h3>
+
+      <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-3">
+        <p className="min-w-[min(100%,220px)] flex-1 text-[13px] text-slate-500 dark:text-slate-400">
+          Every product you sell — prices, packs, prescription rules and live stock.
+        </p>
+        {canManage && (
+          <div className="flex w-full flex-wrap items-center gap-2.5 sm:ml-auto sm:w-auto sm:shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -609,15 +691,12 @@ export function PharmacyCatalogue({
               <Plus className="h-4 w-4" aria-hidden="true" />
               Add product
             </button>
-          </>
-        }
-      />
-      <h2 id="pharmacy-catalogue-title" className="sr-only">
-        Product Catalogue
-      </h2>
+          </div>
+        )}
+      </div>
 
       {/* KPIs */}
-      <div className={cn(pharmacyCardCls, "mt-5 flex flex-wrap gap-3 p-4")}>
+      <div className={cn(pharmacyCardCls, "mt-4 flex flex-wrap gap-3 p-4")}>
         <KpiChip value={String(hydrated ? products.length : "—")} label="Products" />
         <KpiChip value={String(hydrated ? categories.length - 1 : "—")} label="Categories" />
         <KpiChip value={String(hydrated ? prescriptionCount : "—")} label="Prescription only" />
@@ -696,13 +775,15 @@ export function PharmacyCatalogue({
               <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
                 No products yet — add your first product to start the catalogue.
               </p>
-              <button
-                type="button"
-                onClick={() => setAddOpen(true)}
-                className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
-              >
-                Add product
-              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => setAddOpen(true)}
+                  className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-400"
+                >
+                  Add product
+                </button>
+              )}
             </>
           ) : (
             <>
@@ -791,7 +872,7 @@ export function PharmacyCatalogue({
           <DialogHeader>
             <DialogTitle>Add a product</DialogTitle>
             <DialogDescription>
-              New products join the catalogue instantly — opening stock lands on the chosen store's shelves.
+              New products join the catalogue; opening stock is booked into the selected store. Existing catalogue products can be stocked in another store without duplication.
             </DialogDescription>
           </DialogHeader>
 
@@ -800,8 +881,8 @@ export function PharmacyCatalogue({
               <div className="flex items-center gap-1.5">
                 <Label htmlFor="cat-name">Product name</Label>
                 <FieldHint label="Product name">
-                  Use the exact shelf name, including strength and pack size. Names must be unique in the
-                  catalogue.
+                  Use the exact shelf name, including strength and pack size. Names must be unique within
+                  each store.
                 </FieldHint>
               </div>
               <Input
@@ -1033,7 +1114,7 @@ export function PharmacyCatalogue({
           <DialogHeader>
             <DialogTitle>Import products from a spreadsheet</DialogTitle>
             <DialogDescription>
-              Add products with their shelf prices and opening quantities. New stock is booked into the selected store.
+              Add products with their shelf prices and opening quantities. Existing catalogue products are stocked in the selected store without being duplicated.
             </DialogDescription>
           </DialogHeader>
 
@@ -1095,6 +1176,10 @@ export function PharmacyCatalogue({
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+                  Already in your catalogue? It can be stocked in another store. Only a duplicate in
+                  this store is skipped.
+                </p>
               </div>
             ) : (
               <p className="rounded-lg bg-amber-50 px-3.5 py-3 text-[12.5px] text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
@@ -1130,7 +1215,7 @@ export function PharmacyCatalogue({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {importRows.slice(0, 100).map((row) => (
+                      {checkedImportRows.slice(0, 100).map((row) => (
                         <tr key={`${row.rowNumber}-${row.name}`} className={row.issues.length ? "bg-rose-50/60 dark:bg-rose-500/5" : ""}>
                           <td className="max-w-[220px] px-3 py-2">
                             <p className="truncate font-semibold text-slate-800 dark:text-slate-100">{row.rowNumber}. {row.name || "Unnamed product"}</p>

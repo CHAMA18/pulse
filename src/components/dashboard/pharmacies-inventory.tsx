@@ -6,6 +6,8 @@ import {
   listNetworkInventory,
   type NetworkInventoryItem,
 } from "@/lib/cloud/pharmacy-inventory";
+import { CachedNotice } from "@/components/offline/cached-notice";
+import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -16,6 +18,13 @@ import { cn } from "@/lib/utils";
 
 const cardCls =
   "rounded-2xl bg-white shadow-[0_1px_3px_rgba(88,28,135,0.06),0_10px_28px_-18px_rgba(88,28,135,0.14)] dark:bg-white/[0.045] dark:shadow-none dark:ring-1 dark:ring-white/10";
+
+const NETWORK_INVENTORY_CACHE_KEY = "dashboard-network-inventory";
+
+type CachedInventoryPage = {
+  items: NetworkInventoryItem[];
+  pharmacies: { id: string; name: string }[];
+};
 
 type OutletGroup = { key: string; name: string; items: NetworkInventoryItem[] };
 type PharmacyGroup = {
@@ -31,6 +40,7 @@ export function PharmaciesInventory() {
   const [items, setItems] = useState<NetworkInventoryItem[]>([]);
   const [directory, setDirectory] = useState<{ id: string; name: string }[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [pharmacyFilter, setPharmacyFilter] = useState("all");
 
@@ -40,14 +50,28 @@ export function PharmaciesInventory() {
       const page = await listNetworkInventory(1000);
       setItems(page.items);
       setDirectory(page.pharmacies);
+      setSavedAt(null);
       setState("ready");
+      saveCachedRead<CachedInventoryPage>(NETWORK_INVENTORY_CACHE_KEY, page);
     } catch {
-      setState("failed");
+      // Offline or rules — fall back to the last synced network picture.
+      const cached = loadCachedRead<CachedInventoryPage>(NETWORK_INVENTORY_CACHE_KEY);
+      if (cached) {
+        setItems(cached.data.items);
+        setDirectory(cached.data.pharmacies);
+        setSavedAt(cached.cachedAt);
+        setState("ready");
+      } else {
+        setState("failed");
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    const raf = requestAnimationFrame(() => {
+      void load();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [load]);
 
   const groups = useMemo<PharmacyGroup[]>(() => {
@@ -108,6 +132,8 @@ export function PharmaciesInventory() {
         </button>
       </div>
 
+      {savedAt !== null && <CachedNotice cachedAt={savedAt} />}
+
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
         {[
           { label: "Registered pharmacies", value: state === "ready" ? String(totals.pharmacies) : "—", desc: "On the Pulse network" },
@@ -140,7 +166,7 @@ export function PharmaciesInventory() {
         <div className={cn(cardCls, "p-8 text-center")}>
           <p className="text-[14px] font-semibold text-slate-900 dark:text-white">Network inventory is unavailable</p>
           <p className="mx-auto mt-1.5 max-w-md text-[13.5px] text-slate-500 dark:text-slate-400">
-            The live shelves feed needs a Pulse Owner or Admin session. If you are signed in as one, Refresh to try again.
+            The live shelves feed needs an active Pulse console session. Check your connection, then Refresh to try again.
           </p>
         </div>
       ) : state === "loading" ? (

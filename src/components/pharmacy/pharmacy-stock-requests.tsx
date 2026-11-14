@@ -27,6 +27,7 @@ import {
   type RequestStatus,
   type StockRequest,
 } from "@/components/pharmacy/pharmacy-data";
+import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
 import { nextRequestStatus, type StockRequestAction } from "@/lib/pharmacy-stock";
 import {
   PageHeader,
@@ -651,6 +652,7 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [tab, setTab] = useState<"requests" | "orders">("requests");
   const [actor, setActor] = useState({ name: "", email: "" });
 
   useEffect(() => {
@@ -766,22 +768,57 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
       <PageHeader
         icon={ClipboardList}
         title="Stock Requests"
-        subtitle="Replenishment requests to the Pulse hub"
+        subtitle="Replenishment from the hub and purchase orders to suppliers — one page"
         tourId="ph-requests"
         actions={
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
-          >
-            <PackagePlus className="h-4 w-4" aria-hidden="true" />
-            New request
-          </button>
+          tab === "requests" ? (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="inline-flex h-10 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
+            >
+              <PackagePlus className="h-4 w-4" aria-hidden="true" />
+              New request
+            </button>
+          ) : undefined
         }
       />
       <h2 id="pharmacy-requests-title" className="sr-only">
         Stock Requests
       </h2>
+
+      {/* One page, two queues: replenishment from the hub, orders to suppliers. */}
+      <div
+        role="tablist"
+        aria-label="Stock requests and purchase orders"
+        className="mt-5 flex w-fit gap-1 rounded-full border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/5"
+      >
+        {([
+          { id: "requests" as const, label: "Stock requests" },
+          { id: "orders" as const, label: "Purchase orders" },
+        ]).map(({ id, label }) => {
+          const active = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(id)}
+              className={cn(
+                "inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
+                active
+                  ? "bg-purple-600 text-white shadow-[0_6px_16px_-6px_rgba(147,51,234,0.7)]"
+                  : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/10"
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div role="tabpanel" aria-label="Stock requests" hidden={tab !== "requests"}>
 
       {/* Status chips */}
       <div className={cn(pharmacyCardCls, "mt-5 flex flex-wrap gap-3 p-4")}>
@@ -886,6 +923,11 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
         actor={actor}
         storeId={storeId}
       />
+      </div>
+
+      <div role="tabpanel" aria-label="Purchase orders" hidden={tab !== "orders"}>
+        <PharmacyPurchaseOrders storeId={storeId} />
+      </div>
     </div>
   );
 }

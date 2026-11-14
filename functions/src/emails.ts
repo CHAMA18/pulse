@@ -361,7 +361,7 @@ export function pharmacyWelcomeEmail(params: {
         <tr><td style="font-family:${FONT};">
           <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:${INK};">Your first week, mapped</p>
           <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">1.</strong> Declare your main store under <strong style="color:${INK};">Stores</strong> — it becomes the application's home.</p>
-          <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">2.</strong> Load your shelves under <strong style="color:${INK};">Product Catalogue</strong>, then watch <strong style="color:${INK};">Stock Balance</strong> come alive.</p>
+          <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">2.</strong> Load your shelves under <strong style="color:${INK};">Inventory</strong>, then watch <strong style="color:${INK};">Stock Balance</strong> come alive.</p>
           <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">3.</strong> Invite your team under <strong style="color:${INK};">User Management</strong> — every invitation is a branded email.</p>
           <p style="margin:0;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">4.</strong> Make your first sale at the <strong style="color:${INK};">Point of Sale</strong> — the whole checkout takes under two minutes.</p>
         </td></tr>
@@ -382,7 +382,7 @@ export function pharmacyWelcomeEmail(params: {
       "",
       "Your first week, mapped:",
       "1. Declare your main store under Stores.",
-      "2. Load your shelves under Product Catalogue; watch Stock Balance.",
+      "2. Load your shelves under Inventory; watch Stock Balance.",
       "3. Invite your team under User Management.",
       "4. Make your first sale at the Point of Sale.",
       "",
@@ -431,7 +431,7 @@ export function pulseAdminInviteEmail(params: {
         { title: "Enter the console", body: "Your network view is ready when you are." },
       ],
       security: true,
-      footerNote: `The Pulse console is the network side of Pulse &mdash; pharmacies, stock visibility, suppliers and the audit trail, in one live view.`,
+      footerNote: `The Pulse console is the network side of Pulse &mdash; pharmacies, stock visibility and the audit trail, in one live view.`,
       reason: `${params.inviterName} invited you to the Pulse console.`,
     }),
     text: [
@@ -617,6 +617,231 @@ export function lowStockAlertEmail(params: LowStockAlertParams): EmailContent {
       count === 1
         ? `Low stock: ${items[0]?.name ?? "1 item"} in ${params.pharmacyName}`
         : `Low stock: ${count} items in ${params.pharmacyName}`,
+    html,
+    text,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Pharmacy receipt — POS sale complete                                */
+/* ------------------------------------------------------------------ */
+
+export type ReceiptEmailLine = {
+  name: string;
+  qty: number;
+  unitPrice: number;
+};
+
+export type ReceiptEmailParams = {
+  pharmacyName: string;
+  storeName: string;
+  receiptId: string;
+  soldAt: string;
+  lines: ReceiptEmailLine[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  method: "cash" | "mobile" | "card";
+  tendered?: number;
+  change?: number;
+  servedBy: string;
+};
+
+function receiptMoney(amount: number): string {
+  return `ZMW ${Math.round(amount).toLocaleString("en-US")}`;
+}
+
+function receiptInitial(name: string): string {
+  return Array.from(name.trim() || "P")[0]?.toUpperCase() ?? "P";
+}
+
+/**
+ * The customer's emailed receipt. The header carries the registered
+ * pharmacy's letter-mark logo and trading name, while the slip itself keeps
+ * the store, cashier and every line from the sale-complete dialog.
+ */
+export function receiptEmail(params: ReceiptEmailParams): EmailContent {
+  const initial = receiptInitial(params.pharmacyName);
+  const payment =
+    params.method === "mobile" ? "Mobile money" : params.method === "card" ? "Card" : "Cash";
+  const preheader = `Your receipt ${params.receiptId} from ${params.storeName} — ${receiptMoney(params.total)}.`;
+
+  const lineRows = params.lines
+    .map((line, index) => {
+      const border = index === params.lines.length - 1 ? "none" : `1px solid ${BORDER}`;
+      return `<tr>
+  <td style="padding:11px 0;border-bottom:${border};font-family:${FONT};font-size:13px;line-height:1.5;color:${INK};">
+    <span style="font-weight:700;">${esc(line.name)}</span>
+    <span style="color:${FAINT};"> &times;${esc(String(line.qty))}</span>
+    <div style="padding-top:2px;font-size:11px;line-height:1.4;color:${FAINT};">${esc(receiptMoney(line.unitPrice))} each</div>
+  </td>
+  <td align="right" style="padding:11px 0 11px 12px;border-bottom:${border};font-family:${FONT};font-size:13px;font-weight:700;white-space:nowrap;color:${INK};">
+    ${esc(receiptMoney(line.qty * line.unitPrice))}
+  </td>
+</tr>`;
+    })
+    .join("");
+
+  const discountRow =
+    params.discount > 0
+      ? `<tr>
+  <td style="padding:6px 0;font-family:${FONT};font-size:12.5px;color:${MUTED};">Discount</td>
+  <td align="right" style="padding:6px 0 6px 12px;font-family:${FONT};font-size:12.5px;font-weight:600;color:${MUTED};">−${esc(receiptMoney(params.discount))}</td>
+</tr>`
+      : "";
+
+  const cashRows =
+    params.method === "cash"
+      ? `<tr>
+  <td style="padding:6px 0;font-family:${FONT};font-size:12.5px;color:${MUTED};">Cash received</td>
+  <td align="right" style="padding:6px 0 6px 12px;font-family:${FONT};font-size:12.5px;font-weight:600;color:${INK};">${esc(receiptMoney(params.tendered ?? 0))}</td>
+</tr>
+<tr>
+  <td style="padding:6px 0;font-family:${FONT};font-size:12.5px;color:${MUTED};">Change</td>
+  <td align="right" style="padding:6px 0 6px 12px;font-family:${FONT};font-size:12.5px;font-weight:600;color:${INK};">${esc(receiptMoney(params.change ?? 0))}</td>
+</tr>`
+      : "";
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="x-apple-disable-message-reformatting" />
+<meta name="color-scheme" content="light only" />
+<meta name="supported-color-schemes" content="light only" />
+<title>${esc(`Receipt ${params.receiptId} · ${params.pharmacyName}`)}</title>
+<style>
+  #outlook a { padding:0; }
+  body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+  table, td { mso-table-lspace:0pt !important; mso-table-rspace:0pt !important; border-collapse:collapse !important; }
+  img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+  @media only screen and (max-width:620px) {
+    .wrap { width:100% !important; max-width:100% !important; }
+    .pad { padding-left:24px !important; padding-right:24px !important; }
+    .card-pad { padding-left:16px !important; padding-right:16px !important; }
+    .h1 { font-size:25px !important; line-height:1.2 !important; }
+    .hide { display:none !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:${CANVAS};-webkit-font-smoothing:antialiased;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${esc(preheader)}&#8203;&zwnj;&nbsp;&#8203;&zwnj;&nbsp;&#8203;&zwnj;&nbsp;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CANVAS}" style="background-color:${CANVAS};">
+<tr><td align="center" style="padding:32px 12px;">
+  <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="wrap" style="width:600px;max-width:100%;background-color:#ffffff;border:1px solid ${BORDER};border-radius:20px;overflow:hidden;box-shadow:0 20px 44px -24px rgba(23,19,33,0.22);">
+    <tr><td class="pad" style="padding:26px 32px 22px;border-bottom:1px solid ${BORDER};background-color:#ffffff;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+        <td width="56" valign="middle" style="width:56px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td width="52" height="52" align="center" bgcolor="${BRAND_PURPLE}" style="width:52px;height:52px;border-radius:14px;background-color:${BRAND_PURPLE};font-family:${FONT};font-size:23px;font-weight:800;line-height:52px;color:#ffffff;">${esc(initial)}</td>
+          </tr></table>
+        </td>
+        <td valign="middle" style="padding-left:14px;">
+          <div style="font-family:${FONT};font-size:20px;font-weight:800;line-height:1.15;letter-spacing:-0.4px;color:${INK};">${esc(params.pharmacyName)}</div>
+          <div style="padding-top:4px;font-family:${FONT};font-size:8.5px;font-weight:800;letter-spacing:1.8px;text-transform:uppercase;color:${FAINT};">Official receipt</div>
+        </td>
+        <td align="right" valign="middle" class="hide" style="font-family:${FONT};font-size:10px;font-weight:700;line-height:1.5;color:${FAINT};white-space:nowrap;">
+          ${esc(params.receiptId)}<br />${esc(params.storeName)}
+        </td>
+      </tr></table>
+    </td></tr>
+
+    <tr><td class="pad" style="padding:30px 32px 0;font-family:${FONT};color:${INK};">
+      <p style="margin:0;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:${BRAND_PURPLE};">Thank you for your purchase</p>
+      <h1 class="h1" style="margin:12px 0 0;font-family:${FONT};font-size:29px;line-height:1.18;font-weight:800;letter-spacing:-0.7px;color:${INK};">Your receipt is ready</h1>
+      <p style="margin:12px 0 0;font-size:13.5px;line-height:1.7;color:${MUTED};">
+        ${esc(params.storeName)} &middot; ${esc(params.soldAt)}<br />
+        Served by <strong style="color:${INK};">${esc(params.servedBy)}</strong>
+      </p>
+    </td></tr>
+
+    <tr><td class="pad" style="padding:22px 32px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${SURFACE};border:1px solid ${BORDER};border-radius:16px;">
+        <tr><td class="card-pad" style="padding:18px 20px 8px;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#9a92ad;">Items</td></tr>
+        <tr><td class="card-pad" style="padding:0 20px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${lineRows}</table>
+        </td></tr>
+        <tr><td class="card-pad" style="padding:2px 20px 18px;">
+          <div style="height:1px;background-color:${BORDER};font-size:0;line-height:0;">&nbsp;</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="padding-top:8px;">
+            <tr>
+              <td style="padding:6px 0;font-family:${FONT};font-size:12.5px;color:${MUTED};">Subtotal</td>
+              <td align="right" style="padding:6px 0 6px 12px;font-family:${FONT};font-size:12.5px;font-weight:600;color:${INK};">${esc(receiptMoney(params.subtotal))}</td>
+            </tr>
+            ${discountRow}
+            <tr>
+              <td style="padding:10px 0 4px;border-top:1px solid ${BORDER};font-family:${FONT};font-size:14px;font-weight:800;color:${INK};">TOTAL</td>
+              <td align="right" style="padding:10px 0 4px 12px;border-top:1px solid ${BORDER};font-family:${FONT};font-size:16px;font-weight:800;color:${INK};">${esc(receiptMoney(params.total))}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-family:${FONT};font-size:12.5px;color:${MUTED};">Paid with</td>
+              <td align="right" style="padding:6px 0 6px 12px;font-family:${FONT};font-size:12.5px;font-weight:700;color:${INK};">${esc(payment)}</td>
+            </tr>
+            ${cashRows}
+          </table>
+        </td></tr>
+      </table>
+    </td></tr>
+
+    <tr><td class="pad" style="padding:24px 32px 0;font-family:${FONT};">
+      <p style="margin:0;font-size:13.5px;line-height:1.7;color:${MUTED};">
+        Thank you for choosing <strong style="color:${INK};">${esc(params.pharmacyName)}</strong>.
+        Please keep this email for your records.
+      </p>
+    </td></tr>
+
+    <tr><td class="pad" style="padding:24px 32px 26px;font-family:${FONT};">
+      <div style="height:1px;background-color:${BORDER};font-size:0;line-height:0;">&nbsp;</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;"><tr>
+        <td width="26" valign="middle" style="width:26px;">
+          <img src="${LOGO_URL}" width="26" height="26" alt="Pulse" style="display:block;width:26px;height:26px;border:0;border-radius:7px;" />
+        </td>
+        <td valign="middle" style="padding-left:8px;font-size:9px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:#a39cb0;">Pulse &middot; Pharmacy intelligence, delivered</td>
+      </tr></table>
+      <p style="margin:10px 0 0;font-size:10.5px;line-height:1.7;color:#a39cb0;">
+        Receipt ${esc(params.receiptId)} &middot; ${esc(params.storeName)} &middot; ${esc(params.pharmacyName)}
+      </p>
+    </td></tr>
+  </table>
+
+  <p style="margin:16px auto 0;max-width:500px;text-align:center;font-family:${FONT};font-size:10px;line-height:1.6;color:#a39cb0;">
+    Sent by Pulse on behalf of ${esc(params.pharmacyName)} &middot; This is a transactional receipt message.
+  </p>
+</td></tr>
+</table>
+</body>
+</html>`;
+
+  const text = [
+    `${params.pharmacyName}`,
+    `Official receipt · ${params.receiptId}`,
+    `${params.storeName} · ${params.soldAt}`,
+    `Served by ${params.servedBy}`,
+    "",
+    ...params.lines.map(
+      (line) => `${line.name} ×${line.qty}  ${receiptMoney(line.qty * line.unitPrice)}`
+    ),
+    "",
+    `Subtotal: ${receiptMoney(params.subtotal)}`,
+    ...(params.discount > 0 ? [`Discount: −${receiptMoney(params.discount)}`] : []),
+    `TOTAL: ${receiptMoney(params.total)}`,
+    `Paid with: ${payment}`,
+    ...(params.method === "cash"
+      ? [
+          `Cash received: ${receiptMoney(params.tendered ?? 0)}`,
+          `Change: ${receiptMoney(params.change ?? 0)}`,
+        ]
+      : []),
+    "",
+    `Thank you for choosing ${params.pharmacyName}.`,
+    "Please keep this email for your records.",
+    "",
+    "— Pulse · Pharmacy intelligence, delivered",
+  ].join("\n");
+
+  return {
+    subject: `Your receipt from ${params.pharmacyName} · ${params.receiptId}`,
     html,
     text,
   };

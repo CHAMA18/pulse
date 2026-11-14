@@ -5,11 +5,12 @@
 /* ------------------------------------------------------------------ */
 /* The app has two post-authentication experiences: the Pulse admin    */
 /* console (/dashboard) and the Pharmacy portal console (/pharmacy).   */
-/* The portal chosen at sign-in is persisted so the session always     */
-/* opens the matching interface — including restored "remember me"     */
-/* sessions and direct URL visits.                                     */
+/* The portal is resolved from the account (or its invitation) and     */
+/* persisted so a restored session opens the matching interface.       */
 
-export type Portal = "pulse" | "pharmacy";
+import type { Portal } from "@/lib/account-policy";
+
+export type { Portal };
 
 const PORTAL_STORAGE_KEY = "pulse.portal.v1";
 
@@ -24,7 +25,7 @@ export function getStoredPortal(): Portal | null {
   }
 }
 
-/** Records the portal used at sign-in / registration. */
+/** Records the portal resolved at sign-in / registration. */
 export function setStoredPortal(portal: Portal): void {
   if (typeof window === "undefined") return;
   try {

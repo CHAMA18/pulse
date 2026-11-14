@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { PulseMark } from "@/components/login/pulse-logo";
 import { PulseBackground } from "@/components/login/pulse-background";
-import { RELEASES_URL } from "@/components/login/download-buttons";
 
 /**
  * Shared page chrome for the marketing landing (/) and sign-in screen
@@ -109,12 +108,7 @@ export function SiteFooter() {
               <li><a className="footer-link" href="/#features">Features</a></li>
               <li><a className="footer-link" href="/#portals">Portals</a></li>
               <li>
-                <a
-                  className="footer-link"
-                  href={RELEASES_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <a className="footer-link" href="#desktop">
                   Desktop apps
                 </a>
               </li>

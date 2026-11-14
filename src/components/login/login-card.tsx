@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion, MotionConfig } from "framer-motion";
+import { motion, MotionConfig } from "framer-motion";
 import {
   AlertCircle,
   CheckCircle2,
@@ -9,10 +9,7 @@ import {
   Loader2,
   Lock,
   Mail,
-  Pill,
   TriangleAlert,
-  UserRound,
-  type LucideIcon,
 } from "lucide-react";
 import {
   browserLocalPersistence,
@@ -21,6 +18,7 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  type User,
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -35,17 +33,58 @@ import {
   type InvitationRecord,
 } from "@/lib/cloud/invitations";
 import { cn } from "@/lib/utils";
-import { routeForPortal, setStoredPortal } from "@/lib/portal";
+import { routeForPortal, setStoredPortal, type Portal } from "@/lib/portal";
 import {
   authErrorCode,
   describeAuthError,
+  ensurePulseAdminProfile,
   getFirebaseAuth,
   googleProvider,
-  isAdminUser,
+  resolveAccountAccess,
   trackEvent,
 } from "@/lib/firebase";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+type LoginPortalResult = { portal: Portal } | { error: string };
+
+/**
+ * Selects the console for a signed-in account. The invitation is the explicit
+ * authority; otherwise the stored account type wins, with the email policy
+ * filling the gap for a first-time Pulse admin (for example, Google sign-in).
+ */
+async function resolveLoginPortal(
+  user: User,
+  inviteMatch: InvitationRecord | null
+): Promise<LoginPortalResult> {
+  if (inviteMatch) {
+    try {
+      await acceptInvitation(inviteMatch.id);
+    } catch {
+      /* already accepted — the account still signs in to the right portal */
+    }
+    return { portal: inviteMatch.portal };
+  }
+
+  const access = await resolveAccountAccess(user);
+  if (!access) {
+    return {
+      error:
+        "No Pulse account is linked to this email. Create an account below or ask your pharmacy owner for an invitation.",
+    };
+  }
+  if (access.revoked) {
+    return {
+      error: "This account's access has been revoked. Contact your administrator.",
+    };
+  }
+  if (access.source === "email") {
+    // A first-time admin signing in with Google (or an account whose profile
+    // predates this flow) gets the canonical console profile created now.
+    await ensurePulseAdminProfile(user);
+  }
+  return { portal: access.portal };
+}
 
 const container = {
   hidden: {},
@@ -63,62 +102,6 @@ const item = {
 };
 
 type Status = "idle" | "loading" | "success";
-type Portal = "pulse" | "pharmacy";
-
-const PORTALS: { id: Portal; label: string; icon: LucideIcon }[] = [
-  { id: "pulse", label: "Pulse", icon: UserRound },
-  { id: "pharmacy", label: "Pharmacy", icon: Pill },
-];
-
-/**
- * Segmented control for choosing the authentication portal.
- * The active thumb slides between segments (shared layout animation).
- */
-function PortalToggle({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: Portal;
-  onChange: (portal: Portal) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="Authentication portal"
-      className="relative grid grid-cols-2 gap-1 rounded-md border border-slate-200 bg-slate-100/80 p-1"
-    >
-      {PORTALS.map(({ id, label, icon: Icon }) => {
-        const active = value === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={active}
-            disabled={disabled}
-            onClick={() => onChange(id)}
-            className={cn(
-              "relative flex h-10 items-center justify-center gap-1.5 rounded-[4px] text-[13.5px] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-60",
-              active ? "text-white" : "text-slate-500 hover:text-slate-700"
-            )}
-          >
-            {active && (
-              <motion.span
-                layoutId="portal-thumb"
-                transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                className="btn-brand absolute inset-0 rounded-[4px] shadow-[0_4px_12px_-4px_rgba(168,85,247,0.7)]"
-                aria-hidden="true"
-              />
-            )}
-            <Icon className="relative z-10 h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
-            <span className="relative z-10">{label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 export function LoginCard({
   initialMode = "login",
@@ -136,7 +119,6 @@ export function LoginCard({
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
-  const [portal, setPortal] = useState<Portal>(initialMode === "register" ? "pharmacy" : "pulse");
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -146,12 +128,12 @@ export function LoginCard({
   const [registerInvitation, setRegisterInvitation] = useState<InvitationRecord | null>(null);
 
   // Deep-link support: /login?intent=register (the landing page's Register
-  // button) opens the pharmacy registration dialog on arrival. Read from
-  // window.location on mount so the route stays fully static-exportable.
+  // button) opens the unified account creation dialog on arrival. The email
+  // entered there decides admin versus pharmacy — never a portal toggle.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("intent") === "register") {
-      setRegisterOpen(true);
-    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("intent") !== "register") return;
+    setRegisterOpen(true);
   }, []);
 
   // Invitation links land here with ?invite=<id>. Resolve the record before
@@ -177,7 +159,6 @@ export function LoginCard({
         setInvitation(record);
         setRegisterInvitation(record);
         setEmail(record.email);
-        setPortal(record.portal);
         setRegisterOpen(true);
       } catch {
         if (active) {
@@ -251,7 +232,7 @@ export function LoginCard({
 
     setFormError(null);
     setStatus("loading");
-    void trackEvent("login_attempt", { method: "password", portal });
+    void trackEvent("login_attempt", { method: "password" });
     try {
       // "Remember me" → keep the session across browser restarts (local),
       // otherwise end it when the tab closes (session).
@@ -268,28 +249,18 @@ export function LoginCard({
         invitation && user.email?.trim().toLowerCase() === invitation.email.trim().toLowerCase()
           ? invitation
           : null;
-      const effectivePortal = inviteMatch ? inviteMatch.portal : portal;
-
-      // Pharmacy portal: refuse sessions without elevated (admin) rights.
-      if (effectivePortal === "pharmacy" && !(await isAdminUser(user))) {
+      const resolved = await resolveLoginPortal(user, inviteMatch);
+      if ("error" in resolved) {
         await signOut(auth);
         setStatus("idle");
-        void trackEvent("login_failure", { method: "password", portal: effectivePortal, reason: "not_pharmacy_admin" });
-        setFormError("This account doesn't have Pharmacy portal access. Use the Pulse portal instead.");
+        void trackEvent("login_failure", { method: "password", reason: "no_portal_access" });
+        setFormError(resolved.error);
         return;
       }
-
-      if (inviteMatch) {
-        try {
-          await acceptInvitation(inviteMatch.id);
-        } catch {
-          /* already accepted — the account still signs in to the right portal */
-        }
-        setPortal(inviteMatch.portal);
-      }
+      const effectivePortal = resolved.portal;
 
       setStatus("success");
-      // The portal chosen at sign-in decides which console the session opens.
+      // The account and invitation decide which console the session opens.
       setStoredPortal(effectivePortal);
       void trackEvent("login", { method: "password", status: "success", portal: effectivePortal });
       const firstName = (user.displayName ?? user.email?.split("@")[0] ?? "there").split(" ")[0];
@@ -304,7 +275,7 @@ export function LoginCard({
       window.setTimeout(() => router.push(routeForPortal(effectivePortal)), 900);
     } catch (err) {
       setStatus("idle");
-      void trackEvent("login_failure", { method: "password", portal, reason: authErrorCode(err) });
+      void trackEvent("login_failure", { method: "password", reason: authErrorCode(err) });
       setFormError(describeAuthError(err));
     }
   };
@@ -321,7 +292,7 @@ export function LoginCard({
       return;
     }
     setGoogleLoading(true);
-    void trackEvent("login_attempt", { method: "google", portal });
+    void trackEvent("login_attempt", { method: "google" });
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
@@ -330,28 +301,18 @@ export function LoginCard({
         invitation && user.email?.trim().toLowerCase() === invitation.email.trim().toLowerCase()
           ? invitation
           : null;
-      const effectivePortal = inviteMatch ? inviteMatch.portal : portal;
-
-      // Pharmacy portal: refuse sessions without elevated (admin) rights.
-      if (effectivePortal === "pharmacy" && !(await isAdminUser(user))) {
+      const resolved = await resolveLoginPortal(user, inviteMatch);
+      if ("error" in resolved) {
         await signOut(auth);
-        void trackEvent("login_failure", { method: "google", portal: effectivePortal, reason: "not_pharmacy_admin" });
+        void trackEvent("login_failure", { method: "google", reason: "no_portal_access" });
         toast({
-          title: "Pharmacy access required",
-          description: "This account doesn't have Pharmacy portal access. Use the Pulse portal instead.",
+          title: "No portal access",
+          description: resolved.error,
           variant: "destructive",
         });
         return;
       }
-
-      if (inviteMatch) {
-        try {
-          await acceptInvitation(inviteMatch.id);
-        } catch {
-          /* already accepted — the account still signs in to the right portal */
-        }
-        setPortal(inviteMatch.portal);
-      }
+      const effectivePortal = resolved.portal;
 
       void trackEvent("login", { method: "google", status: "success", portal: effectivePortal });
       setStoredPortal(effectivePortal);
@@ -363,7 +324,7 @@ export function LoginCard({
       window.setTimeout(() => router.push(routeForPortal(effectivePortal)), 900);
     } catch (err) {
       const code = authErrorCode(err);
-      void trackEvent("login_failure", { method: "google", portal, reason: code });
+      void trackEvent("login_failure", { method: "google", reason: code });
       if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
         toast({ title: "Google sign-in cancelled" });
       } else {
@@ -416,12 +377,10 @@ export function LoginCard({
               id="login-heading"
               className="text-[26px] font-semibold tracking-tight text-slate-900 sm:text-[30px]"
             >
-              {portal === "pharmacy" ? "Pharmacy Portal" : "Welcome Back"}
+              Welcome to Pulse
             </h2>
             <p className="mt-1.5 text-[13.5px] text-slate-500">
-              {portal === "pharmacy"
-                ? "Sign in with your pharmacy account to manage Pulse."
-                : "Let\u2019s get started by filling out the form below."}
+              One account for your pharmacy, your team and the Pulse network.
             </p>
           </motion.div>
 
@@ -460,32 +419,6 @@ export function LoginCard({
               </div>
             </motion.div>
           )}
-
-          {/* Portal toggle */}
-          <motion.div variants={item} className="mt-5">
-            <PortalToggle
-              value={portal}
-              onChange={(next) => {
-                setPortal(next);
-                setFormError(null);
-              }}
-              disabled={status === "loading"}
-            />
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.p
-                key={portal}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-                className="mt-2 text-center text-[12px] text-slate-400"
-              >
-                {portal === "pharmacy"
-                  ? "For pharmacy administrators"
-                  : "For the Pulse network team"}
-              </motion.p>
-            </AnimatePresence>
-          </motion.div>
 
           {/* Form */}
           <motion.form variants={item} onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
@@ -683,39 +616,20 @@ export function LoginCard({
             </motion.button>
           </motion.div>
 
-          {/* Register */}
-          {portal === "pulse" && (
-            <motion.p variants={item} className="mt-5 text-center text-[13.5px] text-slate-500">
-              Don&rsquo;t have an account?{" "}
-              <button
-                type="button"
-                onClick={() =>
-                  toast({
-                    title: "Registration is invite-only",
-                    description: "Ask your facility administrator for a Pulse invitation.",
-                  })
-                }
-                className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
-              >
-                Register
-              </button>
-            </motion.p>
-          )}
-          {portal === "pharmacy" && (
-            <motion.p variants={item} className="mt-5 text-center text-[13.5px] text-slate-500">
-              New pharmacy?{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setRegisterInvitation(null);
-                  setRegisterOpen(true);
-                }}
-                className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
-              >
-                Register your pharmacy
-              </button>
-            </motion.p>
-          )}
+          {/* Unified account creation — the email decides the account type. */}
+          <motion.p variants={item} className="mt-5 text-center text-[13.5px] text-slate-500">
+            New to Pulse?{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setRegisterInvitation(null);
+                setRegisterOpen(true);
+              }}
+              className="rounded-md font-medium text-fuchsia-600 transition-colors hover:text-fuchsia-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-500"
+            >
+              Create an account
+            </button>
+          </motion.p>
 
         </motion.div>
       </motion.section>

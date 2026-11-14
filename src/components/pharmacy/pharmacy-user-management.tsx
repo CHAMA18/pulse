@@ -119,7 +119,6 @@ const CAPABILITIES: string[] = [
   "Create stock requests",
   "Approve stock requests",
   "Record deliveries",
-  "Supplier directory",
   "Manage stores",
   "Invite & manage users",
   "Billing & subscription",
@@ -127,11 +126,11 @@ const CAPABILITIES: string[] = [
 ];
 
 const ROLE_ACCESS: Record<PharmacyRole, boolean[]> = {
-  owner: [true, true, true, true, true, true, true, true, true, true, true],
-  manager: [true, true, true, true, true, true, true, true, true, false, false],
-  pharmacist: [true, true, true, true, true, true, true, false, false, false, false],
-  technician: [true, true, true, true, false, true, false, false, false, false, false],
-  cashier: [true, true, false, true, false, false, false, false, false, false, false],
+  owner: [true, true, true, true, true, true, true, true, true, true],
+  manager: [true, true, true, true, true, true, true, true, false, false],
+  pharmacist: [true, true, true, true, true, true, false, false, false, false],
+  technician: [true, true, true, true, false, true, false, false, false, false],
+  cashier: [true, true, false, true, false, false, false, false, false, false],
 };
 
 function loadMembers(): PharmacyMember[] {

@@ -20,12 +20,15 @@ import {
   MOVEMENT_REASONS,
   MOVEMENT_TYPE_META,
   formatZMW,
+  loadCatalogue,
   loadInventory,
   loadMovements,
+  nextId,
   nextMovementId,
   resolveStoreId,
   saveInventory,
   saveMovements,
+  type CatalogueProduct,
   type InventoryItem,
   type MovementType,
   type PharmacyStore,
@@ -128,6 +131,9 @@ function QtyCell({ qty, type }: { qty: number; type: MovementType }) {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/** A shelf row, or a catalogue product that has never held stock. */
+type MovementItem = InventoryItem & { pending?: boolean };
+
 function RecordMovementDialog({
   open,
   onOpenChange,
@@ -137,11 +143,11 @@ function RecordMovementDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  items: InventoryItem[];
+  items: MovementItem[];
   stores: PharmacyStore[];
   onRecord: (input: {
     type: MovementType;
-    item: InventoryItem;
+    item: MovementItem;
     qty: number;
     direction: "in" | "out";
     toStoreId?: string;
@@ -195,6 +201,13 @@ function RecordMovementDialog({
     }
     if (type === "issue" && selectedItem && parsedQty > selectedItem.qty) {
       next.qty = `Only ${selectedItem.qty} on the shelf.`;
+    }
+    const outbound =
+      type === "issue" ||
+      type === "transfer" ||
+      ((type === "adjustment" || type === "return") && direction === "out");
+    if (selectedItem?.pending && outbound) {
+      next.qty = "No stock on the shelf yet — record a receipt first.";
     }
     setErrors(next);
     if (Object.keys(next).length > 0 || !selectedItem) return;
@@ -286,14 +299,18 @@ function RecordMovementDialog({
               <option value="">Choose a product…</option>
               {items.map((entry) => (
                 <option key={entry.id} value={entry.id}>
-                  {entry.name} · {entry.batch} · {entry.qty} on shelf ({storeName(resolveStoreId(entry))})
+                  {entry.name}
+                  {entry.pending
+                    ? " · no stock yet"
+                    : ` · ${entry.batch} · ${entry.qty} on shelf`}{" "}
+                  ({storeName(resolveStoreId(entry))})
                 </option>
               ))}
             </select>
             {errorCls("item")}
             {items.length === 0 && (
               <p className="mt-1.5 text-[12px] text-amber-600 dark:text-amber-400">
-                No stock recorded yet — add a product with opening stock before recording a movement.
+                No products in your catalogue yet — add a product before recording a movement.
               </p>
             )}
             {selectedItem && (
@@ -463,6 +480,7 @@ export function PharmacyStockMovement({
 
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [catalogue, setCatalogue] = useState<CatalogueProduct[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<MovementFilter>("all");
@@ -472,6 +490,7 @@ export function PharmacyStockMovement({
     const raf = requestAnimationFrame(() => {
       setMovements(loadMovements());
       setItems(loadInventory());
+      setCatalogue(loadCatalogue());
       setHydrated(true);
     });
     return () => cancelAnimationFrame(raf);
@@ -516,10 +535,46 @@ export function PharmacyStockMovement({
   const storeName = (id?: string) =>
     id ? (stores.find((store) => store.id === id)?.name ?? "Store") : "Main store";
 
+  // Catalogue products with no shelf row yet stay selectable: a receipt books
+  // their first batch instead of forcing an opening-stock detour.
+  const defaultStoreId =
+    storeId !== "all"
+      ? storeId
+      : (stores.find((store) => store.isMain)?.id ?? stores[0]?.id);
+
+  const movementItems = useMemo<MovementItem[]>(() => {
+    const stockedIds = new Set<string>();
+    const stockedNames = new Set<string>();
+    for (const item of items) {
+      if (item.productId) stockedIds.add(item.productId);
+      stockedNames.add(item.name.trim().toLowerCase());
+    }
+    const pending = catalogue
+      .filter(
+        (product) =>
+          !stockedIds.has(product.id) &&
+          !stockedNames.has(product.name.trim().toLowerCase())
+      )
+      .map<MovementItem>((product, index) => ({
+        id: `pending-${product.id}`,
+        name: product.name,
+        category: product.category,
+        batch: `NEW-${new Date().getFullYear()}-${String(items.length + index + 1).padStart(2, "0")}`,
+        expiry: new Date(Date.now() + 730 * DAY).toISOString().slice(0, 10),
+        qty: 0,
+        reorderLevel: product.lowStockTrigger ?? 5,
+        unitPrice: product.price,
+        ...(defaultStoreId ? { storeId: defaultStoreId } : {}),
+        productId: product.id,
+        pending: true,
+      }));
+    return [...items, ...pending];
+  }, [items, catalogue, defaultStoreId]);
+
   /** Persist the ledger entry + apply it to the shelves. */
   const record = (input: {
     type: MovementType;
-    item: InventoryItem;
+    item: MovementItem;
     qty: number;
     direction: "in" | "out";
     toStoreId?: string;
@@ -537,11 +592,14 @@ export function PharmacyStockMovement({
             ? Math.abs(input.qty)
             : -Math.abs(input.qty);
 
+    const hasShelfRow = items.some((row) => row.id === input.item.id);
+    const nextItemId = hasShelfRow ? input.item.id : nextId(items, "inv");
+
     const entry: StockMovement = {
       id: nextMovementId(movements),
       at: Date.now(),
       type: input.type,
-      itemId: input.item.id,
+      itemId: nextItemId,
       productName: input.item.name,
       batch: input.item.batch,
       qty: signed,
@@ -553,11 +611,31 @@ export function PharmacyStockMovement({
     };
 
     // Apply to the shelves: source first, then the transfer destination.
-    let nextItems = items.map((row) =>
-      row.id === input.item.id
-        ? { ...row, qty: Math.max(0, row.qty + signed) }
-        : row
-    );
+    let nextItems: InventoryItem[];
+    if (hasShelfRow) {
+      nextItems = items.map((row) =>
+        row.id === input.item.id
+          ? { ...row, qty: Math.max(0, row.qty + signed) }
+          : row
+      );
+    } else {
+      // First movement for a catalogue product — create its opening shelf row.
+      nextItems = [
+        ...items,
+        {
+          id: nextItemId,
+          name: input.item.name,
+          category: input.item.category,
+          batch: input.item.batch,
+          expiry: input.item.expiry,
+          qty: Math.max(0, signed),
+          reorderLevel: input.item.reorderLevel,
+          unitPrice: input.item.unitPrice,
+          ...(input.item.storeId ? { storeId: input.item.storeId } : {}),
+          ...(input.item.productId ? { productId: input.item.productId } : {}),
+        },
+      ];
+    }
 
     if (input.type === "transfer" && input.toStoreId) {
       // The source was reduced above; add the transferred units to the
@@ -829,7 +907,7 @@ export function PharmacyStockMovement({
       <RecordMovementDialog
         open={recordOpen}
         onOpenChange={setRecordOpen}
-        items={items}
+        items={movementItems}
         stores={stores}
         onRecord={record}
       />

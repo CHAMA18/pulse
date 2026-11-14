@@ -336,6 +336,65 @@
   opacity: 1;
 }
 
+/* Hero stage — the editorial hero sits on a pane of smoked glass laid over the
+   living monitor. Deliberately near-transparent and unblurred: the EKG trace,
+   starfield and constellation must stay clearly visible *through* the pane, so
+   only the lit rim and the violet spill imply the glass. */
+.hero-stage {
+  position: relative;
+  isolation: isolate;
+  border-radius: 30px;
+  background:
+    radial-gradient(120% 70% at 18% 0%, rgb(255 255 255 / 0.05), transparent 62%),
+    radial-gradient(150% 90% at 10% 108%, rgb(168 85 247 / 0.12), transparent 64%),
+    linear-gradient(168deg, rgb(12 6 22 / 0.14), rgb(7 3 15 / 0.04) 52%, rgb(10 4 20 / 0.16));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 60px 150px -90px rgb(168 85 247 / 0.7);
+  transition: box-shadow 0.5s ease;
+}
+/* The pane answers the pointer the way the monitor does — it brightens, it
+   does not move. */
+.hero-stage:hover {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.1),
+    0 70px 170px -90px rgb(168 85 247 / 0.9);
+}
+/* Lit glass edge — 1px gradient rim that catches the trace's glow. */
+.hero-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    152deg,
+    rgb(255 255 255 / 0.52),
+    rgb(255 255 255 / 0.07) 26%,
+    rgb(190 105 255 / 0.26) 62%,
+    rgb(255 255 255 / 0.13)
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  /* synced to the backdrop's 72 BPM — see BEAT_PERIOD in pulse-background.tsx */
+  animation: hero-rim-beat 0.8333s ease-in-out infinite;
+}
+
+/* One cardiac cycle per beat: the glass edge catches the R-peak, then answers
+   with a softer second swell before settling. The pane is a monitor, so the
+   pane itself has a pulse. */
+@keyframes hero-rim-beat {
+  0%, 100% { opacity: 0.62; }
+  12% { opacity: 1; }
+  26% { opacity: 0.68; }
+  36% { opacity: 0.9; }
+  52% { opacity: 0.62; }
+}
+
 /* Animated shimmer for the gradient accent word. */
 .animate-gradient {
   background-size: 220% 100% !important;
@@ -487,7 +546,8 @@
   .aurora-c,
   .pulse-beat-sweep,
   .pulse-beat-spark,
-  .pulse-beat-nodes {
+  .pulse-beat-nodes,
+  .hero-stage::before {
     animation: none !important;
   }
   .ekg-underline {

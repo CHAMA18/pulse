@@ -15,14 +15,19 @@ import {
   type User,
 } from "firebase/auth";
 import {
+  deleteField,
   doc,
   getDoc,
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   serverTimestamp,
   setDoc,
   type Firestore,
 } from "firebase/firestore";
 import { getFunctions, type Functions } from "firebase/functions";
+import { isPulseAdminEmail, type Portal } from "@/lib/account-policy";
 import { recordAudit } from "@/lib/audit-log";
 
 /**
@@ -68,7 +73,20 @@ export function getFirebaseApp(): FirebaseApp | null {
 export function getFirebaseDb(): Firestore | null {
   const application = getFirebaseApp();
   if (!application) return null; // never init on the server
-  if (!db) db = getFirestore(application);
+  if (!db) {
+    try {
+      // Persist the Firestore cache so profile reads work offline and writes
+      // made while disconnected replay automatically once the network returns.
+      db = initializeFirestore(application, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      });
+    } catch {
+      // Private mode or an unsupported browser — fall back to the memory cache.
+      db = getFirestore(application);
+    }
+  }
   return db;
 }
 
@@ -135,6 +153,7 @@ export async function trackEvent(
 /** Product events worth surfacing in the console's audit log. */
 const AUDIT_MIRROR: Record<string, { title: string; action: "View" | "Update" | "Activity" }> = {
   pharmacy_registered: { title: "Pharmacy Registered", action: "Update" },
+  pulse_admin_registered: { title: "Pulse Admin Registered", action: "Update" },
   user_added: { title: "User Added", action: "Update" },
   user_role_changed: { title: "User Role Changed", action: "Update" },
   user_status_changed: { title: "User Status Changed", action: "Update" },
@@ -236,6 +255,228 @@ export async function isAdminUser(user: User): Promise<boolean> {
     }
   }
   return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Account resolution + Pulse admin registration                      */
+/* ------------------------------------------------------------------ */
+
+export type AccountAccess = {
+  portal: Portal;
+  accountType: "Pulse" | "Pharmacy";
+  revoked: boolean;
+  /** Where the decision came from — useful for diagnostics and fallbacks. */
+  source: "profile" | "local" | "email" | "offline";
+};
+
+/**
+ * Resolves the console a signed-in account belongs to.
+ *
+ * The Firestore profile is authoritative for existing accounts (including
+ * accounts that were explicitly invited to the other console). When no
+ * profile exists, the email policy supplies the default for eligible Pulse
+ * admins; invitations and local registrations are respected as fallbacks.
+ */
+export async function resolveAccountAccess(user: User): Promise<AccountAccess | null> {
+  const email = user.email?.trim().toLowerCase() ?? "";
+  const store = getFirebaseDb();
+  let profileReadFailed = false;
+
+  if (store) {
+    try {
+      const snap = await getDoc(doc(store, "User", user.uid));
+      const data = snap.data() as
+        | { account_type?: string; access_revoked?: boolean }
+        | undefined;
+      const accountType =
+        data?.account_type === "Pulse"
+          ? "Pulse"
+          : data?.account_type === "Pharmacy"
+            ? "Pharmacy"
+            : null;
+
+      if (data?.access_revoked === true) {
+        const fallbackType =
+          accountType ?? (isPulseAdminEmail(email) ? "Pulse" : "Pharmacy");
+        return {
+          portal: fallbackType === "Pulse" ? "pulse" : "pharmacy",
+          accountType: fallbackType,
+          revoked: true,
+          source: "profile",
+        };
+      }
+
+      if (accountType) {
+        return {
+          portal: accountType === "Pulse" ? "pulse" : "pharmacy",
+          accountType,
+          revoked: false,
+          source: "profile",
+        };
+      }
+    } catch {
+      // A failed read must not convert an existing profile. Use local evidence
+      // or the email default, but never write a replacement profile here.
+      profileReadFailed = true;
+    }
+  }
+
+  const local = readInvitedAccounts().find(
+    (account) =>
+      account.uid === user.uid || (email.length > 0 && account.email === email)
+  );
+  if (local) {
+    return {
+      portal: local.kind === "console" ? "pulse" : "pharmacy",
+      accountType: local.kind === "console" ? "Pulse" : "Pharmacy",
+      revoked: false,
+      source: "local",
+    };
+  }
+
+  const registration = readPharmacyRegistry().find(
+    (entry) => entry.uid === user.uid || (email.length > 0 && entry.email === email)
+  );
+  if (registration) {
+    return {
+      portal: "pharmacy",
+      accountType: "Pharmacy",
+      revoked: false,
+      source: "local",
+    };
+  }
+
+  if (isPulseAdminEmail(email)) {
+    return {
+      portal: "pulse",
+      accountType: "Pulse",
+      revoked: false,
+      source: profileReadFailed ? "offline" : "email",
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Writes the canonical Pulse admin profile for an eligible email.
+ * Only called after a profile read established that no console type exists,
+ * so it can never silently convert an existing Pharmacy profile.
+ */
+async function savePulseAdminProfile(
+  user: User,
+  name?: string,
+  created = false
+): Promise<boolean> {
+  const email = user.email?.trim().toLowerCase() ?? "";
+  if (!isPulseAdminEmail(email)) return false;
+  const store = getFirebaseDb();
+  if (!store) return false;
+
+  const displayName =
+    name?.trim() || user.displayName?.trim() || email.split("@")[0];
+
+  try {
+    await setDoc(
+      doc(store, "User", user.uid),
+      {
+        email,
+        uid: user.uid,
+        display_name: displayName,
+        ...(created ? { created_time: serverTimestamp() } : {}),
+        role: "admin",
+        role_label: "Admin",
+        account_type: "Pulse",
+        approved_by_duniya: true,
+        invited: false,
+        access_revoked: false,
+        pharmacy_name: deleteField(),
+        pharmacy_id: deleteField(),
+      },
+      { merge: true }
+    );
+    return true;
+  } catch {
+    /* rules or offline — the caller decides whether to continue */
+    return false;
+  }
+}
+
+/** Ensures a first-time Google/password admin gets a console profile. */
+export async function ensurePulseAdminProfile(user: User): Promise<boolean> {
+  const email = user.email?.trim().toLowerCase() ?? "";
+  if (!isPulseAdminEmail(email)) return false;
+  const saved = await savePulseAdminProfile(user);
+  if (!saved) {
+    // The dashboard can still resolve the role locally while Firestore is
+    // unavailable; the profile write is retried on the next admin sign-in.
+    recordInvitedAccount({
+      uid: user.uid,
+      email,
+      name: user.displayName?.trim() || email.split("@")[0],
+      role: "Admin",
+      kind: "console",
+      pharmacyName: null,
+      at: new Date().toISOString(),
+    });
+  }
+  return saved;
+}
+
+export type PulseAdminRegistrationInput = {
+  name: string;
+  email: string;
+  password: string;
+};
+
+export type PulseAdminRegistrationResult = {
+  uid: string;
+  email: string;
+  name: string;
+  profileSaved: boolean;
+};
+
+/**
+ * Creates a self-service Pulse admin account. The email policy is checked
+ * before an Auth account exists; the profile is written with no pharmacy
+ * identity so the account can never appear in the Pharmacy portal.
+ */
+export async function registerPulseAdminAccount(
+  input: PulseAdminRegistrationInput
+): Promise<PulseAdminRegistrationResult> {
+  const email = input.email.trim().toLowerCase();
+  if (!isPulseAdminEmail(email)) {
+    throw new FirebaseError(
+      "auth/restricted-email",
+      "This email isn't eligible for a Pulse admin account."
+    );
+  }
+  const auth = getFirebaseAuth();
+  if (!auth) {
+    throw new FirebaseError("auth/unavailable", "Authentication isn't available right now.");
+  }
+
+  const credential = await createUserWithEmailAndPassword(auth, email, input.password);
+  const user = credential.user;
+  const name = input.name.trim() || email.split("@")[0];
+  try {
+    await updateProfile(user, { displayName: name });
+  } catch {
+    /* the profile write below still carries the display name */
+  }
+
+  const profileSaved = await savePulseAdminProfile(user, name, true);
+  recordInvitedAccount({
+    uid: user.uid,
+    email,
+    name,
+    role: "Admin",
+    kind: "console",
+    pharmacyName: null,
+    at: new Date().toISOString(),
+  });
+
+  return { uid: user.uid, email, name, profileSaved };
 }
 
 /* ------------------------------------------------------------------ */
@@ -533,6 +774,8 @@ const AUTH_ERROR_COPY: Record<string, string> = {
   "auth/unauthorized-domain":
     "This domain isn't authorized for sign-in. Add it in Firebase Console → Authentication → Settings → Authorized domains.",
   "auth/user-token-expired": "Your session expired. Please sign in again.",
+  "auth/restricted-email":
+    "Only Duniya Healthcare emails and chungu424@gmail.com can create a Pulse admin account.",
 };
 
 /** Maps a Firebase auth failure to friendly, actionable copy. */

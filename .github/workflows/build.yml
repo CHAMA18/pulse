@@ -1,0 +1,30 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-export:
+    name: Export build (typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Same command the Render deploy runs, so a failure here is the failure
+      # that would have broken the deploy.
+      - name: Build export
+        run: NEXT_BASE_PATH='' bun run build:export

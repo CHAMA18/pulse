@@ -13,13 +13,14 @@ import {
   type PulseRole,
 } from "../src/lib/pulse-rbac.ts";
 
-const ADMIN_PAGES: PulsePage[] = ["audit", "users", "sales", "catalogue", "movement"];
+const ADMIN_PAGES: PulsePage[] = ["audit", "users", "sales"];
 const STAFF_PAGES: PulsePage[] = [
   "home",
   "pharmacies",
+  "catalogue",
   "inventory",
+  "movement",
   "stock",
-  "suppliers",
   "walkthrough",
 ];
 
@@ -53,13 +54,13 @@ test("Admin can open every Pulse console page", () => {
   }
 });
 
-test("Staff gets exactly the six permitted pages", () => {
+test("Staff gets exactly the operational pages it needs", () => {
   const allowed = ALL_PULSE_PAGES.filter((page) => canOpenPulsePage("staff", page));
   assert.deepEqual(allowed, STAFF_PAGES);
   assert.deepEqual([...PULSE_ROLE_PAGES.staff], STAFF_PAGES);
 });
 
-test("Staff is denied every admin-only console page", () => {
+test("Staff is denied every Owner/Admin-only console page", () => {
   for (const page of ADMIN_PAGES) {
     assert.equal(canOpenPulsePage("staff", page), false, `Staff allowed ${page}`);
   }

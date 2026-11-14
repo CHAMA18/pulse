@@ -13,7 +13,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  ClipboardCheck,
   ClipboardList,
   Compass,
   LayoutDashboard,
@@ -21,7 +20,6 @@ import {
   Menu,
   Moon,
   Package,
-  PackageSearch,
   Search,
   Settings,
   ShoppingBag,
@@ -39,19 +37,15 @@ import { doc, getDoc } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
-import { PharmacyCatalogue } from "@/components/pharmacy/pharmacy-catalogue";
-import { PharmacyDeliveries } from "@/components/pharmacy/pharmacy-deliveries";
 import { PharmacyInventory } from "@/components/pharmacy/pharmacy-inventory";
 import { PharmacyPOS } from "@/components/pharmacy/pharmacy-pos";
 import { PharmacySalesReport } from "@/components/pharmacy/pharmacy-sales-report";
 import { PharmacyProfile } from "@/components/pharmacy/pharmacy-profile";
-import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
 import { PharmacySettings } from "@/components/pharmacy/pharmacy-settings";
 import { PharmacyStockBalance } from "@/components/pharmacy/pharmacy-stock-balance";
 import { PharmacyStockMovement } from "@/components/pharmacy/pharmacy-stock-movement";
 import { PharmacyStockRequests } from "@/components/pharmacy/pharmacy-stock-requests";
 import { PharmacyStores } from "@/components/pharmacy/pharmacy-stores";
-import { PharmacySuppliers } from "@/components/pharmacy/pharmacy-suppliers";
 import {
   PharmacyUserManagement,
   ROLE_META,
@@ -89,6 +83,11 @@ import {
 } from "@/components/pharmacy/pharmacy-shared";
 import { lowStockLimitFor, storeLowStockLimit, triggeredLowStock } from "@/lib/pharmacy-stock";
 import { recordAudit } from "@/lib/audit-log";
+import {
+  flushOutbox,
+  queueInventorySync,
+  queueLowStockAlert,
+} from "@/lib/offline/outbox";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -100,13 +99,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { clearStoredPortal, getStoredPortal } from "@/lib/portal";
+import { clearStoredPortal } from "@/lib/portal";
 import {
   getFirebaseAuth,
   getFirebaseDb,
   getInvitedAccountRole,
   getPharmacyRegistrations,
-  isAdminUser,
   trackEvent,
 } from "@/lib/firebase";
 
@@ -121,18 +119,14 @@ type PharmacyPage =
   | "balance"
   | "inventory"
   | "movement"
-  | "catalogue"
-  | "orders"
   | "requests"
-  | "deliveries"
-  | "suppliers"
   | "stores"
   | "users"
   | "profile"
   | "settings"
   | "walkthrough";
 
-/** Human page titles used in the audit trail ("Viewed Product Catalogue"). */
+/** Human page titles used in the audit trail ("Viewed Inventory"). */
 const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   home: "Dashboard",
   pos: "Point of Sale",
@@ -140,11 +134,7 @@ const PAGE_AUDIT_TITLES: Record<PharmacyPage, string> = {
   balance: "Stock Balance",
   inventory: "Inventory",
   movement: "Stock Movement",
-  catalogue: "Product Catalogue",
-  orders: "Purchase Orders",
   requests: "Stock Requests",
-  deliveries: "Deliveries",
-  suppliers: "Supplier Directory",
   stores: "Stores",
   users: "User Management",
   profile: "My Pharmacy",
@@ -167,13 +157,9 @@ const NAV_SECTIONS: { section: string; items: { label: string; icon: LucideIcon 
       { label: "Stock Balance", icon: Boxes },
       { label: "Inventory", icon: Package },
       { label: "Stock Movement", icon: ArrowLeftRight },
-      { label: "Product Catalogue", icon: PackageSearch },
-      { label: "Purchase Orders", icon: ClipboardCheck },
       { label: "Stock Requests", icon: ClipboardList },
-      { label: "Deliveries", icon: Truck },
     ],
   },
-  { section: "Network", items: [{ label: "Supplier Directory", icon: Store }] },
   { section: "Learn", items: [{ label: "Walkthrough", icon: Compass }] },
   {
     section: "Administration",
@@ -199,11 +185,7 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   "Stock Balance": "balance",
   Inventory: "inventory",
   "Stock Movement": "movement",
-  "Product Catalogue": "catalogue",
-  "Purchase Orders": "orders",
   "Stock Requests": "requests",
-  Deliveries: "deliveries",
-  "Supplier Directory": "suppliers",
   Stores: "stores",
   "User Management": "users",
   "My Pharmacy": "profile",
@@ -211,20 +193,19 @@ const LIVE_PAGES: Record<string, PharmacyPage> = {
   Walkthrough: "walkthrough",
 };
 
-const QUICK_ACTIONS = ["New sale", "Request stock", "Record movement", "Record delivery"];
+const QUICK_ACTIONS = ["New sale", "Request stock", "Record movement"];
 
 const QUICK_ACTION_PAGES: Record<string, PharmacyPage> = {
   "New sale": "pos",
   "Request stock": "requests",
   "Record movement": "movement",
-  "Record delivery": "deliveries",
 };
 
 /**
  * Pages each role may open — mirrors the capability matrix on User Management.
  * Cashiers get the counter plus read-only stock visibility; technicians add
- * movements and deliveries; pharmacists also manage catalogue, suppliers and
- * orders; managers and owners see the whole console.
+ * stock movements; pharmacists also manage the product catalogue inside
+ * Inventory and the order book; managers and owners see the whole console.
  */
 const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
   owner: new Set<PharmacyPage>([
@@ -234,11 +215,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
     "balance",
     "inventory",
     "movement",
-    "catalogue",
-    "orders",
     "requests",
-    "deliveries",
-    "suppliers",
     "stores",
     "users",
     "profile",
@@ -252,11 +229,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
     "balance",
     "inventory",
     "movement",
-    "catalogue",
-    "orders",
     "requests",
-    "deliveries",
-    "suppliers",
     "stores",
     "users",
     "profile",
@@ -270,11 +243,7 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
     "balance",
     "inventory",
     "movement",
-    "catalogue",
-    "orders",
     "requests",
-    "deliveries",
-    "suppliers",
     "profile",
     "settings",
     "walkthrough",
@@ -287,7 +256,6 @@ const ROLE_PAGES: Record<PharmacyRole, ReadonlySet<PharmacyPage>> = {
     "inventory",
     "movement",
     "requests",
-    "deliveries",
     "profile",
     "settings",
     "walkthrough",
@@ -1067,8 +1035,8 @@ export function PharmacyApp() {
   // Interactive walkthrough — lives at shell level so it survives page switches.
   const [tourOpen, setTourOpen] = useState(false);
 
-  // Resolve the session: pharmacy-portal sessions stay; Pulse-portal sessions
-  // without elevated rights are bounced back to the Pulse console.
+  // Resolve the session from the account itself. The profile's account_type
+  // is the only portal authority — stale local storage must never win.
   useEffect(() => {
     let active = true;
 
@@ -1082,20 +1050,6 @@ export function PharmacyApp() {
       if (!active) return;
 
       const current = auth?.currentUser;
-      if (getStoredPortal() === "pulse" && current && !(await isAdminUser(current))) {
-        // This session belongs to the Pulse console.
-        if (active) {
-          setBouncing(true);
-          toast({
-            title: "This is the Pharmacy portal",
-            description:
-              "Your session opened in the Pulse console, which doesn't have Pharmacy access. Sign in through the Pharmacy tab with an elevated account.",
-          });
-          router.replace("/dashboard");
-        }
-        return;
-      }
-
       const name = current?.displayName ?? current?.email?.split("@")[0] ?? "Pharmacy Owner";
       const email = current?.email ?? "";
       const registration = current
@@ -1115,6 +1069,7 @@ export function PharmacyApp() {
           const snap = await getDoc(doc(db, "User", current.uid));
           const data = snap.data() as
             | {
+                account_type?: string;
                 pharmacy_name?: string;
                 pharmacy_id?: string;
                 role?: string;
@@ -1134,6 +1089,20 @@ export function PharmacyApp() {
             if (active) {
               toast({ title: "Access suspended", description: "Your pharmacy access was suspended by your account owner." });
               router.replace("/login");
+            }
+            return;
+          }
+          if (data?.account_type === "Pulse") {
+            // A Pulse console seat is a different account type — it must never
+            // inherit a pharmacy workspace from a stale pharmacy_name.
+            if (active) {
+              setBouncing(true);
+              toast({
+                title: "This is a Pulse console account",
+                description:
+                  "Pulse console accounts can't open the Pharmacy portal. Sign in with a pharmacy account instead.",
+              });
+              router.replace("/dashboard");
             }
             return;
           }
@@ -1167,41 +1136,18 @@ export function PharmacyApp() {
       // hold (approved_by_duniya === false) keeps the console in review.
       setPendingReview(approved === false);
       setStores(loadStores());
-      // Mirror the shelves to the Pulse network stock picture (best-effort;
-      // the local console keeps working offline and the next visit retries).
-      void (async () => {
-        try {
-          const { syncPharmacyInventory } = await import("@/lib/cloud/pharmacy-inventory");
-          const storesNow = loadStores();
-          const nameOf = new Map(storesNow.map((s) => [s.id, s.name]));
-          await syncPharmacyInventory(
-            loadInventory().map((item) => ({
-              ...item,
-              storeName: nameOf.get(item.storeId ?? "st-main") ?? "",
-            }))
-          );
-        } catch {
-          /* offline — retried on the next visit */
-        }
-      })();
-      // One consolidated low-stock email per trigger window, after the same
-      // shelves have been mirrored above. Alerts are off in Settings, silent
-      // here and retried on the next visit.
-      void (async () => {
-        try {
-          const { sendLowStockAlert } = await import("@/lib/cloud/low-stock-alerts");
-          const storesNow = loadStores();
-          const nameOf = new Map(storesNow.map((s) => [s.id, s.name]));
-          await sendLowStockAlert({
-            items: loadInventory(),
-            stores: storesNow,
-            pharmacyName: registration?.pharmacyName ?? registeredName ?? name,
-            storeNameOf: (item) => nameOf.get(item.storeId ?? "st-main") ?? "",
-          });
-        } catch {
-          /* offline — the next visit retries */
-        }
-      })();
+      // Persist the shelves and the alert trigger in the durable outbox first,
+      // then try Firebase immediately. If the pharmacy is offline the queued
+      // snapshot flushes on reconnect instead of being lost.
+      const storesNow = loadStores();
+      const shelves = loadInventory();
+      queueInventorySync(shelves, storesNow);
+      queueLowStockAlert(
+        shelves,
+        storesNow,
+        registration?.pharmacyName ?? registeredName ?? name
+      );
+      void flushOutbox();
       setResolved(true);
     })();
 
@@ -1346,11 +1292,6 @@ export function PharmacyApp() {
     if (action === "Record movement") {
       setMobileOpen(false);
       goTo("movement");
-      return;
-    }
-    if (action === "Record delivery") {
-      setMobileOpen(false);
-      goTo("deliveries");
       return;
     }
     toast({
@@ -1626,15 +1567,25 @@ export function PharmacyApp() {
             className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
           >
             {page === "pos" ? (
-              <PharmacyPOS storeId={activeStore} stores={stores} />
+              <PharmacyPOS storeId={activeStore} stores={stores} pharmacyName={pharmacyName} />
             ) : page === "sales-report" ? (
-              <PharmacySalesReport storeId={activeStore} stores={stores} />
-            ) : page === "catalogue" ? (
-              <PharmacyCatalogue stores={stores} onSell={() => goTo("pos")} />
-            ) : page === "orders" ? (
-              <PharmacyPurchaseOrders storeId={activeStore} />
+              <PharmacySalesReport
+                storeId={activeStore}
+                stores={stores}
+                pharmacyName={pharmacyName}
+                preparedBy={user.name}
+              />
             ) : page === "inventory" ? (
-              <PharmacyInventory storeId={activeStore} onManageProducts={() => goTo("catalogue")} />
+              <PharmacyInventory
+                storeId={activeStore}
+                stores={stores}
+                onSell={() => goTo("pos")}
+                canManageProducts={
+                  user.role === "owner" ||
+                  user.role === "manager" ||
+                  user.role === "pharmacist"
+                }
+              />
             ) : page === "movement" ? (
               <PharmacyStockMovement
                 storeId={activeStore}
@@ -1651,10 +1602,6 @@ export function PharmacyApp() {
               <PharmacyStockBalance storeId={activeStore} />
             ) : page === "requests" ? (
               <PharmacyStockRequests storeId={activeStore} />
-            ) : page === "deliveries" ? (
-              <PharmacyDeliveries storeId={activeStore} />
-            ) : page === "suppliers" ? (
-              <PharmacySuppliers onGoToRequests={() => goTo("requests")} />
             ) : page === "stores" ? (
               <PharmacyStores stores={stores} onStoresChange={onStoresChange} />
             ) : page === "users" ? (

@@ -4,6 +4,7 @@
 /* Callable functions the two portals invoke when someone is invited:  */
 /*                                                                     */
 /*   sendTeamInvite        — a Pharmacy-portal team invitation         */
+/*   sendReceiptEmail      — a customer receipt from the POS           */
 /*   sendPulseAdminInvite  — a Pulse-console invitation                */
 /*   onPharmacyCreated     — welcome + team invites at registration    */
 /*   onPharmacyDocCreated  — Firestore trigger: a Pharmacy document    */
@@ -26,8 +27,10 @@ import {
   lowStockAlertEmail,
   pharmacyWelcomeEmail,
   pulseAdminInviteEmail,
+  receiptEmail,
   teamInviteEmail,
   type EmailContent,
+  type ReceiptEmailLine,
 } from "./emails";
 import { PULSE_MARK_BASE64 } from "./logo";
 
@@ -819,9 +822,12 @@ async function networkPharmacyDirectory() {
   return Array.from(pharmaciesById.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Pulse Owners and Admins can review every pharmacy's shelves; Staff cannot. */
+/**
+ * Every active Pulse console user can review the network's shelves — Staff
+ * needs this to run stock work. Sales and account management stay restricted.
+ */
 export const listNetworkInventory = onCall(async (request) => {
-  await requireConsoleManager(request);
+  await requirePulseActor(request);
   const requestedLimit = Number(request.data?.limit ?? 500);
   const limit = Number.isInteger(requestedLimit) ? Math.min(1000, Math.max(1, requestedLimit)) : 500;
   const snap = await db.collection("PharmacyInventory").orderBy("pharmacyName").limit(limit).get();
@@ -940,6 +946,135 @@ export const sendLowStockAlert = onCall({ secrets: [resendApiKey] }, async (requ
 });
 
 /* ------------------------------------------------------------------ */
+/* sendReceiptEmail — email the generated POS receipt                  */
+/* ------------------------------------------------------------------ */
+/* Called from the sale-complete dialog. The pharmacy identity and logo */
+/* stamp come from the authenticated User profile, never the client, so */
+/* a receipt can't be sent under another pharmacy's name.               */
+
+type CleanReceipt = {
+  id: string;
+  storeName: string;
+  soldAt: number;
+  lines: ReceiptEmailLine[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  method: "cash" | "mobile" | "card";
+  tendered?: number;
+  change?: number;
+  servedBy: string;
+};
+
+function receiptAmount(value: unknown): number {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000_000) {
+    throw new HttpsError("invalid-argument", "The receipt contains an invalid amount.");
+  }
+  return Math.round(amount * 100) / 100;
+}
+
+function cleanReceipt(value: unknown): CleanReceipt {
+  if (!value || typeof value !== "object") {
+    throw new HttpsError("invalid-argument", "The receipt is missing.");
+  }
+  const raw = value as Record<string, unknown>;
+  const id = String(raw.id ?? "").trim();
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) {
+    throw new HttpsError("invalid-argument", "The receipt number is invalid.");
+  }
+  const soldAt = Number(raw.soldAt);
+  if (!Number.isFinite(soldAt) || soldAt <= 0 || soldAt > Date.now() + 24 * 60 * 60 * 1000) {
+    throw new HttpsError("invalid-argument", "The receipt time is invalid.");
+  }
+  const method = String(raw.method ?? "").trim().toLowerCase();
+  if (!["cash", "mobile", "card"].includes(method)) {
+    throw new HttpsError("invalid-argument", "The receipt payment method is invalid.");
+  }
+  const rawLines = Array.isArray(raw.lines) ? raw.lines : [];
+  if (rawLines.length === 0 || rawLines.length > 100) {
+    throw new HttpsError("invalid-argument", "The receipt has no items.");
+  }
+
+  const lines = rawLines.map((entry) => {
+    if (!entry || typeof entry !== "object") {
+      throw new HttpsError("invalid-argument", "A receipt line is invalid.");
+    }
+    const line = entry as Record<string, unknown>;
+    const name = String(line.name ?? "").trim();
+    const qty = Number(line.qty);
+    if (!name || name.length > 200 || !Number.isInteger(qty) || qty <= 0 || qty > 10_000) {
+      throw new HttpsError("invalid-argument", "A receipt line has invalid details.");
+    }
+    return { name, qty, unitPrice: receiptAmount(line.unitPrice) };
+  });
+
+  // Amounts are recomputed from the lines; the client's totals are display
+  // hints only, so a tampered receipt cannot show a different total by email.
+  const subtotal = Math.round(lines.reduce((sum, line) => sum + line.qty * line.unitPrice, 0) * 100) / 100;
+  const discount = Math.min(subtotal, receiptAmount(raw.discount));
+  const total = Math.round((subtotal - discount) * 100) / 100;
+  const typedMethod = method as "cash" | "mobile" | "card";
+
+  return {
+    id,
+    storeName: String(raw.storeName ?? "").trim().slice(0, 160) || "Main store",
+    soldAt,
+    lines,
+    subtotal,
+    discount,
+    total,
+    method: typedMethod,
+    ...(typedMethod === "cash"
+      ? {
+          tendered: receiptAmount(raw.tendered),
+          change: receiptAmount(raw.change),
+        }
+      : {}),
+    servedBy: String(raw.servedBy ?? "").trim().slice(0, 120),
+  };
+}
+
+export const sendReceiptEmail = onCall({ secrets: [resendApiKey] }, async (request) => {
+  const actor = await requirePharmacyActor(request);
+  const recipient = assertEmail(request.data?.email, "email");
+  const receipt = cleanReceipt(request.data?.receipt);
+
+  const content = receiptEmail({
+    pharmacyName: actor.pharmacyName,
+    storeName: receipt.storeName,
+    receiptId: receipt.id,
+    soldAt: new Date(receipt.soldAt).toLocaleString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "Africa/Lusaka",
+    }),
+    lines: receipt.lines,
+    subtotal: receipt.subtotal,
+    discount: receipt.discount,
+    total: receipt.total,
+    method: receipt.method,
+    ...(receipt.method === "cash"
+      ? { tendered: receipt.tendered ?? 0, change: receipt.change ?? 0 }
+      : {}),
+    servedBy: receipt.servedBy || actor.name || "Front counter",
+  });
+
+  const messageId = await deliver(
+    "sendReceiptEmail",
+    [recipient],
+    content,
+    `Receipt ${receipt.id}`
+  );
+
+  return { messageId, to: recipient };
+});
+
+/* ------------------------------------------------------------------ */
 /* getInvitation — public lookup for the accept link                  */
 /* ------------------------------------------------------------------ */
 
@@ -1039,6 +1174,10 @@ export const acceptInvitation = onCall(async (request) => {
             role: invitedRole,
             role_label: PULSE_ROLE_LABEL[invitedRole],
             account_type: "Pulse",
+            // A console seat is Pulse-only. Remove any pharmacy identity left
+            // on an account that previously belonged to the Pharmacy side.
+            pharmacy_name: admin.firestore.FieldValue.delete(),
+            pharmacy_id: admin.firestore.FieldValue.delete(),
             approved_by_duniya: true,
             access_revoked: false,
           },

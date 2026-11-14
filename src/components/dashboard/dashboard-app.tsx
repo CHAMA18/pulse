@@ -24,7 +24,6 @@ import {
   Receipt,
   Search,
   ShoppingBasket,
-  Store,
   TrendingUp,
   TriangleAlert,
   Truck,
@@ -41,7 +40,6 @@ import {
   DashboardWalkthrough,
   PULSE_TOUR_STEPS,
 } from "@/components/dashboard/dashboard-walkthrough";
-import { SupplierManagement } from "@/components/dashboard/supplier-management";
 import { PulsePharmacies } from "@/components/dashboard/pulse-pharmacies";
 import { StockBalanceVisibility } from "@/components/dashboard/stock-balance-visibility";
 import { UserManagement } from "@/components/dashboard/user-management";
@@ -64,10 +62,12 @@ import {
   type StockMovement,
 } from "@/components/pharmacy/pharmacy-data";
 import { WalkthroughTour } from "@/components/walkthrough/walkthrough";
+import { CachedNotice } from "@/components/offline/cached-notice";
 import { recordAudit, WORKSPACE_NAME } from "@/lib/audit-log";
+import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { clearStoredPortal, getStoredPortal } from "@/lib/portal";
+import { clearStoredPortal } from "@/lib/portal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -206,19 +206,11 @@ const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   inventory: "Pharmacies Inventory",
   movement: "Stock Movement",
   stock: "Stock Balance Visibility",
-  suppliers: "Supplier Management",
   walkthrough: "Walkthrough",
 };
 
 const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
   { section: "Main", items: [{ label: "Home", page: "home", icon: Home }] },
-  {
-    section: "Admin",
-    items: [
-      { label: "Audit Logs", page: "audit", icon: History },
-      { label: "User Management", page: "users", icon: UserCog },
-    ],
-  },
   {
     section: "Pulse",
     items: [
@@ -228,10 +220,16 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
       { label: "Pharmacies Inventory", page: "inventory", icon: Building2 },
       { label: "Stock Movement", page: "movement", icon: ArrowLeftRight },
       { label: "Stock Balance Visibility", page: "stock", icon: Eye },
-      { label: "Supplier Management", page: "suppliers", icon: Store },
     ],
   },
   { section: "Learn", items: [{ label: "Walkthrough", page: "walkthrough", icon: Compass }] },
+  {
+    section: "Admin",
+    items: [
+      { label: "Audit Logs", page: "audit", icon: History },
+      { label: "User Management", page: "users", icon: UserCog },
+    ],
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -305,6 +303,72 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                             */
 /* ------------------------------------------------------------------ */
+
+/** One labeled nav group; renders nothing when the role can't open any of it. */
+function NavSection({
+  section,
+  items,
+  collapsed,
+  page,
+  canOpen,
+  onNavClick,
+  className,
+}: {
+  section: string;
+  items: NavItem[];
+  collapsed: boolean;
+  page: DashboardPage;
+  canOpen: (target: DashboardPage) => boolean;
+  onNavClick: (target: DashboardPage) => void;
+  className?: string;
+}) {
+  const visibleItems = items.filter(({ page: targetPage }) => canOpen(targetPage));
+  if (visibleItems.length === 0) return null;
+  return (
+    <div className={cn("mt-4 first:mt-1", className)}>
+      {!collapsed ? (
+        <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
+          {section}
+        </p>
+      ) : (
+        <div className="mx-auto my-3 h-px w-8 bg-slate-100 dark:bg-white/10" />
+      )}
+      <div className="flex flex-col gap-0.5">
+        {visibleItems.map(({ label, page: targetPage, icon: Icon }) => {
+          const active = targetPage === page;
+          return (
+            <button
+              key={label}
+              type="button"
+              title={collapsed ? label : undefined}
+              aria-current={active ? "page" : undefined}
+              onClick={() => onNavClick(targetPage)}
+              className={cn(
+                "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
+                collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
+                active
+                  ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
+              )}
+            >
+              <Icon
+                className={cn(
+                  "h-[18px] w-[18px] shrink-0 transition-colors",
+                  active
+                    ? "text-purple-600 dark:text-purple-400"
+                    : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+                )}
+                strokeWidth={2.1}
+                aria-hidden="true"
+              />
+              {!collapsed && <span className="truncate">{label}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function SidebarContent({
   collapsed,
@@ -392,54 +456,17 @@ function SidebarContent({
 
       {/* Navigation */}
       <nav className="pulse-scroll flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary" data-tour="pulse-nav">
-        {NAV_SECTIONS.map(({ section, items }) => {
-          const visibleItems = items.filter(({ page: targetPage }) => canOpen(targetPage));
-          if (visibleItems.length === 0) return null;
-          return (
-            <div key={section} className="mt-4 first:mt-1">
-              {!collapsed ? (
-                <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                  {section}
-                </p>
-              ) : (
-                <div className="mx-auto my-3 h-px w-8 bg-slate-100 dark:bg-white/10" />
-              )}
-              <div className="flex flex-col gap-0.5">
-                {visibleItems.map(({ label, page: targetPage, icon: Icon }) => {
-                  const active = targetPage === page;
-                  return (
-                    <button
-                      key={label}
-                      type="button"
-                      title={collapsed ? label : undefined}
-                      aria-current={active ? "page" : undefined}
-                      onClick={() => onNavClick(targetPage)}
-                      className={cn(
-                        "group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
-                        collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
-                        active
-                          ? "bg-purple-100/90 text-slate-900 dark:bg-purple-500/20 dark:text-white"
-                          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
-                      )}
-                    >
-                      <Icon
-                        className={cn(
-                          "h-[18px] w-[18px] shrink-0 transition-colors",
-                          active
-                            ? "text-purple-600 dark:text-purple-400"
-                            : "text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300"
-                        )}
-                        strokeWidth={2.1}
-                        aria-hidden="true"
-                      />
-                      {!collapsed && <span className="truncate">{label}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+        {NAV_SECTIONS.map(({ section, items }) => (
+          <NavSection
+            key={section}
+            section={section}
+            items={items}
+            collapsed={collapsed}
+            page={page}
+            canOpen={canOpen}
+            onNavClick={onNavClick}
+          />
+        ))}
       </nav>
 
       {/* Bottom controls */}
@@ -564,11 +591,19 @@ function SidebarContent({
  * that feeds the full Sales Report. Owners/Admins only — the server enforces
  * it, and Staff never mounts this section.
  */
+type NetworkSalesRow = {
+  id: string;
+  name: string;
+  transactions: number;
+  revenue: number;
+};
+
+const NETWORK_SALES_CACHE_KEY = "dashboard-network-sales";
+
 function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) {
-  const [rows, setRows] = useState<
-    { id: string; name: string; transactions: number; revenue: number }[] | null
-  >(null);
+  const [rows, setRows] = useState<NetworkSalesRow[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -576,7 +611,7 @@ function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) 
       try {
         const page = await listNetworkPharmacySales({ limit: 200 });
         if (!active) return;
-        const groups = new Map<string, { id: string; name: string; transactions: number; revenue: number }>();
+        const groups = new Map<string, NetworkSalesRow>();
         for (const pharmacy of page.pharmacies) {
           groups.set(pharmacy.id, { id: pharmacy.id, name: pharmacy.name, transactions: 0, revenue: 0 });
         }
@@ -592,9 +627,22 @@ function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) 
           current.revenue += sale.total;
           groups.set(sale.pharmacyId, current);
         }
-        setRows([...groups.values()].sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name)));
+        const nextRows = [...groups.values()].sort(
+          (a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name)
+        );
+        setRows(nextRows);
+        setSavedAt(null);
+        saveCachedRead(NETWORK_SALES_CACHE_KEY, nextRows);
       } catch {
-        if (active) setFailed(true);
+        if (!active) return;
+        // Offline: keep the last saved network picture instead of an error.
+        const cached = loadCachedRead<NetworkSalesRow[]>(NETWORK_SALES_CACHE_KEY);
+        if (cached) {
+          setRows(cached.data);
+          setSavedAt(cached.cachedAt);
+        } else {
+          setFailed(true);
+        }
       }
     })();
     return () => {
@@ -606,6 +654,7 @@ function NetworkSalesByPharmacy({ onOpenReport }: { onOpenReport: () => void }) 
     <motion.section variants={item} aria-labelledby="network-sales">
       <SectionHeader icon={Receipt} title="Network Sales by Pharmacy" subtitle="Every registered pharmacy, live from the central sales feed" />
       <div className={cn(cardCls, "mt-4 p-5")}>
+        {savedAt !== null && <CachedNotice cachedAt={savedAt} className="mb-3" />}
         {failed ? (
           <p className="text-[13.5px] text-slate-500 dark:text-slate-400">
             Network sales are unavailable right now. Open the full Sales Report to retry.
@@ -660,7 +709,6 @@ export function DashboardApp() {
   });
   const [networkStores, setNetworkStores] = useState<PharmacyStore[]>([]);
   const [home, setHome] = useState<HomeSnapshot | null>(null);
-  const [bouncing, setBouncing] = useState(false);
   // Interactive walkthrough — shell level, so it rides above every page.
   const [tourOpen, setTourOpen] = useState(false);
 
@@ -670,16 +718,6 @@ export function DashboardApp() {
     let active = true;
 
     void (async () => {
-      // Sessions that signed in through the Pharmacy portal live in their own
-      // console — the Pulse admin interface is never shown to them.
-      if (getStoredPortal() === "pharmacy") {
-        if (active) {
-          setBouncing(true);
-          router.replace("/pharmacy");
-        }
-        return;
-      }
-
       const auth = getFirebaseAuth();
       try {
         await auth?.authStateReady();
@@ -774,7 +812,7 @@ export function DashboardApp() {
 
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
-    if (bouncing || !user.email) return;
+    if (!user.email) return;
     recordAudit({
       title: `Viewed ${PAGE_AUDIT_TITLES[page]}`,
       action: "View",
@@ -864,24 +902,6 @@ export function DashboardApp() {
       page={page}
     />
   );
-
-  // While a pharmacy-portal session is being redirected to its own console,
-  // hold the branded splash — never flash the admin interface.
-  if (bouncing) {
-    return (
-      <div
-        className="pulse-space flex min-h-dvh flex-col items-center justify-center gap-5"
-        aria-live="polite"
-        aria-busy="true"
-      >
-        <PulseMark className="h-14 w-14 animate-float" />
-        <p className="flex items-center gap-2.5 text-sm text-white/70">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-fuchsia-400" aria-hidden="true" />
-          Taking you to the Pharmacy portal…
-        </p>
-      </div>
-    );
-  }
 
   return (
     <MotionConfig reducedMotion="user">
@@ -1017,9 +1037,7 @@ export function DashboardApp() {
             animate="show"
             className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
           >
-            {page === "suppliers" ? (
-              <SupplierManagement />
-            ) : page === "pharmacies" ? (
+            {page === "pharmacies" ? (
               <PulsePharmacies />
             ) : page === "sales" ? (
               <PharmacySalesReport />

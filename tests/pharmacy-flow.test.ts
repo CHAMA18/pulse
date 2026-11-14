@@ -11,6 +11,10 @@ import {
   triggeredLowStock,
   type ShelfItem,
 } from "../src/lib/pharmacy-stock.ts";
+import {
+  findCatalogueProductByName,
+  storeHasProduct,
+} from "../src/lib/pharmacy-catalogue.ts";
 
 test("tenant scoping: different pharmacies never share a storage key", () => {
   assert.notEqual(scopedStorageKey("pulse.pharmacy-inventory.v1", "phm-a"), scopedStorageKey("pulse.pharmacy-inventory.v1", "phm-b"));
@@ -93,4 +97,22 @@ test("prescription sales require a named patient and verification", () => {
   assert.equal(canChargePrescription({ hasPrescriptionItems: true, patientName: "", prescriptionVerified: true }), false);
   assert.equal(canChargePrescription({ hasPrescriptionItems: true, patientName: "Mary Banda", prescriptionVerified: false }), false);
   assert.equal(canChargePrescription({ hasPrescriptionItems: true, patientName: "Mary Banda", prescriptionVerified: true }), true);
+});
+
+test("catalogue duplicate checks are scoped to the store that stocks the product", () => {
+  const shelves = [
+    { name: "Amoxicillin 500mg", storeId: "st-main" },
+    { name: "Paracetamol 1g", storeId: "st-1" },
+  ];
+  assert.equal(storeHasProduct("st-main", " amoxicillin 500MG ", shelves), true);
+  assert.equal(storeHasProduct("st-1", "Amoxicillin 500mg", shelves), false);
+  assert.equal(storeHasProduct("st-1", "Paracetamol 1g", shelves), true);
+  // Legacy shelves without a storeId belong to the main store.
+  assert.equal(storeHasProduct("st-main", "Paracetamol 1g", [{ name: "Paracetamol 1g" }]), true);
+});
+
+test("catalogue lookup reuses one product record across stores", () => {
+  const catalogue = [{ id: "cat-1", name: "Amoxicillin 500mg" }];
+  assert.equal(findCatalogueProductByName(catalogue, " amoxicillin 500MG ")?.id, "cat-1");
+  assert.equal(findCatalogueProductByName(catalogue, "Paracetamol 1g"), undefined);
 });

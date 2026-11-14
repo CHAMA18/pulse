@@ -1,3 +1,6 @@
+"use client";
+
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,6 +14,10 @@ export function PulseMark({
   className?: string;
   glow?: boolean;
 }) {
+  const reactId = useId();
+  const gradientId = `pulse-g-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const gradient = `url(#${gradientId})`;
+
   return (
     <svg
       viewBox="0 0 64 64"
@@ -19,14 +26,14 @@ export function PulseMark({
       className={cn("h-14 w-14", glow && "drop-shadow-[0_0_14px_rgba(176,38,255,0.45)]", className)}
     >
       <defs>
-        <linearGradient id="pulse-g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#d946ef" />
           <stop offset="0.5" stopColor="#b026ff" />
           <stop offset="1" stopColor="#8b2fe8" />
         </linearGradient>
       </defs>
       {/* constellation ring links */}
-      <g stroke="url(#pulse-g)" strokeWidth="2" opacity="0.5" fill="none">
+      <g stroke={gradient} strokeWidth="2" opacity="0.5" fill="none">
         <line x1="32" y1="7" x2="50" y2="16" />
         <line x1="50" y1="16" x2="57" y2="32" />
         <line x1="57" y1="32" x2="50" y2="48" />
@@ -37,7 +44,7 @@ export function PulseMark({
         <line x1="14" y1="16" x2="32" y2="7" />
       </g>
       {/* constellation nodes */}
-      <g fill="url(#pulse-g)">
+      <g fill={gradient}>
         <circle cx="32" cy="7" r="4.4" />
         <circle cx="50" cy="16" r="4.4" />
         <circle cx="57" cy="32" r="4.4" />
@@ -51,7 +58,7 @@ export function PulseMark({
       <polyline
         points="6,32 22,32 27,23 32,41 36,16 41,34 44,32 58,32"
         fill="none"
-        stroke="url(#pulse-g)"
+        stroke={gradient}
         strokeWidth="4"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -92,6 +99,10 @@ export function PulseLogo({ className }: { className?: string }) {
  * reads exactly like the static PulseMark.
  */
 export function PulseBeatMark({ className }: { className?: string }) {
+  const reactId = useId();
+  const gradientId = `pulse-g-beat-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const gradient = `url(#${gradientId})`;
+
   return (
     <span className={cn("relative inline-flex items-center justify-center", className)}>
       {/* halo — swells softly on every beat */}
@@ -118,7 +129,7 @@ export function PulseBeatMark({ className }: { className?: string }) {
           className="h-full w-full drop-shadow-[0_0_16px_rgba(176,38,255,0.45)]"
         >
           <defs>
-            <linearGradient id="pulse-g-beat" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+            <linearGradient id={gradientId} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
               <stop offset="0" stopColor="#d946ef" />
               <stop offset="0.5" stopColor="#b026ff" />
               <stop offset="1" stopColor="#8b2fe8" />
@@ -127,7 +138,7 @@ export function PulseBeatMark({ className }: { className?: string }) {
 
           {/* constellation — breathes brighter at each contraction */}
           <g className="pulse-beat-nodes">
-            <g stroke="url(#pulse-g-beat)" strokeWidth="2" opacity="0.5" fill="none">
+            <g stroke={gradient} strokeWidth="2" opacity="0.5" fill="none">
               <line x1="32" y1="7" x2="50" y2="16" />
               <line x1="50" y1="16" x2="57" y2="32" />
               <line x1="57" y1="32" x2="50" y2="48" />
@@ -137,7 +148,7 @@ export function PulseBeatMark({ className }: { className?: string }) {
               <line x1="7" y1="32" x2="14" y2="16" />
               <line x1="14" y1="16" x2="32" y2="7" />
             </g>
-            <g fill="url(#pulse-g-beat)">
+            <g fill={gradient}>
               <circle cx="32" cy="7" r="4.4" />
               <circle cx="50" cy="16" r="4.4" />
               <circle cx="57" cy="32" r="4.4" />
@@ -153,7 +164,7 @@ export function PulseBeatMark({ className }: { className?: string }) {
           <polyline
             points="6,32 22,32 27,23 32,41 36,16 41,34 44,32 58,32"
             fill="none"
-            stroke="url(#pulse-g-beat)"
+            stroke={gradient}
             strokeWidth="4"
             strokeLinecap="round"
             strokeLinejoin="round"

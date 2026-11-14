@@ -6,12 +6,15 @@ import {
   Check,
   CheckCircle2,
   CreditCard,
+  Loader2,
+  Mail,
   Minus,
   Plus,
   Receipt,
   RotateCcw,
   Search,
   SearchX,
+  Send,
   ShoppingCart,
   Smartphone,
   Store,
@@ -47,10 +50,15 @@ import {
   brandBtnCls,
 } from "@/components/pharmacy/pharmacy-shared";
 import { recordAudit } from "@/lib/audit-log";
+import {
+  flushOutbox,
+  queueInventorySync,
+  queueLowStockAlert,
+  queueSalesSync,
+} from "@/lib/offline/outbox";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
-import { syncPharmacySales } from "@/lib/cloud/pharmacy-sales";
 import { canChargePrescription } from "@/lib/pharmacy-stock";
 import {
   Dialog,
@@ -88,9 +96,11 @@ const CASH_NOTES = [10, 20, 50, 100, 200];
 export function PharmacyPOS({
   storeId = "all",
   stores,
+  pharmacyName,
 }: {
   storeId?: string;
   stores: PharmacyStore[];
+  pharmacyName: string;
 }) {
   const { toast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -106,6 +116,11 @@ export function PharmacyPOS({
   const [method, setMethod] = useState<POSPaymentMethod>("cash");
   const [tendered, setTendered] = useState("");
   const [receipt, setReceipt] = useState<POSSale | null>(null);
+  const [emailReceiptOpen, setEmailReceiptOpen] = useState(false);
+  const [receiptEmailAddress, setReceiptEmailAddress] = useState("");
+  const [receiptEmailError, setReceiptEmailError] = useState("");
+  const [receiptEmailSentTo, setReceiptEmailSentTo] = useState("");
+  const [sendingReceiptEmail, setSendingReceiptEmail] = useState(false);
   const [saleToReverse, setSaleToReverse] = useState<POSSale | null>(null);
   const [saleSearch, setSaleSearch] = useState("");
   const [reversalReason, setReversalReason] = useState("");
@@ -118,6 +133,15 @@ export function PharmacyPOS({
   const [cartInView, setCartInView] = useState(false);
   const cartRef = useRef<HTMLElement>(null);
   const didBackfillSales = useRef(false);
+
+  // A fresh receipt starts with its email form closed and empty.
+  useEffect(() => {
+    if (!receipt) return;
+    setEmailReceiptOpen(false);
+    setReceiptEmailAddress("");
+    setReceiptEmailError("");
+    setReceiptEmailSentTo("");
+  }, [receipt]);
 
   // Restore the shelves, the catalogue, the day's sales + the identity.
   useEffect(() => {
@@ -163,9 +187,8 @@ export function PharmacyPOS({
         stores.find((store) => store.id === resolveStoreId(sale))?.name ??
         "",
     }));
-    void syncPharmacySales(salesWithStoreNames).catch(() => {
-      // Local POS remains available offline; a later visit retries the sync.
-    });
+    queueSalesSync(salesWithStoreNames, stores);
+    void flushOutbox();
   }, [hydrated, sales, stores]);
 
   // "/" anywhere jumps to the search box — the counter never waits for a mouse.
@@ -391,39 +414,16 @@ export function PharmacyPOS({
     setItems(next);
     saveInventory(next);
     saveMovements(nextMovements);
-    void (async () => {
-      try {
-        const { syncPharmacyInventory } = await import("@/lib/cloud/pharmacy-inventory");
-        const nameOf = new Map(stores.map((s) => [s.id, s.name]));
-        await syncPharmacyInventory(
-          next.map((row) => ({ ...row, storeName: nameOf.get(resolveStoreId(row)) ?? "" }))
-        );
-      } catch {
-        /* offline — the next visit re-mirrors the shelves */
-      }
-    })();
-    // A sale is what usually pushes a shelf under the trigger limit, so check
-    // the whole counter once here. One email covers every triggered item.
-    void (async () => {
-      try {
-        const { sendLowStockAlert } = await import("@/lib/cloud/low-stock-alerts");
-        const nameOf = new Map(stores.map((s) => [s.id, s.name]));
-        await sendLowStockAlert({
-          items: next,
-          stores,
-          storeNameOf: (row) => nameOf.get(resolveStoreId(row)) ?? "",
-        });
-      } catch {
-        /* alerts are best-effort — the next console visit retries */
-      }
-    })();
+    // Persist the shelf snapshot and alert trigger in the durable outbox so a
+    // dropped connection cannot lose them; it flushes again on reconnect.
+    queueInventorySync(next, stores);
+    queueLowStockAlert(next, stores);
 
     const nextSales = [sale, ...sales];
     setSales(nextSales);
     saveSales(nextSales);
-    void syncPharmacySales([sale]).catch(() => {
-      // Local POS remains available offline; the next visit retries the sync.
-    });
+    queueSalesSync([sale], stores);
+    void flushOutbox();
 
     if (actor.email) {
       recordAudit({
@@ -438,6 +438,44 @@ export function PharmacyPOS({
 
     setReceipt(sale);
     clearSale();
+  };
+
+  const emailReceipt = async () => {
+    if (!receipt || sendingReceiptEmail) return;
+    const to = receiptEmailAddress.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      setReceiptEmailError("Enter a valid email address.");
+      return;
+    }
+
+    setSendingReceiptEmail(true);
+    setReceiptEmailError("");
+    setReceiptEmailSentTo("");
+    try {
+      const { sendReceiptEmail } = await import("@/lib/cloud/receipts");
+      await sendReceiptEmail({
+        email: to,
+        sale: receipt,
+        storeName: receipt.storeName ?? sellingStore?.name ?? "Main store",
+      });
+      setReceiptEmailSentTo(to);
+      toast({
+        title: "Receipt emailed",
+        description: `${receipt.id} sent to ${to}.`,
+      });
+      void trackEvent("pharmacy_receipt_emailed", {
+        sale: receipt.id,
+        method: receipt.method,
+      });
+    } catch (error) {
+      setReceiptEmailError(
+        error instanceof Error
+          ? error.message
+          : "We couldn't email this receipt. Please try again."
+      );
+    } finally {
+      setSendingReceiptEmail(false);
+    }
   };
 
   const openReversal = (sale: POSSale) => {
@@ -556,9 +594,9 @@ export function PharmacyPOS({
     saveMovements(nextMovements);
     setSales(nextSales);
     saveSales(nextSales);
-    void syncPharmacySales([reversedSale]).catch(() => {
-      // Local POS remains available offline; the next visit retries the sync.
-    });
+    queueInventorySync(nextItems, stores);
+    queueSalesSync([reversedSale], stores);
+    void flushOutbox();
 
     if (actor.email) {
       recordAudit({
@@ -695,7 +733,7 @@ export function PharmacyPOS({
                     No products in the catalogue yet.
                   </p>
                   <p className="text-[12.5px] text-slate-400 dark:text-slate-500">
-                    Add your first product under Product Catalogue to start selling at the counter.
+                    Add your first product under Inventory to start selling at the counter.
                   </p>
                 </>
               ) : (
@@ -1177,7 +1215,7 @@ export function PharmacyPOS({
 
       {/* Receipt */}
       <Dialog open={receipt !== null} onOpenChange={(open) => !open && setReceipt(null)}>
-        <DialogContent className="max-w-sm p-0 outline-none sm:max-w-sm">
+        <DialogContent className="max-h-[90dvh] max-w-sm overflow-y-auto p-0 outline-none sm:max-w-sm">
           {receipt && (
             <div className="flex flex-col items-center px-6 pb-6 pt-8">
               <motion.span
@@ -1204,8 +1242,14 @@ export function PharmacyPOS({
 
               {/* The slip */}
               <div className="mt-4 w-full rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-4 font-mono text-[11.5px] leading-relaxed text-slate-600 dark:border-white/15 dark:bg-white/5 dark:text-slate-300">
+                <div
+                  aria-hidden="true"
+                  className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-purple-600 to-fuchsia-600 text-[14px] font-bold text-white shadow-[0_6px_16px_-8px_rgba(147,51,234,0.8)]"
+                >
+                  {pharmacyName.trim()[0]?.toUpperCase() ?? "P"}
+                </div>
                 <p className="text-center font-bold tracking-wide text-slate-900 dark:text-white">
-                  {sellingStore?.name ?? "Pulse Pharmacy"}
+                  {receipt.storeName ?? sellingStore?.name ?? "Pulse Pharmacy"}
                 </p>
                 <p className="text-center text-[10.5px] text-slate-400 dark:text-slate-500">
                   {new Date(receipt.soldAt).toLocaleString("en-US", {
@@ -1259,7 +1303,85 @@ export function PharmacyPOS({
                 </p>
               </div>
 
-              <div className="mt-5 flex w-full items-center gap-2.5">
+              <button
+                type="button"
+                aria-expanded={emailReceiptOpen}
+                aria-controls="pos-email-receipt"
+                onClick={() => {
+                  setEmailReceiptOpen((open) => !open);
+                  setReceiptEmailError("");
+                }}
+                className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-md border border-purple-200 bg-white text-[13px] font-semibold text-purple-700 transition-colors hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 dark:border-purple-500/25 dark:bg-transparent dark:text-purple-300 dark:hover:bg-purple-500/10"
+              >
+                <Mail className="h-4 w-4" aria-hidden="true" />
+                Email receipt
+              </button>
+
+              {emailReceiptOpen && (
+                <form
+                  id="pos-email-receipt"
+                  noValidate
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void emailReceipt();
+                  }}
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-white/[0.03]"
+                >
+                  <Label
+                    htmlFor="pos-email-receipt-address"
+                    className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-300"
+                  >
+                    Send receipt to
+                  </Label>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <input
+                      id="pos-email-receipt-address"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      autoFocus
+                      maxLength={254}
+                      value={receiptEmailAddress}
+                      onChange={(event) => {
+                        setReceiptEmailAddress(event.target.value);
+                        setReceiptEmailError("");
+                        setReceiptEmailSentTo("");
+                      }}
+                      disabled={sendingReceiptEmail}
+                      aria-invalid={Boolean(receiptEmailError)}
+                      placeholder="customer@example.com"
+                      className="h-9 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2.5 text-[12.5px] outline-none transition-[border-color,box-shadow] placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sendingReceiptEmail}
+                      className={cn(brandBtnCls, "h-9 shrink-0 gap-1.5 px-3 text-[12.5px] font-bold")}
+                    >
+                      {sendingReceiptEmail ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                      )}
+                      {sendingReceiptEmail ? "Sending" : "Send"}
+                    </button>
+                  </div>
+                  <div aria-live="polite" className="mt-1.5">
+                    {receiptEmailSentTo && (
+                      <p className="flex items-start gap-1.5 text-[11.5px] font-medium leading-snug text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        Receipt sent to {receiptEmailSentTo}
+                      </p>
+                    )}
+                    {receiptEmailError && (
+                      <p role="alert" className="text-[11.5px] font-medium leading-snug text-rose-600 dark:text-rose-400">
+                        {receiptEmailError}
+                      </p>
+                    )}
+                  </div>
+                </form>
+              )}
+
+              <div className="mt-3 flex w-full items-center gap-2.5">
                 <button
                   type="button"
                   onClick={() => {

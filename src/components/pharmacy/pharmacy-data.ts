@@ -91,7 +91,7 @@ export type OutboundDelivery = {
 
 export const PHARMACY_OUTBOUND_KEY = "pulse.pharmacy-outbound.v1";
 
-/** A network supplier shown in the Pharmacy portal's Supplier Directory. */
+/** A network supplier the pharmacy can raise purchase orders against. */
 export type Supplier = {
   id: string;
   name: string;
@@ -193,6 +193,9 @@ export type POSSale = {
 };
 
 export type PurchaseOrderStatus = "draft" | "sent" | "received" | "cancelled";
+
+/** How quickly the hub should handle an order. */
+export type PurchaseOrderPriority = "routine" | "urgent";
 
 /* ------------------------------------------------------------------ */
 /* Stock movement — the single ledger every quantity change flows      */
@@ -490,7 +493,7 @@ export function creditReceivedLines(
   return credited.reduce((acc, entry) => acc + entry.qty, 0);
 }
 
-/** The network supplier directory — saved partners only. */
+/** Saved supplier partners — the sources a purchase order can name. */
 export function loadSuppliers(): Supplier[] {
   return loadStoredList<Supplier>(PHARMACY_SUPPLIERS_KEY, SEED_IDS.suppliers);
 }
@@ -500,8 +503,8 @@ export function saveSuppliers(suppliers: Supplier[]): void {
 }
 
 /**
- * Supplier names a purchase order can be raised against: the saved directory
- * plus every supplier already used on an order or delivery, with the Pulse hub
+ * Supplier names a purchase order can be raised against: saved partners plus
+ * every supplier already used on an order or delivery, with the Pulse hub
  * always available so the dropdown is never empty.
  */
 export function supplierOptions(): string[] {
@@ -597,6 +600,8 @@ export type PurchaseOrder = {
   id: string;
   supplier: string;
   status: PurchaseOrderStatus;
+  /** Handling priority; legacy orders without one are treated as routine. */
+  priority?: PurchaseOrderPriority;
   createdAt: number;
   /** ISO date (yyyy-mm-dd) the goods are expected. */
   expectedAt?: string;

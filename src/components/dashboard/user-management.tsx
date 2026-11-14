@@ -31,7 +31,10 @@ import {
   listPulseConsoleUsers,
   removePulseConsoleUser,
   updatePulseConsoleUserRole,
+  type PulseConsoleUser,
 } from "@/lib/cloud/pulse-users";
+import { CachedNotice } from "@/components/offline/cached-notice";
+import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import {
   assignablePulseRoles,
   canChangePulseRole,
@@ -403,6 +406,32 @@ function AddUserDialog({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
+const CONSOLE_USERS_CACHE_KEY = "pulse-console-users";
+
+/** Merge live profiles with invitations accepted on this device. */
+function mergeConsoleProfiles(
+  profiles: PulseConsoleUser[],
+  previous: PulseUser[]
+): PulseUser[] {
+  const invitations = previous.filter((user) => user.source === "invitation");
+  const activeEmails = new Set(
+    profiles.map((user) => user.email.trim().toLowerCase()).filter(Boolean)
+  );
+  return [
+    ...profiles.map((user) => ({
+      id: user.uid,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      status: "active" as const,
+      source: "profile" as const,
+    })),
+    ...invitations.filter(
+      (user) => !activeEmails.has(user.email.trim().toLowerCase())
+    ),
+  ];
+}
+
 export function UserManagement({
   role,
   currentUid,
@@ -416,6 +445,7 @@ export function UserManagement({
   const [hydrated, setHydrated] = useState(false);
   const [loadingDirectory, setLoadingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [directorySavedAt, setDirectorySavedAt] = useState<number | null>(null);
   const [savingUid, setSavingUid] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<PulseUser | null>(null);
   const [resetTarget, setResetTarget] = useState<PulseUser | null>(null);
@@ -470,31 +500,23 @@ export function UserManagement({
     setDirectoryError(null);
     try {
       const profiles = await listPulseConsoleUsers();
-      setUsers((prev) => {
-        const invitations = prev.filter((user) => user.source === "invitation");
-        const activeEmails = new Set(
-          profiles.map((user) => user.email.trim().toLowerCase()).filter(Boolean)
-        );
-        return [
-          ...profiles.map((user) => ({
-            id: user.uid,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            status: "active" as const,
-            source: "profile" as const,
-          })),
-          ...invitations.filter(
-            (user) => !activeEmails.has(user.email.trim().toLowerCase())
-          ),
-        ];
-      });
+      saveCachedRead(CONSOLE_USERS_CACHE_KEY, profiles);
+      setDirectorySavedAt(null);
+      setUsers((prev) => mergeConsoleProfiles(profiles, prev));
     } catch (error) {
-      setDirectoryError(
-        error instanceof CloudFunctionError
-          ? error.message
-          : "We couldn't load the console directory. Please try again."
-      );
+      // Offline: use the last authoritative directory saved on this device.
+      const cached = loadCachedRead<PulseConsoleUser[]>(CONSOLE_USERS_CACHE_KEY);
+      if (cached) {
+        setDirectorySavedAt(cached.cachedAt);
+        setDirectoryError(null);
+        setUsers((prev) => mergeConsoleProfiles(cached.data, prev));
+      } else {
+        setDirectoryError(
+          error instanceof CloudFunctionError
+            ? error.message
+            : "We couldn't load the console directory. Please try again."
+        );
+      }
     } finally {
       setLoadingDirectory(false);
     }
@@ -820,6 +842,10 @@ export function UserManagement({
           </div>
         )}
       </motion.section>
+
+      {directorySavedAt !== null && (
+        <CachedNotice cachedAt={directorySavedAt} className="mt-6" />
+      )}
 
       {/* — Stat cards — */}
       <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">

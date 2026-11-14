@@ -10,6 +10,7 @@ import {
   Lock,
   Mail,
   MailPlus,
+  ShieldCheck,
   Store,
   UserRound,
   X,
@@ -31,12 +32,14 @@ import {
   type InvitationMessage,
   type InvitationRecord,
 } from "@/lib/cloud/invitations";
+import { selfServiceAccountKind } from "@/lib/account-policy";
 import { routeForPortal, setStoredPortal } from "@/lib/portal";
 import {
   authErrorCode,
   describeAuthError,
   registerInvitedAccount,
   registerPharmacyAccount,
+  registerPulseAdminAccount,
   trackEvent,
 } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
@@ -55,10 +58,10 @@ type Errors = {
 const TEAM_EMAIL_LIMIT = 8;
 
 /**
- * "Register your pharmacy" — the self-serve onboarding dialog shown from the
- * Pharmacy portal. Creates a real Firebase Auth account plus the `User/{uid}`
- * profile the Pulse pharmacy app reads, then hands the fresh session to the
- * console.
+ * Unified account creation. A valid Duniya Healthcare address (or the
+ * designated admin inbox) becomes a Pulse admin account; every other
+ * self-service email becomes a Pharmacy account. An invitation always
+ * carries its own portal and role, so it takes precedence over the default.
  */
 export function RegisterDialog({
   open,
@@ -67,7 +70,7 @@ export function RegisterDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** When present, the dialog claims this invitation instead of creating a pharmacy. */
+  /** When present, the dialog claims this invitation instead of self-registering. */
   invitation?: InvitationRecord | null;
 }) {
   const router = useRouter();
@@ -83,6 +86,7 @@ export function RegisterDialog({
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [registeredName, setRegisteredName] = useState<string | null>(null);
+  const [successPortal, setSuccessPortal] = useState<"pulse" | "pharmacy">("pharmacy");
 
   // Team invitations — addresses listed here receive a branded Pulse
   // invitation the moment the pharmacy is created.
@@ -127,6 +131,7 @@ export function RegisterDialog({
     setTeamError(null);
   };
 
+  const emailRef = useRef<HTMLInputElement>(null);
   const pharmacyRef = useRef<HTMLInputElement>(null);
   const ownerRef = useRef<HTMLInputElement>(null);
 
@@ -153,6 +158,7 @@ export function RegisterDialog({
       setFormError(null);
       setStatus("idle");
       setRegisteredName(null);
+      setSuccessPortal("pharmacy");
       setTeamEmails([]);
       setTeamInput("");
       setTeamError(null);
@@ -169,17 +175,34 @@ export function RegisterDialog({
     if (!open || status !== "success" || invitesPending || previewOpen) return;
     const timer = window.setTimeout(() => {
       onOpenChange(false);
-      // Invitations open the console they belong to; new pharmacies open theirs.
-      const portal = invitation?.portal ?? "pharmacy";
-      setStoredPortal(portal);
-      router.push(routeForPortal(portal));
+      // The account that was just created names its own console.
+      setStoredPortal(successPortal);
+      router.push(routeForPortal(successPortal));
     }, 1500);
     return () => window.clearTimeout(timer);
-  }, [open, status, invitesPending, previewOpen, invitation, onOpenChange, router]);
+  }, [open, status, invitesPending, previewOpen, successPortal, onOpenChange, router]);
+
+  const attemptedKind = invited ? null : selfServiceAccountKind(email);
+  const isPulseAdminSignup = attemptedKind === "pulse-admin";
+  const isPharmacySignup = attemptedKind === "pharmacy";
+  const formTitle = invited
+    ? "Accept your invitation"
+    : isPulseAdminSignup
+      ? "Create your Pulse admin account"
+      : isPharmacySignup
+        ? "Register your pharmacy"
+        : "Create your Pulse account";
+  const formDescription = invited
+    ? ""
+    : isPulseAdminSignup
+      ? "This email is reserved for the Pulse admin console. Set your name and password — no pharmacy workspace is created."
+      : isPharmacySignup
+        ? "Join the Pulse network — stock, staff and sales in one console."
+        : "Enter your email and Pulse will set up the right account for you.";
 
   const validate = (): Errors => {
     const next: Errors = {};
-    if (!invited && pharmacyName.trim().length < 2)
+    if (isPharmacySignup && pharmacyName.trim().length < 2)
       next.pharmacyName = "Enter your pharmacy's name.";
     if (!ownerName.trim()) next.ownerName = "Enter the owner's full name.";
     if (!email.trim()) next.email = "Enter your email address.";
@@ -200,7 +223,9 @@ export function RegisterDialog({
     const nextErrors = validate();
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
-      if (nextErrors.pharmacyName) pharmacyRef.current?.focus();
+      if (nextErrors.email) emailRef.current?.focus();
+      else if (nextErrors.ownerName) ownerRef.current?.focus();
+      else if (nextErrors.pharmacyName) pharmacyRef.current?.focus();
       return;
     }
 
@@ -222,6 +247,7 @@ export function RegisterDialog({
         } catch {
           /* the account exists; a retry from the inviter can reconcile the seat */
         }
+        setSuccessPortal(invitation.portal);
         setRegisteredName(
           invitation.kind === "team"
             ? invitation.pharmacyName || result.name
@@ -247,6 +273,34 @@ export function RegisterDialog({
       return;
     }
 
+    if (attemptedKind === "pulse-admin") {
+      setFormError(null);
+      setStatus("loading");
+      try {
+        const result = await registerPulseAdminAccount({
+          name: ownerName,
+          email: email.trim(),
+          password,
+        });
+        setRegisteredName(result.name);
+        setSuccessPortal("pulse");
+        setStatus("success");
+        void trackEvent("pulse_admin_registered", {
+          profile_saved: result.profileSaved,
+        });
+      } catch (err) {
+        setStatus("idle");
+        const code = authErrorCode(err);
+        void trackEvent("pulse_admin_registered", { reason: code });
+        setFormError(
+          code === "auth/email-already-in-use"
+            ? "You already have a Pulse account with this email. Close this window and sign in instead."
+            : describeAuthError(err)
+        );
+      }
+      return;
+    }
+
     setFormError(null);
     setStatus("loading");
     try {
@@ -257,6 +311,7 @@ export function RegisterDialog({
         password,
       });
       setRegisteredName(result.pharmacyName);
+      setSuccessPortal("pharmacy");
       setStatus("success");
       void trackEvent("pharmacy_registered", {
         portal: "pharmacy",
@@ -320,7 +375,7 @@ export function RegisterDialog({
         className="max-h-[92dvh] overflow-y-auto rounded-2xl bg-[linear-gradient(180deg,#ffffff_0%,#fbf9fe_100%)] p-6 sm:max-w-[440px] sm:p-8"
         onOpenAutoFocus={(e) => {
           e.preventDefault();
-          (invited ? ownerRef.current : pharmacyRef.current)?.focus();
+          (invited ? ownerRef.current : emailRef.current)?.focus();
         }}
       >
         <AnimatePresence mode="wait" initial={false}>
@@ -337,14 +392,23 @@ export function RegisterDialog({
                 <CheckCircle2 className="h-9 w-9 text-emerald-500" aria-hidden="true" />
               </span>                <DialogHeader className="mt-5 space-y-2">
                 <DialogTitle className="text-[22px] font-semibold tracking-tight text-slate-900">
-                  {invited ? "You're in! 🎉" : "Pharmacy registered! 🎉"}
+                  {invited
+                    ? "You're in! 🎉"
+                    : successPortal === "pulse"
+                      ? "Pulse admin account created! 🎉"
+                      : "Pharmacy registered! 🎉"}
                 </DialogTitle>
                 <DialogDescription className="text-[14px] leading-relaxed text-slate-500">
                   {invited ? (
                     <>
                       Welcome to{" "}
                       <span className="font-medium text-slate-700">{registeredName}</span>. Taking
-                      you to your {invitation?.portal === "pulse" ? "Pulse" : "pharmacy"} console…
+                      you to your {successPortal === "pulse" ? "Pulse" : "pharmacy"} console…
+                    </>
+                  ) : successPortal === "pulse" ? (
+                    <>
+                      <span className="font-medium text-slate-700">{registeredName}</span>, your Pulse
+                      admin account is ready. Taking you to the console…
                     </>
                   ) : (
                     <>
@@ -405,7 +469,7 @@ export function RegisterDialog({
                   <PulseBeatMark className="h-[68px] w-[68px]" />
                 </div>
                 <DialogTitle className="text-[24px] font-semibold tracking-tight text-slate-900">
-                  {invited ? "Accept your invitation" : "Register your pharmacy"}
+                  {formTitle}
                 </DialogTitle>
                 <DialogDescription className="text-[13.5px] text-slate-500">
                   {invited ? (
@@ -420,7 +484,7 @@ export function RegisterDialog({
                       a password to claim your seat.
                     </>
                   ) : (
-                    "Join the Pulse network — stock, staff and sales in one console."
+                    formDescription
                   )}
                 </DialogDescription>
               </DialogHeader>
@@ -448,66 +512,7 @@ export function RegisterDialog({
               )}
 
               <form onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
-                {/* Pharmacy name — only when creating a new pharmacy */}
-                {!invited && (
-                <div className="relative">
-                  <label htmlFor="register-pharmacy" className="sr-only">
-                    Pharmacy name
-                  </label>
-                  <Store
-                    aria-hidden="true"
-                    className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
-                  />
-                  <input
-                    ref={pharmacyRef}
-                    id="register-pharmacy"
-                    name="pharmacyName"
-                    type="text"
-                    autoComplete="organization"
-                    placeholder="Pharmacy name"
-                    value={pharmacyName}
-                    onChange={(e) => {
-                      setPharmacyName(e.target.value);
-                      if (errors.pharmacyName) setErrors((p) => ({ ...p, pharmacyName: undefined }));
-                      if (formError) setFormError(null);
-                    }}
-                    aria-invalid={!!errors.pharmacyName}
-                    aria-describedby={errors.pharmacyName ? "pharmacy-error" : undefined}
-                    className={cn(inputBase, inputState(errors.pharmacyName), "pl-11")}
-                  />
-                  {fieldError(errors.pharmacyName, "pharmacy-error")}
-                </div>
-                )}
-
-                {/* Owner name */}
-                <div className="relative">
-                  <label htmlFor="register-owner" className="sr-only">
-                    Full name
-                  </label>
-                  <UserRound
-                    aria-hidden="true"
-                    className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
-                  />
-                  <input
-                    ref={ownerRef}
-                    id="register-owner"
-                    name="ownerName"
-                    type="text"
-                    autoComplete="name"
-                    placeholder={invited ? "Your full name" : "Owner full name"}
-                    value={ownerName}
-                    onChange={(e) => {
-                      setOwnerName(e.target.value);
-                      if (errors.ownerName) setErrors((p) => ({ ...p, ownerName: undefined }));
-                      if (formError) setFormError(null);
-                    }}
-                    aria-invalid={!!errors.ownerName}
-                    className={cn(inputBase, inputState(errors.ownerName), "pl-11")}
-                  />
-                  {fieldError(errors.ownerName)}
-                </div>
-
-                {/* Email */}
+                {/* Email first — it decides which account this is. */}
                 <div className="relative">
                   <label htmlFor="register-email" className="sr-only">
                     Email address
@@ -517,6 +522,7 @@ export function RegisterDialog({
                     className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
                   />
                   <input
+                    ref={emailRef}
                     id="register-email"
                     name="email"
                     type="email"
@@ -545,6 +551,116 @@ export function RegisterDialog({
                     </p>
                   )}
                   {fieldError(errors.email)}
+                </div>
+
+                {/* Instant account-type preview — no portal toggle to guess at. */}
+                {!invited && attemptedKind && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className={cn(
+                      "flex items-start gap-3 rounded-xl border px-4 py-3.5 text-left",
+                      isPulseAdminSignup
+                        ? "border-purple-200 bg-purple-50/70 dark:border-purple-500/20 dark:bg-purple-500/10"
+                        : "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/10"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white ring-1",
+                        isPulseAdminSignup
+                          ? "text-purple-600 ring-purple-200 dark:bg-white/10 dark:text-purple-300 dark:ring-purple-500/30"
+                          : "text-emerald-600 ring-emerald-200 dark:bg-white/10 dark:text-emerald-300 dark:ring-emerald-500/30"
+                      )}
+                    >
+                      {isPulseAdminSignup ? (
+                        <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <Store className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
+                          {isPulseAdminSignup ? "Pulse admin account" : "Pharmacy account"}
+                        </p>
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]",
+                            isPulseAdminSignup
+                              ? "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"
+                              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                          )}
+                        >
+                          {isPulseAdminSignup ? "Admin" : "Pharmacy"}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+                        {isPulseAdminSignup
+                          ? "This email is reserved for the Pulse admin console. No pharmacy workspace is created."
+                          : "This email creates a pharmacy workspace. Pulse console access is invitation-only."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Pharmacy name — only for a pharmacy self-registration. */}
+                {isPharmacySignup && (
+                  <div className="relative">
+                    <label htmlFor="register-pharmacy" className="sr-only">
+                      Pharmacy name
+                    </label>
+                    <Store
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
+                    />
+                    <input
+                      ref={pharmacyRef}
+                      id="register-pharmacy"
+                      name="pharmacyName"
+                      type="text"
+                      autoComplete="organization"
+                      placeholder="Pharmacy name"
+                      value={pharmacyName}
+                      onChange={(e) => {
+                        setPharmacyName(e.target.value);
+                        if (errors.pharmacyName) setErrors((p) => ({ ...p, pharmacyName: undefined }));
+                        if (formError) setFormError(null);
+                      }}
+                      aria-invalid={!!errors.pharmacyName}
+                      aria-describedby={errors.pharmacyName ? "pharmacy-error" : undefined}
+                      className={cn(inputBase, inputState(errors.pharmacyName), "pl-11")}
+                    />
+                    {fieldError(errors.pharmacyName, "pharmacy-error")}
+                  </div>
+                )}
+
+                {/* Full name */}
+                <div className="relative">
+                  <label htmlFor="register-owner" className="sr-only">
+                    Full name
+                  </label>
+                  <UserRound
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    ref={ownerRef}
+                    id="register-owner"
+                    name="ownerName"
+                    type="text"
+                    autoComplete="name"
+                    placeholder={invited || isPulseAdminSignup ? "Your full name" : "Owner full name"}
+                    value={ownerName}
+                    onChange={(e) => {
+                      setOwnerName(e.target.value);
+                      if (errors.ownerName) setErrors((p) => ({ ...p, ownerName: undefined }));
+                      if (formError) setFormError(null);
+                    }}
+                    aria-invalid={!!errors.ownerName}
+                    className={cn(inputBase, inputState(errors.ownerName), "pl-11")}
+                  />
+                  {fieldError(errors.ownerName)}
                 </div>
 
                 {/* Password */}
@@ -626,7 +742,7 @@ export function RegisterDialog({
                 )}
 
                 {/* Invite your team — only while creating a new pharmacy. */}
-                {!invited && (
+                {isPharmacySignup && (
                 <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-4 dark:border-purple-500/20 dark:bg-purple-500/10">
                   <label
                     htmlFor="register-team"
@@ -699,19 +815,31 @@ export function RegisterDialog({
                   {status === "loading" ? (
                     <>
                       <Loader2 className="h-[18px] w-[18px] animate-spin" aria-hidden="true" />
-                      {invited ? "Claiming your seat…" : "Creating account…"}
+                      {invited
+                        ? "Claiming your seat…"
+                        : isPulseAdminSignup
+                          ? "Creating admin account…"
+                          : isPharmacySignup
+                            ? "Creating pharmacy account…"
+                            : "Setting up your account…"}
                     </>
                   ) : invited ? (
                     "Accept invitation"
-                  ) : (
+                  ) : isPulseAdminSignup ? (
+                    "Create admin account"
+                  ) : isPharmacySignup ? (
                     "Create pharmacy account"
+                  ) : (
+                    "Create account"
                   )}
                 </motion.button>
 
                 <p className="text-center text-[12px] leading-relaxed text-slate-400">
                   {invited
                     ? "By accepting you agree to the Pulse terms of service. Your role and access are set by your inviter."
-                    : "Your pharmacy goes live on the Pulse network right away. By registering you agree to the Pulse terms of service."}
+                    : isPulseAdminSignup
+                      ? "Your Pulse admin access is tied to this email. By registering you agree to the Pulse terms of service."
+                      : "Your pharmacy goes live on the Pulse network right away. By registering you agree to the Pulse terms of service."}
                 </p>
               </form>
             </motion.div>

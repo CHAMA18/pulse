@@ -3,6 +3,10 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseAnalytics } from "@/components/firebase-analytics";
+import { OfflineProvider } from "@/components/offline/offline-provider";
+
+/** Mirrors the optional GitHub Pages base path baked in at build time. */
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 /**
  * Satoshi — the app-wide brand typeface (via Fontshare).
@@ -38,6 +42,13 @@ export const metadata: Metadata = {
     title: "Pulse — Pharmacy Intelligence, Delivered.",
     description: "Track pharmacy stock, demand and delivery in real time with Pulse.",
   },
+  applicationName: "Pulse",
+  manifest: `${basePath}/manifest.webmanifest`,
+  appleWebApp: {
+    capable: true,
+    title: "Pulse",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export const viewport: Viewport = {
@@ -56,6 +67,7 @@ export default function RootLayout({
       <body className={`${satoshi.variable} font-sans antialiased`}>
         {children}
         <FirebaseAnalytics />
+        <OfflineProvider />
         <Toaster />
       </body>
     </html>

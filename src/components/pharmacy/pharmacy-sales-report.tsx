@@ -1,6 +1,6 @@
 "use client";
 
-import { Receipt } from "lucide-react";
+import { FileDown, Receipt } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   formatZMW,
@@ -11,6 +11,7 @@ import {
   type POSPaymentMethod,
 } from "@/components/pharmacy/pharmacy-data";
 import { PageHeader, pharmacyCardCls } from "@/components/pharmacy/pharmacy-shared";
+import { buildPharmacySalesReportHtml } from "@/lib/pharmacy-sales-report-print";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
@@ -47,15 +48,23 @@ function parseLocalDateInput(value: string): Date | null {
 export function PharmacySalesReport({
   storeId = "all",
   stores,
+  pharmacyName = "Pulse Pharmacy",
+  preparedBy,
 }: {
   storeId?: string;
   stores: PharmacyStore[];
+  /** Printed on the branded PDF as the pharmacy of record. */
+  pharmacyName?: string;
+  /** The signed-in user credited on the PDF as its preparer. */
+  preparedBy?: string;
 }) {
   const [sales, setSales] = useState<POSSale[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [period, setPeriod] = useState<SalesReportPeriod>("day");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -66,9 +75,9 @@ export function PharmacySalesReport({
   }, []);
 
   const scopeAll = storeId === "all";
-  const storeName = scopeAll
-    ? "all stores"
-    : stores.find((store) => store.id === storeId)?.name ?? "this store";
+  const selectedStoreName = stores.find((store) => store.id === storeId)?.name;
+  const storeName = scopeAll ? "all stores" : selectedStoreName ?? "this store";
+  const scopeLabel = scopeAll ? "All stores" : selectedStoreName ?? "This store";
 
   const selectPeriod = (nextPeriod: SalesReportPeriod) => {
     setPeriod(nextPeriod);
@@ -154,13 +163,88 @@ export function PharmacySalesReport({
     return `${formatter.format(reportRange.start)} – ${formatter.format(lastDay)}`;
   }, [reportRange]);
 
+  /** Opens the branded report in a print-ready window so it can be saved as a PDF. */
+  const exportPdf = () => {
+    if (!hydrated || exporting || reportRange.error) return;
+    const start = reportRange.start;
+    const endExclusive = reportRange.endExclusive;
+    if (!start || !endExclusive) return;
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setExportError("Allow pop-ups for Pulse to export the branded PDF.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(
+      '<!doctype html><html><head><title>Preparing Sales Report</title></head><body style="margin:0;display:grid;min-height:100vh;place-items:center;background:#f7f2fb;color:#4c2a6b;font:14px Arial,sans-serif">Preparing your branded Pulse Sales Report…</body></html>'
+    );
+    printWindow.document.close();
+    setExporting(true);
+    setExportError("");
+
+    window.setTimeout(() => {
+      try {
+        printWindow.document.open();
+        printWindow.document.write(
+          buildPharmacySalesReportHtml({
+            sales: reportSales,
+            pharmacyName,
+            storeScope: scopeLabel,
+            scopeAllStores: scopeAll,
+            periodLabel: PERIODS.find((entry) => entry.id === period)?.label ?? "Selected period",
+            rangeLabel,
+            startAt: start.getTime(),
+            endExclusive: endExclusive.getTime(),
+            generatedAt: Date.now(),
+            preparedBy,
+          })
+        );
+        printWindow.document.close();
+        window.setTimeout(() => {
+          if (printWindow.closed) return;
+          printWindow.focus();
+          printWindow.print();
+        }, 220);
+      } catch {
+        printWindow.close();
+        setExportError("The branded PDF could not be prepared. Please try again.");
+      } finally {
+        setExporting(false);
+      }
+    }, 80);
+  };
+
   return (
     <div>
       <PageHeader
         icon={Receipt}
         title="Sales Report"
         subtitle={`Completed sales for ${storeName}; reversed sales are excluded.`}
+        actions={
+          <button
+            type="button"
+            onClick={exportPdf}
+            disabled={!hydrated || exporting || Boolean(reportRange.error)}
+            aria-label="Export Sales Report as a branded PDF"
+            title="Opens a print dialog where you can save the branded report as a PDF."
+            className="btn-brand inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-[12.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(168,85,247,0.65)] transition hover:brightness-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            <FileDown className="h-4 w-4" aria-hidden="true" />
+            {exporting ? "Preparing PDF…" : "Export PDF"}
+          </button>
+        }
       />
+
+      {exportError && (
+        <p
+          role="alert"
+          className="mt-3 rounded-lg bg-rose-50 px-3.5 py-2.5 text-[12.5px] text-rose-700 dark:bg-rose-500/10 dark:text-rose-200"
+        >
+          {exportError}
+        </p>
+      )}
 
       <section className={cn(pharmacyCardCls, "mt-5 p-4 sm:p-5")} aria-label="Sales summary">
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Sales report date range">

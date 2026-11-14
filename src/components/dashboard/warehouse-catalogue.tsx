@@ -22,6 +22,7 @@ import {
   type WarehouseItem,
 } from "@/lib/warehouse";
 import { cn } from "@/lib/utils";
+import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 
 /* ------------------------------------------------------------------ */
 /* Warehouse Catalogue — Pulse Central Warehouse shelves. Quantities    */
@@ -73,6 +74,11 @@ export function WarehouseCatalogue() {
     ]);
   };
 
+  const categoryOptions = useMemo(() => {
+    const existing = items.map((item) => item.category).filter(Boolean);
+    return Array.from(new Set<string>([...PRODUCT_CATEGORIES, ...existing]));
+  }, [items]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items
@@ -118,21 +124,24 @@ export function WarehouseCatalogue() {
 
   return (
     <div className="space-y-7" data-tour="pulse-warehouse">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-[26px] font-bold tracking-tight text-slate-900 dark:text-white">Warehouse Catalogue</h2>
-          <p className="mt-1 text-[14px] text-slate-500 dark:text-slate-400">
-            Stock held at {WAREHOUSE_NAME} — the hub Pulse issues to the network from.
-          </p>
+      <div>
+        <h2 className="text-[26px] font-bold tracking-tight text-slate-900 dark:text-white">Warehouse Catalogue</h2>
+        <p className="mt-1 text-[14px] text-slate-500 dark:text-slate-400">
+          Stock held at {WAREHOUSE_NAME} — the hub Pulse issues to the network from.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setReceiveOpen(true)}
+            className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
+          >
+            <PackagePlus className="h-4 w-4" aria-hidden="true" />
+            Add products
+          </button>
+          <span className="text-[12.5px] text-slate-500 dark:text-slate-400">
+            Add a new product, or book more units of a batch already on the shelves.
+          </span>
         </div>
-        <button
-          type="button"
-          onClick={() => setReceiveOpen(true)}
-          className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md bg-gradient-to-br from-purple-600 to-fuchsia-600 px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(147,51,234,0.7)] transition-shadow hover:shadow-[0_12px_26px_-8px_rgba(147,51,234,0.8)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
-        >
-          <PackagePlus className="h-4 w-4" aria-hidden="true" />
-          Receive into warehouse
-        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
@@ -208,10 +217,11 @@ export function WarehouseCatalogue() {
           <DialogHeader className="space-y-1.5 text-left sm:text-left">
             <DialogTitle className="flex items-center gap-2 text-[19px] font-bold tracking-tight text-slate-900 dark:text-white">
               <Warehouse className="h-5 w-5 text-purple-600" aria-hidden="true" />
-              Receive into warehouse
+              Add products
             </DialogTitle>
             <DialogDescription className="text-[13.5px] text-slate-500 dark:text-slate-400">
-              Book stock into {WAREHOUSE_NAME}. It lands on the hub shelves immediately.
+              Add stock to {WAREHOUSE_NAME}. It lands on the hub shelves immediately and is
+              recorded as a receipt in Stock Movements.
             </DialogDescription>
           </DialogHeader>
           <div className="mt-4 flex flex-col gap-4">
@@ -222,7 +232,11 @@ export function WarehouseCatalogue() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="wh-category" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Category</label>
-                <input id="wh-category" value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} placeholder="General" className={inputCls} />
+                <select id="wh-category" value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} className={inputCls}>
+                  {categoryOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label htmlFor="wh-batch" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Batch</label>

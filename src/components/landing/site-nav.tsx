@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { Menu, X } from "lucide-react";
 import { PulseMark } from "@/components/login/pulse-logo";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,27 @@ const LINKS = [
   { href: "#portals", label: "Portals" },
   { href: "#desktop", label: "Desktop" },
 ];
+
+/**
+ * Auth is a handoff to a different app surface, so it deliberately performs a
+ * full document navigation. The rendered href already includes the deployment
+ * base path; using it directly bypasses a stale client router or service worker
+ * shell that can otherwise leave a returning visitor on the landing page.
+ * Modifier clicks keep their native new-tab behaviour.
+ */
+function hardNavigate(event: MouseEvent<HTMLAnchorElement>) {
+  if (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return;
+  }
+  event.preventDefault();
+  window.location.assign(event.currentTarget.href);
+}
 
 export function SiteNav() {
   const [scrolled, setScrolled] = useState(false);
@@ -84,15 +105,17 @@ export function SiteNav() {
         </div>
 
         {/* actions */}
-        <div className="flex items-center gap-2.5">
+        <div className="relative z-10 flex items-center gap-2.5">
           <Link
             href="/login"
+            onClick={hardNavigate}
             className="hidden h-9 items-center rounded-full border border-white/12 bg-white/5 px-4 text-[13px] font-semibold text-white/85 transition-colors hover:border-white/25 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400 sm:inline-flex"
           >
             Sign in
           </Link>
           <Link
             href="/login?intent=register"
+            onClick={hardNavigate}
             className="btn-brand inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold text-white shadow-[0_10px_28px_-10px_rgba(168,85,247,0.7)] transition-shadow hover:shadow-[0_14px_36px_-10px_rgba(168,85,247,0.85)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400"
           >
             Register
@@ -124,6 +147,10 @@ export function SiteNav() {
           ))}
           <Link
             href="/login"
+            onClick={(event) => {
+              setOpen(false);
+              hardNavigate(event);
+            }}
             className="mt-2 block rounded-lg px-3 py-3 text-[15px] font-medium text-white/75 transition-colors hover:bg-white/5 hover:text-white"
           >
             Sign in

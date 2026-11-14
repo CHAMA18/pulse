@@ -11,14 +11,14 @@ import {
  *
  * The landing page (/) is pure marketing with Register / Login calls to
  * action; this route hosts the actual login form so the two concerns stay
- * separate. `?intent=register` deep-links straight into pharmacy
- * registration (used by the landing page's Register button) — detected
+ * separate. `?intent=register` deep-links straight into unified account
+ * creation (used by the landing page's Register button) — detected
  * client-side inside LoginCard to keep this route fully static-exportable.
  */
 export const metadata: Metadata = {
   title: "Sign in — Pulse",
   description:
-    "Sign in to Pulse, the pharmacy intelligence platform. Track stock, demand and delivery in real time — or register your pharmacy.",
+    "Sign in to Pulse, the pharmacy intelligence platform. Track stock, demand and delivery in real time — or create your account.",
 };
 
 export default function SignInPage() {

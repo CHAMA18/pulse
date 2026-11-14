@@ -5,20 +5,16 @@ import {
   ArrowLeftRight,
   Boxes,
   CheckCircle2,
-  ClipboardCheck,
   ClipboardList,
   Compass,
   LayoutDashboard,
   MonitorSmartphone,
   Package,
-  PackageSearch,
   Play,
   RotateCcw,
   Settings,
   ShoppingCart,
   Sparkles,
-  Store,
-  Truck,
   Users,
   Warehouse,
 } from "lucide-react";
@@ -36,12 +32,12 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
   {
     id: "ph-welcome",
     title: "Welcome to your pharmacy console",
-    body: "A three-minute lap of everything Pulse gives your pharmacy — the counter, the shelves, the network and the team. Click anywhere or press Next to walk it.",
+    body: "A three-minute lap of everything Pulse gives your pharmacy — the counter, the shelves, the stock room and the team. Click anywhere or press Next to walk it.",
   },
   {
     id: "ph-nav",
     title: "One sidebar, five neighbourhoods",
-    body: "Main is your day (dashboard + counter). Operations runs stock end-to-end. Network holds suppliers. Administration keeps stores and people. Account is yours.",
+    body: "Main is your day (dashboard + counter). Operations runs stock end-to-end. Learn holds the guided tour. Administration keeps stores and people. Account is yours.",
     target: "ph-nav",
   },
   {
@@ -67,10 +63,10 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
   },
   {
     id: "ph-inventory",
-    title: "Inventory — a read-only view of the shelves",
+    title: "Inventory — your catalogue and the shelves",
     page: "inventory",
     target: "ph-inventory",
-    body: "Every batch, expiry and status in one table. It never edits quantities — that belongs to the next stop.",
+    body: "One stop for the master product list — add or import products, set packs, shelf prices, prescription flags and low-stock triggers — plus every batch, expiry and status on hand. Quantities themselves change at the next stop.",
   },
   {
     id: "ph-movement",
@@ -80,39 +76,11 @@ export const PHARMACY_TOUR_STEPS: WalkthroughStep[] = [
     body: "Receipts, issues, transfers between stores and count corrections — each with a reason, each leaving an auditable trail.",
   },
   {
-    id: "ph-catalogue",
-    title: "Product Catalogue — your master price list",
-    page: "catalogue",
-    target: "ph-catalogue",
-    body: "Every sellable product with unit, shelf price and prescription flag. The counter and the order book both read from here.",
-  },
-  {
-    id: "ph-orders",
-    title: "Purchase Orders — buy from the network",
-    page: "orders",
-    target: "ph-orders",
-    body: "Raise an order to any supplier, send it, and mark goods received when the delivery lands.",
-  },
-  {
     id: "ph-requests",
     title: "Stock Requests — replenishment with a paper trail",
     page: "requests",
     target: "ph-requests",
-    body: "Ask the hub or a sister store for stock; follow the request from pending to delivered.",
-  },
-  {
-    id: "ph-deliveries",
-    title: "Deliveries — verified goods in",
-    page: "deliveries",
-    target: "ph-deliveries",
-    body: "Every delivery received into a store, condition-checked, so the shelves only take what was agreed.",
-  },
-  {
-    id: "ph-suppliers",
-    title: "Supplier Directory — the Pulse network",
-    page: "suppliers",
-    target: "ph-suppliers",
-    body: "Verified wholesalers with lead times, minimums and ratings — pick the right source before you commit.",
+    body: "One page for both queues: request stock from the hub, or raise a purchase order to a supplier — follow each from draft to delivered.",
   },
   {
     id: "ph-stores",
@@ -153,11 +121,7 @@ const CHAPTER_ICONS: Record<string, typeof Compass> = {
   "ph-balance": Boxes,
   "ph-inventory": Package,
   "ph-movement": ArrowLeftRight,
-  "ph-catalogue": PackageSearch,
-  "ph-orders": ClipboardCheck,
   "ph-requests": ClipboardList,
-  "ph-deliveries": Truck,
-  "ph-suppliers": Store,
   "ph-stores": Warehouse,
   "ph-users": Users,
   "ph-settings": Settings,
@@ -222,8 +186,8 @@ export function PharmacyWalkthrough({
               Learn every corner of the console — only the section being discussed is lit up
             </h3>
             <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-slate-600 dark:text-slate-300">
-              The walkthrough walks the real pages: the counter, the shelves, the movement ledger,
-              the network and the team. Wherever you are, the relevant section is spotlighted and
+              The walkthrough walks the real pages: the counter, the shelves, the movement ledger
+              and the team. Wherever you are, the relevant section is spotlighted and
               everything else dims — you always know exactly what to look at.
             </p>
           </div>

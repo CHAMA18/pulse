@@ -25,13 +25,12 @@ import {
   resolveStoreId,
   saveDeliveries,
   savePurchaseOrders,
-  supplierOptions,
   type CatalogueProduct,
   type PurchaseOrder,
+  type PurchaseOrderPriority,
   type PurchaseOrderStatus,
 } from "@/components/pharmacy/pharmacy-data";
 import {
-  PageHeader,
   pharmacyCardCls,
   brandBtnCls,
   StatusPill,
@@ -62,12 +61,12 @@ import { Textarea } from "@/components/ui/textarea";
 /* ------------------------------------------------------------------ */
 /* Purchase Orders                                                     */
 /* ------------------------------------------------------------------ */
-/* Sentinel for the dropdown's "type a new supplier" escape hatch.     */
-const OTHER_SUPPLIER = "__other-supplier";
+/* Every order is supplied by the hub, so the supplier is not a choice. */
+const PURCHASE_SUPPLIER = "Pulse Central Hub";
 
 /* Raise orders to network suppliers, send them, and mark them         */
 /* received — receiving files a delivery record automatically so the   */
-/* Deliveries page and audit trail stay honest.                        */
+/* stock ledger and audit trail stay honest.                           */
 
 type StatusFilter = "all" | PurchaseOrderStatus;
 
@@ -77,6 +76,11 @@ const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
   { id: "sent", label: "Sent" },
   { id: "received", label: "Received" },
   { id: "cancelled", label: "Cancelled" },
+];
+
+const PRIORITIES: { id: PurchaseOrderPriority; label: string }[] = [
+  { id: "routine", label: "Routine" },
+  { id: "urgent", label: "Urgent" },
 ];
 
 type DraftLine = { key: number; productId: string; qty: string; unitCost: string };
@@ -103,7 +107,6 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
   const { toast } = useToast();
 
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
-  const [supplierNames, setSupplierNames] = useState<string[]>([]);
   const [catalogue, setCatalogue] = useState<CatalogueProduct[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>("all");
@@ -112,8 +115,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
   const [actor, setActor] = useState({ name: "", email: "" });
 
   // Create form
-  const [supplier, setSupplier] = useState("");
-  const [customSupplier, setCustomSupplier] = useState(false);
+  const [priority, setPriority] = useState<PurchaseOrderPriority>("routine");
   const [expectedAt, setExpectedAt] = useState("");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([{ key: 1, productId: "", qty: "", unitCost: "" }]);
@@ -138,7 +140,6 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
 
     const raf = requestAnimationFrame(() => {
       setOrders(loadPurchaseOrders());
-      setSupplierNames(supplierOptions());
       setCatalogue(loadCatalogue());
       setHydrated(true);
     });
@@ -170,8 +171,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
   const openValue = openOrders.reduce((acc, order) => acc + orderValue(order), 0);
 
   const resetForm = () => {
-    setSupplier("");
-    setCustomSupplier(false);
+    setPriority("routine");
     setExpectedAt("");
     setNotes("");
     setLines([{ key: 1, productId: "", qty: "", unitCost: "" }]);
@@ -186,7 +186,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
     })
     .filter((line): line is { product: CatalogueProduct; qty: number; unitCost: number } => line !== null && line.qty > 0);
   const draftTotal = draftLines.reduce((acc, line) => acc + line.qty * line.unitCost, 0);
-  const canCreate = supplier.trim().length > 1 && draftLines.length > 0;
+  const canCreate = draftLines.length > 0;
 
   const pickProduct = (key: number, productId: string) => {
     setLines((prev) =>
@@ -207,8 +207,9 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
     const now = Date.now();
     return {
       id: nextId(orders, "PO"),
-      supplier: supplier.trim(),
+      supplier: PURCHASE_SUPPLIER,
       status,
+      priority,
       createdAt: now,
       expectedAt: expectedAt || undefined,
       lines: draftLines.map((line, index) => ({
@@ -234,7 +235,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
       recordAudit({
         title: status === "sent" ? "Purchase Order Sent" : "Purchase Order Created",
         action: "Update",
-        detail: `${order.id} · ${order.supplier} · ${order.lines.length} line${order.lines.length === 1 ? "" : "s"} · ${formatZMW(orderValue(order))}`,
+        detail: `${order.id} · ${order.supplier} · ${order.priority ?? "routine"} · ${order.lines.length} line${order.lines.length === 1 ? "" : "s"} · ${formatZMW(orderValue(order))}`,
         actor: actor.name,
         email: actor.email,
       });
@@ -310,34 +311,30 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
     toast({ title: `${order.id} cancelled`, description: "The supplier order was withdrawn." });
   };
 
+  const openCreate = () => {
+    setCreateOpen(true);
+    setPriority("routine");
+    setExpectedAt(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  };
+
   const StatusIcon: LucideIcon = filtered.length === 0 ? PackageCheck : ClipboardCheck;
 
   return (
     <div aria-labelledby="pharmacy-po-title">
-      <PageHeader
-        icon={ClipboardCheck}
-        title="Purchase Orders"
-        subtitle="Order from network suppliers — send, track and receive in one place"
-        tourId="ph-orders"
-        actions={
-          <button
-            type="button"
-            onClick={() => {
-              setCreateOpen(true);
-              setCustomSupplier(false);
-              setSupplier(supplierNames[0] ?? "");
-              setExpectedAt(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
-            }}
-            className={cn(brandBtnCls, "h-10 px-4 text-[13.5px] font-semibold")}
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New purchase order
-          </button>
-        }
-      />
       <h2 id="pharmacy-po-title" className="sr-only">
         Purchase Orders
       </h2>
+
+      <div className="mt-5 flex justify-end">
+        <button
+          type="button"
+          onClick={openCreate}
+          className={cn(brandBtnCls, "h-10 px-4 text-[13.5px] font-semibold")}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          New purchase order
+        </button>
+      </div>
 
       {/* KPIs */}
       <div className={cn(pharmacyCardCls, "mt-5 flex flex-wrap gap-3 p-4")}>
@@ -401,11 +398,12 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-left text-[13.5px]">
+            <table className="w-full min-w-[940px] text-left text-[13.5px]">
               <thead>
                 <tr className="border-b border-slate-100 text-[11.5px] uppercase tracking-[0.12em] text-slate-400 dark:border-white/5">
                   <th scope="col" className="px-5 py-3 font-semibold">Order</th>
                   <th scope="col" className="px-3 py-3 font-semibold">Supplier</th>
+                  <th scope="col" className="px-3 py-3 font-semibold">Priority</th>
                   <th scope="col" className="px-3 py-3 font-semibold text-right">Lines</th>
                   <th scope="col" className="px-3 py-3 font-semibold text-right">Units</th>
                   <th scope="col" className="px-3 py-3 font-semibold text-right">Value</th>
@@ -426,6 +424,9 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
                       {order.notes && (
                         <p className="truncate text-[12px] text-slate-400 dark:text-slate-500">{order.notes}</p>
                       )}
+                    </td>
+                    <td className="px-3 py-3.5">
+                      <StatusPill status={order.priority ?? "routine"} />
                     </td>
                     <td className="px-3 py-3.5 text-right tabular-nums">{order.lines.length}</td>
                     <td className="px-3 py-3.5 text-right tabular-nums">
@@ -512,6 +513,7 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
                 <DialogTitle className="flex items-center gap-2.5">
                   {viewOrder.id}
                   <StatusPill status={viewOrder.status} />
+                  <StatusPill status={viewOrder.priority ?? "routine"} />
                 </DialogTitle>
                 <DialogDescription>
                   {viewOrder.supplier} · raised {formatDay(viewOrder.createdAt)}
@@ -611,52 +613,12 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
           <DialogHeader>
             <DialogTitle>New purchase order</DialogTitle>
             <DialogDescription>
-              Pick the supplier, add the lines you need, then save as a draft or send it straight away.
+              Add the lines you need, then save as a draft or send it straight away.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="po-supplier">Supplier</Label>
-                <Select
-                  value={customSupplier ? "" : supplier}
-                  onValueChange={(value) => {
-                    if (value === OTHER_SUPPLIER) {
-                      setCustomSupplier(true);
-                      setSupplier("");
-                      return;
-                    }
-                    setCustomSupplier(false);
-                    setSupplier(value);
-                  }}
-                >
-                  <SelectTrigger id="po-supplier" className="w-full">
-                    <SelectValue placeholder="Choose a supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {supplierNames.map((name) => (
-                      <SelectItem key={name} value={name}>
-                        {name}
-                      </SelectItem>
-                    ))}
-                    <SelectItem value={OTHER_SUPPLIER}>Other supplier…</SelectItem>
-                  </SelectContent>
-                </Select>
-                {customSupplier ? (
-                  <Input
-                    value={supplier}
-                    onChange={(e) => setSupplier(e.target.value)}
-                    placeholder="Supplier name"
-                    aria-label="Supplier name"
-                    autoFocus
-                  />
-                ) : (
-                  <p className="text-[11.5px] text-slate-400 dark:text-slate-500">
-                    Saved suppliers and those already on your orders and deliveries.
-                  </p>
-                )}
-              </div>
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="po-expected">Expected delivery</Label>
                 <Input
@@ -665,6 +627,37 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
                   value={expectedAt}
                   onChange={(e) => setExpectedAt(e.target.value)}
                 />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Priority</Label>
+                <div
+                  role="radiogroup"
+                  aria-label="Priority"
+                  className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1 dark:bg-white/5"
+                >
+                  {PRIORITIES.map(({ id, label }) => {
+                    const active = priority === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setPriority(id)}
+                        className={cn(
+                          "inline-flex h-8 items-center justify-center rounded px-3 text-[12.5px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
+                          active
+                            ? id === "urgent"
+                              ? "bg-rose-600 text-white shadow-sm"
+                              : "bg-white text-slate-900 shadow-sm dark:bg-white/15 dark:text-white"
+                            : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -677,7 +670,6 @@ export function PharmacyPurchaseOrders({ storeId = "all" }: { storeId?: string }
                 </p>
               )}
               {lines.map((line, index) => {
-                const product = catalogue.find((entry) => entry.id === line.productId);
                 return (
                   <div key={line.key} className="flex items-center gap-2">
                     <div className="min-w-0 flex-[2]">

@@ -6,7 +6,6 @@ export type PulseRole = "owner" | "admin" | "staff";
 
 export type PulsePage =
   | "home"
-  | "suppliers"
   | "pharmacies"
   | "sales"
   | "catalogue"
@@ -45,14 +44,14 @@ export const ALL_PULSE_PAGES: readonly PulsePage[] = [
   "inventory",
   "movement",
   "stock",
-  "suppliers",
   "walkthrough",
 ];
 
 /**
- * Staff can see the network and its stock picture, but not the admin record,
- * user management, financial sales reporting, or the inventory-changing
- * catalogue/movement tools.
+ * Staff run the day-to-day operation — keeping the warehouse catalogue and
+ * its movement ledger up to date, and watching the network's stock picture.
+ * The admin record, account management and financial sales reporting stay
+ * with Owners and Admins.
  */
 export const PULSE_ROLE_PAGES: Record<PulseRole, ReadonlySet<PulsePage>> = {
   owner: new Set(ALL_PULSE_PAGES),
@@ -60,9 +59,10 @@ export const PULSE_ROLE_PAGES: Record<PulseRole, ReadonlySet<PulsePage>> = {
   staff: new Set<PulsePage>([
     "home",
     "pharmacies",
+    "catalogue",
     "inventory",
+    "movement",
     "stock",
-    "suppliers",
     "walkthrough",
   ]),
 };

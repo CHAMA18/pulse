@@ -391,7 +391,7 @@ export function renderPharmacyWelcomeEmail(params: PharmacyWelcomeEmailParams): 
         <tr><td style="font-family:${FONT};">
           <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:${INK};">Your first week, mapped</p>
           <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">1.</strong> Declare your main store under <strong style="color:${INK};">Stores</strong> — it becomes the application's home.</p>
-          <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">2.</strong> Load your shelves under <strong style="color:${INK};">Product Catalogue</strong>, then watch <strong style="color:${INK};">Stock Balance</strong> come alive.</p>
+          <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">2.</strong> Load your shelves under <strong style="color:${INK};">Inventory</strong>, then watch <strong style="color:${INK};">Stock Balance</strong> come alive.</p>
           <p style="margin:0 0 7px;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">3.</strong> Invite your team under <strong style="color:${INK};">User Management</strong> — every invitation is a branded email.</p>
           <p style="margin:0;font-size:13.5px;line-height:1.65;color:${MUTED};"><strong style="color:${INK};">4.</strong> Make your first sale at the <strong style="color:${INK};">Point of Sale</strong> — the whole checkout takes under two minutes.</p>
         </td></tr>
@@ -413,7 +413,7 @@ export function renderPharmacyWelcomeEmail(params: PharmacyWelcomeEmailParams): 
     "",
     "Your first week, mapped:",
     "1. Declare your main store under Stores.",
-    "2. Load your shelves under Product Catalogue; watch Stock Balance.",
+    "2. Load your shelves under Inventory; watch Stock Balance.",
     "3. Invite your team under User Management.",
     "4. Make your first sale at the Point of Sale.",
     "",
@@ -630,7 +630,7 @@ export function renderPulseAdminInviteEmail(params: PulseAdminInviteEmailParams)
       { title: "Enter the console", body: "Your network view is ready when you are." },
     ],
     security: true,
-    footerNote: `The Pulse console is the network side of Pulse &mdash; pharmacies, stock visibility, suppliers and the audit trail, in one live view.`,
+    footerNote: `The Pulse console is the network side of Pulse &mdash; pharmacies, stock visibility and the audit trail, in one live view.`,
     reason: `${params.inviterName} invited you to the Pulse console.`,
   });
 

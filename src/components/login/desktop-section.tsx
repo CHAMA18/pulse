@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { AppleLogo, WindowsLogo } from "@/components/login/platform-icons";
 import { PulseMark } from "@/components/login/pulse-logo";
-import { RELEASES_URL } from "@/components/login/download-buttons";
+import { DESKTOP_DOWNLOADS } from "@/lib/desktop-downloads";
 import { trackEvent } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +45,7 @@ const reveal = (delay = 0, y = 36) => ({
 
 const MINI_NAV: { icon: LucideIcon; label: string; active?: boolean }[] = [
   { icon: Home, label: "Home", active: true },
-  { icon: LayoutGrid, label: "Suppliers" },
+  { icon: LayoutGrid, label: "Pharmacies" },
   { icon: Eye, label: "Stock" },
   { icon: BarChart3, label: "Analytics" },
   { icon: Settings, label: "Settings" },
@@ -321,9 +321,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
       </ul>
 
       <a
-        href={RELEASES_URL}
-        target="_blank"
-        rel="noopener noreferrer"
+        href={DESKTOP_DOWNLOADS[id]}
         onClick={() => void trackEvent("download_click", { location: "desktop_section", platform: id })}
         className={cn(
           "mt-7 inline-flex h-12 w-full items-center justify-center gap-2.5 rounded-xl text-[14.5px] font-semibold transition-all duration-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400",
@@ -398,10 +396,11 @@ export function DesktopSection({ className }: { className?: string }) {
         ))}
       </div>
 
-      {/* checksums note */}
+      {/* checksums note — sits on the live EKG backdrop, so it carries the
+          same contrast + dark halo as the hero's release line */}
       <motion.p
         {...reveal(0.1)}
-        className="mx-auto mt-5 max-w-4xl px-2 text-center font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/30 sm:px-6"
+        className="mx-auto mt-5 max-w-4xl px-2 text-center font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/60 [text-shadow:0_0_2px_rgba(5,2,10,0.95),0_1px_14px_rgba(5,2,10,0.95)] sm:px-6"
       >
         SHA-256 checksums published with every release
       </motion.p>
