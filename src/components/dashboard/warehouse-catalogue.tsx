@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { PackagePlus, Search, Warehouse } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, PackagePlus, Plus, Search, Warehouse } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
@@ -24,6 +24,16 @@ import {
 import { cn } from "@/lib/utils";
 import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
+import { listMedicalProducts, registerMedicalProduct, type MedicalProduct } from "@/lib/cloud/medical-products";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /* ------------------------------------------------------------------ */
 /* Warehouse Catalogue — Pulse Central Warehouse shelves. Quantities    */
@@ -42,7 +52,15 @@ export function WarehouseCatalogue() {
   const [hydrated, setHydrated] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [form, setForm] = useState({ name: "", category: "General", qty: "", unitPrice: "", batch: "", expiry: "" });
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [stockFilter, setStockFilter] = useState<"all" | "available" | "low" | "out">("all");
+  const [medicalProducts, setMedicalProducts] = useState<MedicalProduct[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState("");
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productQuery, setProductQuery] = useState("");
+  const [registeringProduct, setRegisteringProduct] = useState(false);
+  const [form, setForm] = useState({ productId: "", name: "", category: "General", qty: "", unitPrice: "", batch: "", expiry: "" });
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -51,6 +69,29 @@ export function WarehouseCatalogue() {
     });
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  useEffect(() => {
+    if (!receiveOpen) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setProductsLoading(true);
+      setProductsError("");
+      void listMedicalProducts(productQuery)
+        .then((products) => {
+          if (active) setMedicalProducts(products.sort((a, b) => a.name.localeCompare(b.name)));
+        })
+        .catch((error: unknown) => {
+          if (active) setProductsError(error instanceof Error ? error.message : "The medical product register could not be loaded.");
+        })
+        .finally(() => {
+          if (active) setProductsLoading(false);
+        });
+    }, productQuery ? 250 : 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [receiveOpen, productQuery]);
 
   const persist = (next: WarehouseItem[]) => {
     setItems(next);
@@ -77,15 +118,22 @@ export function WarehouseCatalogue() {
 
   const categoryOptions = useMemo(() => {
     const existing = items.map((item) => item.category).filter(Boolean);
-    return Array.from(new Set<string>([...PRODUCT_CATEGORIES, ...existing]));
-  }, [items]);
+    return Array.from(new Set<string>([...PRODUCT_CATEGORIES, ...existing, ...medicalProducts.map((product) => product.category)])).sort((a, b) => a.localeCompare(b));
+  }, [items, medicalProducts]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items
-      .filter((item) => !q || item.name.toLowerCase().includes(q) || item.category.toLowerCase().includes(q))
+      .filter((item) => {
+        if (categoryFilter !== "all" && item.category !== categoryFilter) return false;
+        if (stockFilter === "available" && item.qty <= item.reorderLevel) return false;
+        if (stockFilter === "low" && (item.qty <= 0 || item.qty > item.reorderLevel)) return false;
+        if (stockFilter === "out" && item.qty > 0) return false;
+        if (!q) return true;
+        return `${item.name} ${item.category} ${item.batch}`.toLowerCase().includes(q);
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [items, query]);
+  }, [items, query, categoryFilter, stockFilter]);
 
   const units = items.reduce((acc, item) => acc + item.qty, 0);
   const costValue = items.reduce((acc, item) => acc + item.qty * item.unitPrice, 0);
@@ -98,8 +146,12 @@ export function WarehouseCatalogue() {
 
   const addItem = () => {
     const qty = Math.max(0, Math.round(Number(form.qty) || 0));
+    if (!form.productId) {
+      toast({ title: "Choose a registered product", description: "Search the register or add a new product to it first." });
+      return;
+    }
     if (form.name.trim().length < 2 || qty < 1) {
-      toast({ title: "Almost there", description: "Give the product a name and at least one unit." });
+      toast({ title: "Almost there", description: "Choose a product and enter at least one unit." });
       return;
     }
     const name = form.name.trim();
@@ -109,6 +161,7 @@ export function WarehouseCatalogue() {
     );
     const item: WarehouseItem = existing ?? {
       id: `wh-${Date.now().toString(36)}`,
+      productId: form.productId,
       name,
       category: form.category.trim() || "General",
       batch,
@@ -124,6 +177,7 @@ export function WarehouseCatalogue() {
             row.id === item.id
               ? {
                   ...row,
+                  productId: row.productId ?? form.productId,
                   qty: row.qty + qty,
                   unitPrice: item.unitPrice,
                   markupPercent: DUNIYA_MARKUP_PERCENT,
@@ -133,9 +187,39 @@ export function WarehouseCatalogue() {
         : [item, ...items]
     );
     recordMovement(item, qty, "Supplier delivery");
-    setForm({ name: "", category: "General", qty: "", unitPrice: "", batch: "", expiry: "" });
+    setForm({ productId: "", name: "", category: "General", qty: "", unitPrice: "", batch: "", expiry: "" });
+    setProductQuery("");
     setReceiveOpen(false);
     toast({ title: "Added to warehouse", description: `${name} × ${qty} is on the hub shelves — receipt recorded in Stock Movements.` });
+  };
+
+  const selectMedicalProduct = (product: MedicalProduct) => {
+    setForm((current) => ({ ...current, productId: product.id, name: product.name, category: product.category }));
+    setProductQuery("");
+    setProductPickerOpen(false);
+  };
+
+  const exactProductMatch = medicalProducts.some(
+    (product) => product.normalizedName === productQuery.trim().replace(/\s+/g, " ").normalize("NFKC").toLocaleLowerCase("en-US")
+  );
+
+  const registerSearchedProduct = async () => {
+    const name = productQuery.trim().replace(/\s+/g, " ");
+    if (name.length < 2) return;
+    setRegisteringProduct(true);
+    try {
+      const result = await registerMedicalProduct({ name, category: form.category });
+      setMedicalProducts((current) => [...current.filter((product) => product.id !== result.product.id), result.product].sort((a, b) => a.name.localeCompare(b.name)));
+      selectMedicalProduct(result.product);
+      toast({
+        title: result.created ? "Product added to the medical register" : "Product already registered",
+        description: `${result.product.name} is selected for this warehouse entry.`,
+      });
+    } catch (error) {
+      toast({ title: "Product could not be registered", description: error instanceof Error ? error.message : "Try again when the register is available.", variant: "destructive" });
+    } finally {
+      setRegisteringProduct(false);
+    }
   };
 
   return (
@@ -183,10 +267,21 @@ export function WarehouseCatalogue() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search warehouse…" aria-label="Search warehouse" className={cn(inputCls, "pl-9")} />
           </label>
+          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="Filter warehouse by category" className={cn(inputCls, "w-auto min-w-[170px]")}>
+            <option value="all">All categories</option>
+            {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+          </select>
+          <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value as typeof stockFilter)} aria-label="Filter warehouse by stock level" className={cn(inputCls, "w-auto min-w-[170px]")}>
+            <option value="all">All stock levels</option>
+            <option value="available">Available</option>
+            <option value="low">Low stock</option>
+            <option value="out">Out of stock</option>
+          </select>
+          <span className="text-[12px] text-slate-500 dark:text-slate-400" aria-live="polite">{filtered.length} of {items.length} batches</span>
         </div>
         {filtered.length === 0 ? (
           <p className="px-5 pb-6 text-[13.5px] text-slate-500 dark:text-slate-400">
-            {items.length === 0 ? "The warehouse is empty — receive your first stock above." : "Nothing matches that search."}
+            {items.length === 0 ? "The warehouse is empty — receive your first stock above." : "Nothing matches these filters."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -249,13 +344,83 @@ export function WarehouseCatalogue() {
           </DialogHeader>
           <div className="mt-4 flex flex-col gap-4">
             <div>
-              <label htmlFor="wh-name" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Product name</label>
-              <input id="wh-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Amoxicillin 500mg" className={inputCls} />
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Medical product</label>
+              <Popover open={productPickerOpen} onOpenChange={setProductPickerOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    role="combobox"
+                    aria-expanded={productPickerOpen}
+                    aria-label="Search registered medical products"
+                    className={cn(inputCls, "flex w-full items-center justify-between gap-3 text-left")}
+                  >
+                    <span className={cn("truncate", !form.name && "text-slate-400")}>
+                      {form.name || "Search the medical product register…"}
+                    </span>
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      value={productQuery}
+                      onValueChange={setProductQuery}
+                      placeholder="Search registered products by name…"
+                      disabled={productsLoading || registeringProduct}
+                    />
+                    <CommandList>
+                      {productsLoading ? (
+                        <div className="flex items-center justify-center gap-2 px-4 py-6 text-[13px] text-slate-500">
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading product register…
+                        </div>
+                      ) : productsError ? (
+                        <div className="px-4 py-5 text-center text-[12.5px] text-rose-600 dark:text-rose-300">
+                          {productsError}<br />Close and reopen this form to retry.
+                        </div>
+                      ) : (
+                        <>
+                          <CommandEmpty>{productQuery.trim().length < 2 ? "Type a product name to search the register." : "No registered product matches this search."}</CommandEmpty>
+                          <CommandGroup heading="Medical product register">
+                            {medicalProducts.map((product) => (
+                              <CommandItem
+                                key={product.id}
+                                value={`${product.name} ${product.category}`}
+                                onSelect={() => selectMedicalProduct(product)}
+                              >
+                                <Check className={cn("h-4 w-4", form.productId === product.id ? "opacity-100" : "opacity-0")} aria-hidden="true" />
+                                <span className="min-w-0 flex-1 truncate">{product.name}</span>
+                                <span className="text-[11px] text-slate-400">{product.category}</span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </>
+                      )}
+                    </CommandList>
+                    {!productsLoading && !productsError && productQuery.trim().length >= 2 && !exactProductMatch && (
+                      <div className="border-t border-slate-100 p-2 dark:border-white/10">
+                        <p className="px-2 pb-1 text-[11.5px] text-slate-500 dark:text-slate-400">Not registered? Add it to the shared product register first.</p>
+                        <button
+                          type="button"
+                          disabled={registeringProduct}
+                          onClick={() => void registerSearchedProduct()}
+                          className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-semibold text-purple-700 hover:bg-purple-50 disabled:opacity-60 dark:text-purple-300 dark:hover:bg-white/5"
+                        >
+                          {registeringProduct ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
+                          Register “{productQuery.trim()}” as {form.category}
+                        </button>
+                      </div>
+                    )}
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              <p className="mt-1.5 text-[11.5px] text-slate-500 dark:text-slate-400">
+                Select from the shared register, or add a missing product before entering its batch details.
+              </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="wh-category" className="mb-1.5 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">Category</label>
-                <select id="wh-category" value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} className={inputCls}>
+                <select id="wh-category" value={form.category} disabled={Boolean(form.productId)} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} className={cn(inputCls, "disabled:opacity-60")}>
                   {categoryOptions.map((option) => (
                     <option key={option} value={option}>{option}</option>
                   ))}

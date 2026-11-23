@@ -10,6 +10,7 @@ import {
   parseDeliveryItems,
   type ReceivedLine,
 } from "@/lib/pharmacy-stock";
+import type { StockRequestComment } from "@/lib/cloud/stock-requests";
 
 export { parseDeliveryItems };
 
@@ -55,6 +56,7 @@ export type InventoryItem = {
 
 export type RequestStatus =
   | "pending"
+  | "returned"
   | "approved"
   | "dispatched"
   | "delivered"
@@ -92,6 +94,7 @@ export type StockRequest = {
   dispatchedAt?: number;
   deliveredAt?: number;
   decisionNote?: string;
+  comments?: StockRequestComment[];
 };
 
 export type Delivery = {
@@ -580,6 +583,74 @@ export function loadCatalogue(): CatalogueProduct[] {
 
 export function saveCatalogue(products: CatalogueProduct[]): void {
   savePharmacyList(PHARMACY_CATALOGUE_KEY, products);
+}
+
+/**
+ * Creates the minimal browser-local pharmacy fixture for the localhost stock
+ * request sandbox. Existing records are preserved and repeated calls are safe.
+ */
+export function ensureStockRequestSandboxFixture(): void {
+  if (typeof window === "undefined") return;
+
+  let stores = loadStores();
+  if (stores.length === 0) {
+    stores = [
+      {
+        id: "sandbox-main-store",
+        name: "Sandbox Main Store",
+        location: "Lusaka Sandbox",
+        address: "",
+        phone: "",
+        isMain: true,
+        createdAt: Date.now(),
+      },
+    ];
+    saveStores(stores);
+  }
+
+  const mainStore = mainStoreOf(stores);
+  if (!mainStore) return;
+
+  const productName = "Sandbox Paracetamol 500mg";
+  let catalogue = loadCatalogue();
+  let product = catalogue.find(
+    (entry) => entry.name.trim().toLowerCase() === productName.toLowerCase()
+  );
+  if (!product) {
+    product = {
+      id: "cat-sandbox-paracetamol-500",
+      name: productName,
+      category: "Analgesics",
+      unit: "pack",
+      price: 10,
+      prescription: false,
+      createdAt: Date.now(),
+    };
+    catalogue = [...catalogue, product];
+    saveCatalogue(catalogue);
+  }
+
+  const inventory = loadInventory();
+  const alreadyStocked = inventory.some(
+    (item) => item.productId === product?.id || item.name.toLowerCase() === productName.toLowerCase()
+  );
+  if (!alreadyStocked) {
+    saveInventory([
+      ...inventory,
+      {
+        id: "inv-sandbox-paracetamol-500",
+        name: product.name,
+        category: product.category,
+        batch: "SANDBOX-2026-01",
+        expiry: "2028-12-31",
+        qty: 20,
+        reorderLevel: 5,
+        unitPrice: product.price,
+        storeId: mainStore.id,
+        productId: product.id,
+      },
+    ]);
+  }
 }
 
 /** Live shelf stock for a catalogue product — summed across its batches. */

@@ -61,6 +61,8 @@ import { WalkthroughTour } from "@/components/walkthrough/walkthrough";
 import {
   formatDay,
   formatZMW,
+  ensureStockRequestSandboxFixture,
+  loadCatalogue,
   loadDeliveries,
   loadInventory,
   loadPharmacySettings,
@@ -69,9 +71,12 @@ import {
   loadStockRequests,
   loadStores,
   resolveStoreId,
+  saveCatalogue,
+  saveInventory,
   saveStores,
   setPharmacyScope,
   type Delivery,
+  type CatalogueProduct,
   type InventoryItem,
   type PharmacyStore,
   type POSSale,
@@ -103,9 +108,9 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { clearStoredPortal } from "@/lib/portal";
 import {
+  isStockSandboxEnabled,
   getFirebaseAuth,
   getFirebaseDb,
-  getInvitedAccountRole,
   getPharmacyRegistrations,
   trackEvent,
 } from "@/lib/firebase";
@@ -1040,7 +1045,6 @@ export function PharmacyApp() {
   const [pharmacyName, setPharmacyName] = useState("My Pharmacy");
   const [pendingReview, setPendingReview] = useState(false);
   const [resolved, setResolved] = useState(false);
-  const [bouncing, setBouncing] = useState(false);
   const [stores, setStores] = useState<PharmacyStore[]>([]);
   const [activeStore, setActiveStore] = useState("all");
   const [attentionItems, setAttentionItems] = useState<InventoryItem[]>([]);
@@ -1104,18 +1108,14 @@ export function PharmacyApp() {
             }
             return;
           }
-          if (data?.account_type === "Pulse") {
-            // A Pulse console seat is a different account type — it must never
-            // inherit a pharmacy workspace from a stale pharmacy_name.
-            if (active) {
-              setBouncing(true);
-              toast({
-                title: "This is a Pulse console account",
-                description:
-                  "Pulse console accounts can't open the Pharmacy portal. Sign in with a pharmacy account instead.",
-              });
-              router.replace("/dashboard");
+          if (data?.account_type !== "Pharmacy") {
+            try {
+              const auth = getFirebaseAuth();
+              if (auth) await signOut(auth);
+            } catch {
+              /* local redirect still prevents a wrong portal from rendering */
             }
+            if (active) router.replace("/login");
             return;
           }
           registeredName = data?.pharmacy_name?.trim() || undefined;
@@ -1124,17 +1124,14 @@ export function PharmacyApp() {
           // Tenant scope: every pharmacy list read after this point belongs
           // to this pharmacy only — accounts never share shelves.
           setPharmacyScope(data?.pharmacy_id ?? current.uid);
+          if (isStockSandboxEnabled()) ensureStockRequestSandboxFixture();
         } catch {
           /* rules or offline — fall back to the invitation/session */
         }
       }
       if (current && !db) setPharmacyScope(current.uid);
-      // A team invitation accepted on this device still knows its role even
-      // when the Firestore read is unavailable. Unknown roles fail to the
-      // least-privilege counter role, never to owner.
-      role ??= normalizeRole(
-        current ? getInvitedAccountRole(current.uid, email) : null
-      );
+      // Unknown or unreadable roles fail to the least-privilege counter role,
+      // never to owner.
       if (!active) return;
 
       setUser({
@@ -1144,8 +1141,7 @@ export function PharmacyApp() {
         role: role ?? "cashier",
       });
       setPharmacyName(registration?.pharmacyName ?? registeredName ?? name);
-      // Registration is auto-approved on the Pulse network; only an explicit
-      // hold (approved_by_duniya === false) keeps the console in review.
+      // An explicit approval is required before this pharmacy is live on the network.
       setPendingReview(approved === false);
       setStores(loadStores());
       // Persist the shelves and the alert trigger in the durable outbox first,
@@ -1180,9 +1176,8 @@ export function PharmacyApp() {
   }, [router]);
 
   useEffect(() => {
-    if (bouncing) return;
     void trackEvent("pharmacy_dashboard_view");
-  }, [bouncing]);
+  }, []);
 
   // Keep the console on a page this role may actually open (e.g. after a
   // role resolves or an invitation changes it).
@@ -1224,7 +1219,7 @@ export function PharmacyApp() {
 
   // Every visited page leaves a "Viewed <Page>" entry in the audit trail.
   useEffect(() => {
-    if (bouncing || !user.email || !canOpen(user.role, page)) return;
+    if (!user.email || !canOpen(user.role, page)) return;
     recordAudit({
       title: `Viewed ${PAGE_AUDIT_TITLES[page]}`,
       action: "View",
@@ -1232,7 +1227,7 @@ export function PharmacyApp() {
       actor: user.name,
       email: user.email,
     });
-  }, [page, user.email, user.name, user.role, bouncing]);
+  }, [page, user.email, user.name, user.role]);
 
   const toggleDark = (on: boolean) => {
     setDark(on);
@@ -1349,9 +1344,8 @@ export function PharmacyApp() {
     />
   );
 
-  // While the session is being resolved (or bounced to the Pulse console),
-  // hold the branded splash — never flash the wrong portal's console.
-  if (!resolved || bouncing) {
+  // Hold the branded splash until the Pharmacy profile and role resolve.
+  if (!resolved) {
     return (
       <div
         className="pulse-space flex min-h-dvh flex-col items-center justify-center gap-5"
@@ -1361,7 +1355,7 @@ export function PharmacyApp() {
         <PulseMark className="h-16 w-16 animate-float" />
         <p className="flex items-center gap-2.5 text-sm text-white/70">
           <span className="h-2 w-2 animate-pulse rounded-full bg-fuchsia-400" aria-hidden="true" />
-          {bouncing ? "Taking you to the Pulse console…" : "Preparing your pharmacy workspace…"}
+          Preparing your pharmacy workspace…
         </p>
       </div>
     );

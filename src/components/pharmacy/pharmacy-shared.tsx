@@ -84,6 +84,7 @@ const STATUS_PILLS: Record<string, string> = {
   low: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
   out: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
   pending: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+  returned: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
   approved: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
   dispatched: "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
   delivered: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",

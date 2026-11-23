@@ -10,6 +10,87 @@ import {
 } from "@/lib/offline/outbox";
 import { cn } from "@/lib/utils";
 
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
+function subscribeStandalone(onChange: () => void): () => void {
+  const query = window.matchMedia("(display-mode: standalone)");
+  query.addEventListener("change", onChange);
+  window.addEventListener("appinstalled", onChange);
+  return () => {
+    query.removeEventListener("change", onChange);
+    window.removeEventListener("appinstalled", onChange);
+  };
+}
+
+function getStandaloneSnapshot(): boolean {
+  return window.matchMedia("(display-mode: standalone)").matches ||
+    ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
+}
+
+function getIosSnapshot(): boolean {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function PwaInstallPrompt() {
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+  const standalone = useSyncExternalStore(subscribeStandalone, getStandaloneSnapshot, () => false);
+  const ios = useSyncExternalStore(() => () => {}, getIosSnapshot, () => false);
+  const [showIosHelp, setShowIosHelp] = useState(false);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    const onInstalled = () => {
+      setInstalled(true);
+      setInstallPrompt(null);
+      setShowIosHelp(false);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  if (installed || standalone || (!installPrompt && !ios)) return null;
+
+  const install = async () => {
+    if (!installPrompt) {
+      setShowIosHelp((open) => !open);
+      return;
+    }
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") setInstalled(true);
+    setInstallPrompt(null);
+  };
+
+  return (
+    <div className="fixed bottom-3 right-3 z-[59] sm:bottom-4 sm:right-4">
+      {showIosHelp && (
+        <p className="mb-2 max-w-[18rem] rounded-xl bg-white p-3 text-[12px] leading-relaxed text-slate-700 shadow-lg ring-1 ring-slate-200 dark:bg-[#160b2b] dark:text-slate-200 dark:ring-white/10">
+          In Safari, tap Share, then choose <strong>Add to Home Screen</strong> to install Pulse.
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => void install()}
+        className="rounded-full bg-gradient-to-r from-purple-600 to-fuchsia-600 px-4 py-2.5 text-[13px] font-semibold text-white shadow-lg shadow-purple-900/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
+      >
+        {installPrompt ? "Install Pulse" : showIosHelp ? "Close install help" : "Install Pulse"}
+      </button>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Offline support                                                     */
 /* ------------------------------------------------------------------ */
@@ -128,14 +209,14 @@ export function OfflineProvider() {
     };
   }, [runFlush]);
 
-  if (online && summary.total === 0) return null;
-
   const pendingLabel = `${summary.total} ${
     summary.total === 1 ? "change" : "changes"
   }`;
 
   return (
-    <div
+    <>
+      <PwaInstallPrompt />
+      {online && summary.total === 0 ? null : <div
       role="status"
       aria-live="polite"
       className="fixed inset-x-3 bottom-3 z-[60] sm:left-4 sm:right-auto sm:w-[22rem]"
@@ -185,6 +266,7 @@ export function OfflineProvider() {
           </button>
         )}
       </div>
-    </div>
+    </div>}
+    </>
   );
 }

@@ -13,7 +13,7 @@ import {
   Upload,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   formatZMW,
   loadCatalogue,
@@ -38,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 import { trackEvent } from "@/lib/firebase";
+import { syncPharmacyMedicalProducts } from "@/lib/cloud/medical-products";
 import {
   findCatalogueProductByName,
   normaliseProductName,
@@ -276,6 +277,7 @@ export function PharmacyCatalogue({
   const [importStoreId, setImportStoreId] = useState("");
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [actor, setActor] = useState({ name: "", email: "" });
+  const syncWarningShown = useRef(false);
 
   // Add-product form state
   const [form, setForm] = useState({
@@ -318,6 +320,33 @@ export function PharmacyCatalogue({
       cancelAnimationFrame(raf);
     };
   }, []);
+
+  // Pharmacy catalogues were historically stored per browser. Mirror their
+  // product names into the shared register so Pulse can search the network's
+  // existing products from Warehouse Catalogue.
+  useEffect(() => {
+    if (!hydrated) return;
+    let active = true;
+    void (async () => {
+      try {
+        const { getFirebaseAuth } = await import("@/lib/firebase");
+        const auth = getFirebaseAuth();
+        await auth?.authStateReady();
+        if (!active || !auth?.currentUser) return;
+        await syncPharmacyMedicalProducts(products.map(({ name, category }) => ({ name, category })));
+      } catch {
+        if (active && !syncWarningShown.current) {
+          syncWarningShown.current = true;
+          toast({
+            title: "Shared product register is not synced",
+            description: "Your catalogue remains saved here. The network register will update when its sync service is available.",
+            variant: "destructive",
+          });
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [hydrated, products, toast]);
 
   const categories = useMemo(
     () => ["All", ...Array.from(new Set(products.map((product) => product.category))).sort()],

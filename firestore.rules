@@ -1,0 +1,52 @@
+rules_version = '2';
+
+// Pulse account security rules.
+//
+// Portal access is decided by `account_type` on the User profile. The only
+// profile a browser may create is a new pharmacy owner's own profile from
+// self-registration, and it is pinned to Pharmacy/owner. Every other write —
+// roles, suspensions, approvals, console seats — happens in Cloud Functions
+// with the Admin SDK, which bypasses these rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isSelfRegisteredPharmacyOwner() {
+      return request.resource.data.keys().hasOnly([
+          'email', 'uid', 'display_name', 'created_time', 'role',
+          'account_type', 'pharmacy_name', 'pharmacy_id',
+          'approved_by_duniya', 'access_revoked'
+        ])
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.account_type == 'Pharmacy'
+        && request.resource.data.role == 'owner'
+        && request.resource.data.pharmacy_id == request.auth.uid
+        && request.resource.data.approved_by_duniya == false
+        && request.resource.data.access_revoked == false;
+    }
+
+    match /User/{uid} {
+      // A session may read its own profile (portal, role and revocation).
+      allow read: if isSelf(uid);
+
+      // Self-registration of a new pharmacy owner only.
+      allow create: if isSelf(uid) && isSelfRegisteredPharmacyOwner();
+
+      // Roles, approvals, suspensions and removals are server-owned.
+      allow update, delete: if false;
+    }
+
+    // App data (sales, inventory, invitations, mail, pharmacy registry) is
+    // written and read by Cloud Functions, never directly by a browser.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

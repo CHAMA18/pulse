@@ -17,6 +17,9 @@ const isDesktopExport = process.env.NEXT_DESKTOP === "1";
 const staticBasePath = isDesktopExport ? "" : process.env.NEXT_BASE_PATH ?? "/pulse";
 
 const nextConfig: NextConfig = {
+  // Keep the local stock-request sandbox isolated from a normal dev server or
+  // production build that may be using the default .next directory.
+  ...(process.env.NEXT_STOCK_SANDBOX === "1" ? { distDir: ".next-stock-sandbox" } : {}),
   ...(isStaticExport
     ? {
         output: "export" as const,

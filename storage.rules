@@ -1,0 +1,42 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function profile() {
+      return firestore.get(/databases/(default)/documents/User/$(request.auth.uid)).data;
+    }
+    function stockRequest(requestId) {
+      return firestore.get(/databases/(default)/documents/PharmacyStockRequests/$(requestId)).data;
+    }
+    function isPulseAdmin() {
+      return signedIn() && profile().account_type == 'Pulse'
+        && profile().access_revoked != true;
+    }
+    function isRequestPharmacy(requestId) {
+      return signedIn() && profile().account_type == 'Pharmacy'
+        && profile().access_revoked != true
+        && (profile().pharmacy_id == stockRequest(requestId).pharmacyId
+          || (!('pharmacy_id' in profile()) && request.auth.uid == stockRequest(requestId).pharmacyId));
+    }
+    function canAccess(requestId) {
+      return stockRequest(requestId) != null
+        && (isPulseAdmin() || isRequestPharmacy(requestId));
+    }
+
+    match /stock-request-attachments/{requestId}/{uid}/{fileName} {
+      allow read: if canAccess(requestId);
+      allow create: if signedIn() && request.auth.uid == uid && canAccess(requestId)
+        && request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType in [
+          'application/pdf', 'application/msword', 'image/jpeg', 'image/png',
+          'image/webp', 'image/gif', 'text/plain', 'text/csv', 'application/rtf',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        ];
+      allow update, delete: if false;
+    }
+  }
+}

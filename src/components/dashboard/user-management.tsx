@@ -11,7 +11,7 @@ import {
   Search,
   SearchX,
   ShieldCheck,
-  UserMinus,
+  Trash2,
   UserPlus,
   UserRoundCog,
   Users,
@@ -28,17 +28,16 @@ import {
   type InvitationMessage,
 } from "@/lib/cloud/invitations";
 import {
-  listPulseConsoleUsers,
-  removePulseConsoleUser,
+  listApplicationUsers,
+  manageApplicationUser,
   updatePulseConsoleUserRole,
-  type PulseConsoleUser,
+  type ApplicationDirectoryUser,
 } from "@/lib/cloud/pulse-users";
 import { loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import {
   assignablePulseRoles,
   canChangePulseRole,
   canManageConsoleUsers,
-  canRemovePulseUser,
   PULSE_ROLE_META,
   type PulseRole,
 } from "@/lib/pulse-rbac";
@@ -67,7 +66,7 @@ import {
 /* ------------------------------------------------------------------ */
 
 type UserRole = PulseRole;
-type UserStatus = "active" | "invited" | "suspended";
+type UserStatus = "active" | "invited" | "suspended" | "removed";
 type UserSource = "profile" | "invitation";
 
 type PulseUser = {
@@ -75,11 +74,13 @@ type PulseUser = {
   name: string;
   email: string;
   role: UserRole;
+  roleLabel: string;
+  accountType: "Pulse" | "Pharmacy" | "Other";
   status: UserStatus;
   source: UserSource;
 };
 
-type RoleFilter = "all" | "admins" | "staff";
+type RoleFilter = "all" | "admins" | "staff" | "pharmacy" | "other";
 
 // v1 contained locally invented user rows that were never backed by Firebase Auth.
 const STORAGE_KEY = "pulse.users.v2";
@@ -107,7 +108,16 @@ function loadUsers(): PulseUser[] {
           typeof (u as PulseUser).email === "string" &&
           (u as PulseUser).status === "invited"
       )
-      .map((u) => ({ ...u, source: "invitation" }));
+      .map((u) => {
+        const role = u.role === "owner" || u.role === "admin" || u.role === "staff" ? u.role : "staff";
+        return {
+          ...u,
+          role,
+          roleLabel: typeof u.roleLabel === "string" ? u.roleLabel : ROLE_META[role].label,
+          accountType: "Pulse" as const,
+          source: "invitation" as const,
+        };
+      });
   } catch {
     return [];
   }
@@ -185,16 +195,12 @@ function StatCard({
   );
 }
 
-function RolePill({ role }: { role: UserRole }) {
+function RolePill({ role, label, accountType }: { role: UserRole; label: string; accountType: PulseUser["accountType"] }) {
   const meta = ROLE_META[role];
   return (
-    <span
-      className={cn(
-        "inline-flex w-28 items-center justify-center rounded-lg px-3 py-1.5 text-[12.5px] font-semibold",
-        meta.pill
-      )}
-    >
-      {meta.label}
+    <span className="flex flex-col items-start gap-1">
+      <span className={cn("inline-flex items-center rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wide", accountType === "Pulse" ? "bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300" : accountType === "Pharmacy" ? "bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300" : "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300")}>{accountType}</span>
+      <span className={cn("inline-flex min-w-24 items-center justify-center rounded-lg px-3 py-1.5 text-[12.5px] font-semibold", accountType === "Pulse" ? meta.pill : "bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200")}>{label}</span>
     </span>
   );
 }
@@ -209,20 +215,22 @@ function StatusBadge({ status }: { status: UserStatus }) {
     );
   }
   const active = status === "active";
+  const removed = status === "removed";
   return (
     <span
       className={cn(
         "inline-flex items-center gap-2 text-[13.5px] font-medium",
         active
           ? "text-emerald-600 dark:text-emerald-400"
+          : removed ? "text-slate-500 dark:text-slate-400"
           : "text-rose-500 dark:text-rose-400"
       )}
     >
       <span
         aria-hidden="true"
-        className={cn("h-2 w-2 rounded-full", active ? "bg-emerald-500" : "bg-rose-500")}
+        className={cn("h-2 w-2 rounded-full", active ? "bg-emerald-500" : removed ? "bg-slate-400" : "bg-rose-500")}
       />
-      {active ? "Active" : "Suspended"}
+      {active ? "Active" : removed ? "Removed" : "Suspended"}
     </span>
   );
 }
@@ -406,51 +414,53 @@ function AddUserDialog({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-const CONSOLE_USERS_CACHE_KEY = "pulse-console-users";
+const CONSOLE_USERS_CACHE_KEY = "application-users-v1";
 
 /** Merge live profiles with invitations accepted on this device. */
-function mergeConsoleProfiles(
-  profiles: PulseConsoleUser[],
+function mergeApplicationProfiles(
+  profiles: ApplicationDirectoryUser[],
   previous: PulseUser[]
 ): PulseUser[] {
-  const invitations = previous.filter((user) => user.source === "invitation");
-
-  // Auth providers can leave more than one UID for the same email. Collapse
-  // them into one account row and keep the highest role, never two roles.
-  const byEmail = new Map<string, PulseUser>();
-  for (const profile of profiles) {
-    const email = profile.email.trim().toLowerCase();
-    const key = email || `uid:${profile.uid}`;
-    const candidate: PulseUser = {
+  const activeProfiles = profiles.filter((profile) => profile.source === "profile").map((profile): PulseUser => ({
       id: profile.uid,
       name: profile.name,
       email: profile.email,
-      role: profile.role,
-      status: "active",
-      source: "profile",
-    };
-    const current = byEmail.get(key);
-    if (!current || ROLE_PRIORITY[candidate.role] > ROLE_PRIORITY[current.role]) {
-      byEmail.set(key, candidate);
-    }
-  }
-
-  const activeProfiles = [...byEmail.values()];
+      role: profile.role === "owner" || profile.role === "admin" || profile.role === "staff" ? profile.role : "staff",
+      roleLabel: profile.roleLabel,
+      accountType: profile.accountType,
+      status: profile.status,
+      source: profile.source,
+    }));
   const activeEmails = new Set(
     activeProfiles.map((user) => user.email.trim().toLowerCase()).filter(Boolean)
   );
+  const directoryInvitationsByEmail = new Map<string, PulseUser>();
+  for (const profile of profiles.filter((entry) => entry.source === "invitation")) {
+    const email = profile.email.trim().toLowerCase();
+    if (!email || activeEmails.has(email) || directoryInvitationsByEmail.has(email)) continue;
+    directoryInvitationsByEmail.set(email, {
+      id: profile.uid,
+      name: profile.name,
+      email: profile.email,
+      role: profile.role === "owner" || profile.role === "admin" || profile.role === "staff" ? profile.role : "staff",
+      roleLabel: profile.roleLabel,
+      accountType: profile.accountType,
+      status: "invited",
+      source: "invitation",
+    });
+  }
 
   const pendingByEmail = new Map<string, PulseUser>();
-  for (const invitation of invitations) {
+  for (const invitation of previous.filter((user) => user.source === "invitation")) {
     const email = invitation.email.trim().toLowerCase();
-    if (!email || activeEmails.has(email)) continue;
+    if (!email || activeEmails.has(email) || directoryInvitationsByEmail.has(email)) continue;
     const current = pendingByEmail.get(email);
     if (!current || ROLE_PRIORITY[invitation.role] > ROLE_PRIORITY[current.role]) {
       pendingByEmail.set(email, invitation);
     }
   }
 
-  return [...activeProfiles, ...pendingByEmail.values()];
+  return [...activeProfiles, ...directoryInvitationsByEmail.values(), ...pendingByEmail.values()];
 }
 
 export function UserManagement({
@@ -467,11 +477,12 @@ export function UserManagement({
   const [loadingDirectory, setLoadingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [savingUid, setSavingUid] = useState<string | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<PulseUser | null>(null);
+  const [actionTarget, setActionTarget] = useState<{ user: PulseUser; action: "suspend" | "reactivate" | "delete" } | null>(null);
   const [resetTarget, setResetTarget] = useState<PulseUser | null>(null);
   const [resetting, setResetting] = useState(false);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<UserStatus | "all">("all");
 
   const [addOpen, setAddOpen] = useState(false);
   // The delivered console invitation, rendered in the inbox-style preview.
@@ -519,15 +530,15 @@ export function UserManagement({
     setLoadingDirectory(true);
     setDirectoryError(null);
     try {
-      const profiles = await listPulseConsoleUsers();
+      const profiles = await listApplicationUsers();
       saveCachedRead(CONSOLE_USERS_CACHE_KEY, profiles);
-      setUsers((prev) => mergeConsoleProfiles(profiles, prev));
+      setUsers((prev) => mergeApplicationProfiles(profiles, prev));
     } catch (error) {
       // Offline: use the last authoritative directory saved on this device.
-      const cached = loadCachedRead<PulseConsoleUser[]>(CONSOLE_USERS_CACHE_KEY);
+      const cached = loadCachedRead<ApplicationDirectoryUser[]>(CONSOLE_USERS_CACHE_KEY);
       if (cached) {
         setDirectoryError(null);
-        setUsers((prev) => mergeConsoleProfiles(cached.data, prev));
+        setUsers((prev) => mergeApplicationProfiles(cached.data, prev));
       } else {
         setDirectoryError(
           error instanceof CloudFunctionError
@@ -563,14 +574,16 @@ export function UserManagement({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = users.filter((u) => {
-      if (roleFilter === "admins" && u.role !== "owner" && u.role !== "admin")
-        return false;
-      if (roleFilter === "staff" && u.role !== "staff") return false;
+      if (statusFilter !== "all" && u.status !== statusFilter) return false;
+      if (roleFilter === "admins" && (u.accountType !== "Pulse" || (u.role !== "owner" && u.role !== "admin"))) return false;
+      if (roleFilter === "staff" && (u.accountType !== "Pulse" || u.role !== "staff")) return false;
+      if (roleFilter === "pharmacy" && u.accountType !== "Pharmacy") return false;
+      if (roleFilter === "other" && u.accountType !== "Other") return false;
       if (!q) return true;
-      return `${u.name} ${u.email}`.toLowerCase().includes(q);
+      return `${u.name} ${u.email} ${u.accountType} ${u.roleLabel}`.toLowerCase().includes(q);
     });
     return [...list].sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, query, roleFilter]);
+  }, [users, query, roleFilter, statusFilter]);
 
   const stats = useMemo(() => {
     let owners = 0;
@@ -578,10 +591,10 @@ export function UserManagement({
     let invited = 0;
     let suspended = 0;
     for (const u of users) {
-      if (u.role === "owner") owners += 1;
+      if (u.accountType === "Pulse" && u.role === "owner") owners += 1;
       if (u.status === "active") active += 1;
       else if (u.status === "invited") invited += 1;
-      else suspended += 1;
+      else if (u.status === "suspended") suspended += 1;
     }
     return { total: users.length, owners, active, invited, suspended };
   }, [users]);
@@ -615,26 +628,29 @@ export function UserManagement({
     }
   };
 
-  const confirmRemoveUser = async () => {
-    const user = removeTarget;
-    if (!user || !canRemovePulseUser(role, currentUid, user.id, user.role)) return;
+  const confirmUserAction = async () => {
+    const target = actionTarget;
+    const user = target?.user;
+    if (!target || !user || !canManage || user.id === currentUid) return;
     setSavingUid(user.id);
     try {
-      await removePulseConsoleUser(user.id);
-      setUsers((prev) => prev.filter((u) => u.id !== user.id));
-      setRemoveTarget(null);
-      toast({
-        title: "User removed",
-        description: `${user.name} no longer has access to this network.`,
-      });
-      void trackEvent("user_removed");
+      await manageApplicationUser(user.id, target.action);
+      if (target.action === "delete") {
+        setUsers((prev) => prev.filter((u) => u.id !== user.id));
+      } else {
+        const status = target.action === "suspend" ? "suspended" : "active";
+        setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, status } : u));
+      }
+      setActionTarget(null);
+      toast({ title: `User ${target.action === "delete" ? "deleted" : target.action === "suspend" ? "suspended" : "reactivated"}`, description: `${user.name}'s access was updated.` });
+      void trackEvent(`application_user_${target.action}`, { accountType: user.accountType });
     } catch (error) {
       toast({
-        title: "Removal failed",
+        title: "User update failed",
         description:
           error instanceof CloudFunctionError
             ? error.message
-            : "The user could not be removed. Please try again.",
+            : "The user could not be updated. Please try again.",
       });
     } finally {
       setSavingUid(null);
@@ -651,7 +667,7 @@ export function UserManagement({
       .then(({ messages }) => {
         setUsers((prev) => [
           ...prev,
-          { id: newId(), name, email, role, status: "invited", source: "invitation" },
+          { id: newId(), name, email, role, roleLabel: ROLE_META[role].label, accountType: "Pulse", status: "invited", source: "invitation" },
         ]);
         setPreview(messages[0] ?? null);
         toast({
@@ -715,16 +731,13 @@ export function UserManagement({
     { id: "all", label: "All" },
     { id: "admins", label: "Admins" },
     { id: "staff", label: "Staff" },
+    { id: "pharmacy", label: "Pharmacy users" },
+    { id: "other", label: "Other" },
   ];
 
   const userHasActions = (user: PulseUser) => {
-    if (user.status === "invited") return true;
-    return (
-      user.source === "profile" &&
-      (canResetPassword(user) ||
-        canChangePulseRole(role, currentUid, user.id, user.role) ||
-        canRemovePulseUser(role, currentUid, user.id, user.role))
-    );
+    if (user.status === "invited") return user.accountType === "Pulse";
+    return user.source === "profile" && canManage && user.id !== currentUid;
   };
 
   const userMenu = (user: PulseUser) => {
@@ -748,10 +761,10 @@ export function UserManagement({
       );
     }
 
-    const canEditRole = canChangePulseRole(role, currentUid, user.id, user.role);
-    const canRemove = canRemovePulseUser(role, currentUid, user.id, user.role);
+    const canEditRole = user.accountType === "Pulse" && user.status === "active" && canChangePulseRole(role, currentUid, user.id, user.role);
     const canReset = canResetPassword(user);
-    if (!canEditRole && !canRemove && !canReset) return null;
+    const canManageTarget = canManage && user.id !== currentUid;
+    if (!canEditRole && !canManageTarget && !canReset) return null;
 
     return (
       <DropdownMenuContent align="end" className="w-52">
@@ -797,16 +810,31 @@ export function UserManagement({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )}
-        {canRemove && (
+        {canManageTarget && user.status === "active" && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               disabled={savingUid === user.id}
-              onClick={() => setRemoveTarget(user)}
+              onClick={() => setActionTarget({ user, action: "suspend" })}
               className="text-rose-600 focus:text-rose-600 dark:text-rose-400 dark:focus:text-rose-300"
             >
-              <UserMinus className="mr-2 h-4 w-4" aria-hidden="true" />
-              Remove user
+              <CirclePause className="mr-2 h-4 w-4" aria-hidden="true" />
+              Suspend account
+            </DropdownMenuItem>
+          </>
+        )}
+        {canManageTarget && user.status === "suspended" && (
+          <DropdownMenuItem disabled={savingUid === user.id} onClick={() => setActionTarget({ user, action: "reactivate" })}>
+            <CircleCheck className="mr-2 h-4 w-4 text-emerald-600" aria-hidden="true" />
+            Reactivate account
+          </DropdownMenuItem>
+        )}
+        {canManageTarget && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={savingUid === user.id} onClick={() => setActionTarget({ user, action: "delete" })} className="text-rose-600 focus:text-rose-600 dark:text-rose-400">
+              <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+              Delete account
             </DropdownMenuItem>
           </>
         )}
@@ -907,14 +935,14 @@ export function UserManagement({
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search Pulse users by name or email..."
-              aria-label="Search Pulse users"
+              placeholder="Search users by name, email, account type, or role..."
+              aria-label="Search application users"
               className="h-12 w-full rounded-xl border border-transparent bg-slate-50 pl-11 pr-4 text-[14.5px] text-slate-900 outline-none transition-[border-color,box-shadow,background-color] placeholder:text-slate-400 hover:border-slate-200 focus:border-purple-400 focus:bg-white focus:ring-4 focus:ring-purple-500/10 dark:border-transparent dark:bg-white/5 dark:text-white dark:hover:border-white/10 dark:focus:border-purple-400 dark:focus:bg-white/5"
             />
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by role">
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by account type">
               {filterChips.map(({ id, label }) => {
                 const active = roleFilter === id;
                 return (
@@ -935,6 +963,18 @@ export function UserManagement({
                 );
               })}
             </div>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as UserStatus | "all")}
+              aria-label="Filter users by status"
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13px] text-slate-700 outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="invited">Invited</option>
+              <option value="suspended">Suspended</option>
+              <option value="removed">Removed</option>
+            </select>
             <p
               className="ml-auto text-[13.5px] text-slate-500 dark:text-slate-400"
               aria-live="polite"
@@ -946,7 +986,7 @@ export function UserManagement({
       </motion.section>
 
       {/* — Directory — */}
-      {loadingDirectory && users.length === 0 ? (
+            {loadingDirectory && users.length === 0 ? (
         <motion.div
           variants={item}
           aria-busy="true"
@@ -957,7 +997,7 @@ export function UserManagement({
         >
           <span className="h-5 w-5 animate-spin rounded-full border-2 border-purple-200 border-t-purple-600" aria-hidden="true" />
           <p className="text-[13.5px] text-slate-500 dark:text-slate-400">
-            Loading console accounts…
+            Loading application users…
           </p>
         </motion.div>
       ) : filtered.length === 0 ? (
@@ -976,18 +1016,24 @@ export function UserManagement({
               No users found
             </p>
             <p className="mt-1 text-[13.5px] text-slate-500 dark:text-slate-400">
-              {query
+              {directoryError && users.length === 0
+                ? directoryError
+                : query
                 ? `Nothing matches “${query}”. Try a different name or email.`
-                : roleFilter === "staff"
-                  ? "No staff accounts yet — add one with “Add Pulse user”."
+                : roleFilter === "pharmacy"
+                  ? "No pharmacy accounts are registered yet."
                   : roleFilter === "admins"
-                    ? "No admin-level accounts match this view."
+                    ? "No Pulse admins match this view."
+                    : roleFilter === "staff"
+                      ? "No Pulse staff accounts match this view."
+                      : roleFilter === "other"
+                        ? "No other account types are registered."
                     : "Adjust the filters to see more of the directory."}
             </p>
           </div>
         </motion.div>
       ) : (
-        <motion.section variants={item} aria-label="Pulse users" className={cn(cardCls, "mt-6")}>
+        <motion.section variants={item} aria-label="Application users" className={cn(cardCls, "mt-6")}>
           {/* Desktop table */}
           <div className="hidden md:block">
             <table className="w-full border-collapse text-left">
@@ -995,7 +1041,7 @@ export function UserManagement({
                 <tr className="text-[12.5px] font-medium text-slate-500 dark:text-slate-400">
                   <th scope="col" className="py-4 pl-6 pr-3 font-medium">Name</th>
                   <th scope="col" className="px-3 py-4 font-medium">Email</th>
-                  <th scope="col" className="px-3 py-4 font-medium">Role</th>
+                  <th scope="col" className="px-3 py-4 font-medium">Account / role</th>
                   <th scope="col" className="px-3 py-4 font-medium">Status</th>
                   <th scope="col" className="w-16 py-4 pl-3 pr-6">
                     <span className="sr-only">Actions</span>
@@ -1027,7 +1073,7 @@ export function UserManagement({
                       {user.email}
                     </td>
                     <td className="px-3 py-4">
-                      <RolePill role={user.role} />
+                      <RolePill role={user.role} label={user.roleLabel} accountType={user.accountType} />
                     </td>
                     <td className="px-3 py-4">
                       <StatusBadge status={user.status} />
@@ -1072,7 +1118,7 @@ export function UserManagement({
                     {user.email}
                   </p>
                   <div className="mt-2.5 flex flex-wrap items-center gap-3">
-                    <RolePill role={user.role} />
+                    <RolePill role={user.role} label={user.roleLabel} accountType={user.accountType} />
                     <StatusBadge status={user.status} />
                   </div>
                 </div>
@@ -1106,27 +1152,31 @@ export function UserManagement({
       />
 
       <Dialog
-        open={removeTarget !== null}
+        open={actionTarget !== null}
         onOpenChange={(open) => {
-          if (!open && savingUid === null) setRemoveTarget(null);
+          if (!open && savingUid === null) setActionTarget(null);
         }}
       >
         <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
-            <DialogTitle>Remove {removeTarget?.name}?</DialogTitle>
+            <DialogTitle>
+              {actionTarget?.action === "delete" ? "Permanently delete" : actionTarget?.action === "suspend" ? "Suspend" : "Reactivate"} {actionTarget?.user.name}?
+            </DialogTitle>
             <DialogDescription>
-              This revokes their Pulse console access immediately. Their profile stays on
-              record, but they will be signed out and cannot sign in again unless an Owner
-              restores access in Firebase.
+              {actionTarget?.action === "delete"
+                ? "This permanently deletes this user's sign-in account and application profile. This cannot be undone."
+                : actionTarget?.action === "suspend"
+                  ? "They will be signed out and blocked from accessing the application until an admin reactivates the account."
+                  : "This restores the user's sign-in and application access."}
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl bg-rose-50 px-4 py-3 text-[13px] text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">
-            {removeTarget?.email} · {removeTarget ? ROLE_META[removeTarget.role].label : ""}
+            {actionTarget?.user.email} · {actionTarget?.user.accountType} · {actionTarget?.user.roleLabel}
           </div>
           <DialogFooter className="gap-2">
             <button
               type="button"
-              onClick={() => setRemoveTarget(null)}
+              onClick={() => setActionTarget(null)}
               disabled={savingUid !== null}
               className="h-10 rounded-md border border-slate-200 px-4 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
             >
@@ -1134,12 +1184,12 @@ export function UserManagement({
             </button>
             <button
               type="button"
-              onClick={() => void confirmRemoveUser()}
+              onClick={() => void confirmUserAction()}
               disabled={savingUid !== null}
               className="inline-flex h-10 items-center gap-2 rounded-md bg-rose-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-60"
             >
-              <UserMinus className="h-4 w-4" aria-hidden="true" />
-              {savingUid === removeTarget?.id ? "Removing…" : "Remove user"}
+              {actionTarget?.action === "delete" ? <Trash2 className="h-4 w-4" aria-hidden="true" /> : actionTarget?.action === "suspend" ? <CirclePause className="h-4 w-4" aria-hidden="true" /> : <CircleCheck className="h-4 w-4" aria-hidden="true" />}
+              {savingUid === actionTarget?.user.id ? "Saving…" : actionTarget?.action === "delete" ? "Delete permanently" : actionTarget?.action === "suspend" ? "Suspend account" : "Reactivate account"}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -1160,7 +1210,7 @@ export function UserManagement({
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl bg-purple-50 px-4 py-3 text-[13px] text-purple-800 dark:bg-purple-500/10 dark:text-purple-200">
-            {resetTarget?.email} · {resetTarget ? ROLE_META[resetTarget.role].label : ""}
+            {resetTarget?.email} · {resetTarget?.accountType} · {resetTarget?.roleLabel}
           </div>
           <DialogFooter className="gap-2">
             <button

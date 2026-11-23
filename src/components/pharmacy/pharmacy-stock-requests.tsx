@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { Fragment } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -8,8 +9,10 @@ import {
   FileDown,
   Loader2,
   PackagePlus,
+  Paperclip,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
   Truck,
   Upload,
@@ -36,17 +39,18 @@ import {
   type StockRequest,
   type StockMovement,
 } from "@/components/pharmacy/pharmacy-data";
-import { PharmacyPurchaseOrders } from "@/components/pharmacy/pharmacy-purchase-orders";
 import {
   cancelPharmacyStockRequest,
   listMyPharmacyStockRequests,
   receivePharmacyStockRequest,
+  respondToStockRequest,
   submitPharmacyStockRequests,
+  validateStockRequestFiles,
   type NetworkStockRequest,
   type StockRequestSubmitResult,
 } from "@/lib/cloud/stock-requests";
 import { flushOutbox, queueInventorySync } from "@/lib/offline/outbox";
-import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
+import { formatZmw } from "@/lib/pricing";
 import {
   PageHeader,
   pharmacyCardCls,
@@ -55,6 +59,7 @@ import {
 import { recordAudit } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { StockRequestDiscussion } from "@/components/stock-request-discussion";
 import { trackEvent } from "@/lib/firebase";
 import {
   Dialog,
@@ -130,7 +135,9 @@ function mergeNetworkRequests(
       networkDocId: remote.docId,
       batch: remote.batch,
       expiry: remote.expiry,
-      unitCost: remote.unitCost,
+      // A pharmacy only receives its Duniya price from the server. Clear any
+      // supplier figures that may be left in an older local cache.
+      unitCost: undefined,
       markupPercent: remote.markupPercent,
       duniyaUnitPrice: remote.duniyaUnitPrice,
       totalDuniya: remote.totalDuniya,
@@ -139,6 +146,7 @@ function mergeNetworkRequests(
       dispatchedAt: remote.dispatchedAt,
       deliveredAt: remote.deliveredAt,
       decisionNote: remote.decisionNote,
+      comments: remote.comments,
     };
     if (index >= 0) next[index] = { ...next[index], ...merged };
     else next.push(merged);
@@ -148,6 +156,7 @@ function mergeNetworkRequests(
 
 const STATUS_ORDER: RequestStatus[] = [
   "pending",
+  "returned",
   "approved",
   "dispatched",
   "delivered",
@@ -225,7 +234,7 @@ function NewRequestDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   requests: StockRequest[];
-  onCreated: (requests: StockRequest[]) => Promise<StockRequestSubmitResult>;
+  onCreated: (requests: StockRequest[], filesBySyncId: Record<string, File[]>) => Promise<StockRequestSubmitResult>;
   actor: { name: string; email: string };
   /** Destination store for the request ("all" records into the main store). */
   storeId: string;
@@ -235,11 +244,13 @@ function NewRequestDialog({
   const [lines, setLines] = useState<RequestLine[]>([newLine()]);
   const [priority, setPriority] = useState<RequestPriority>("routine");
   const [notes, setNotes] = useState("");
+  const [lineAttachments, setLineAttachments] = useState<Record<string, File[]>>({});
   const [errors, setErrors] = useState<Record<string, LineErrors>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // Shelves are read when the dialog opens so the dropdown always lists what
   // this pharmacy actually holds — never a free-text guess.
@@ -268,6 +279,7 @@ function NewRequestDialog({
       setLines([newLine()]);
       setPriority("routine");
       setNotes("");
+      setLineAttachments({});
       setErrors({});
       setFormError(null);
       setSubmitting(false);
@@ -280,7 +292,15 @@ function NewRequestDialog({
   const addLine = () => setLines((prev) => [...prev, newLine()]);
 
   const removeLine = (key: string) =>
-    setLines((prev) => (prev.length === 1 ? prev : prev.filter((line) => line.key !== key)));
+    setLines((prev) => {
+      if (prev.length === 1) return prev;
+      setLineAttachments((attachments) => {
+        const next = { ...attachments };
+        delete next[key];
+        return next;
+      });
+      return prev.filter((line) => line.key !== key);
+    });
 
   /** The − / + count controller: empty steps to 1, values stay inside range. */
   const stepLine = (key: string, delta: number) =>
@@ -334,6 +354,13 @@ function NewRequestDialog({
       setFormError("Add at least one item to request.");
       return;
     }
+    for (const line of filled) {
+      const attachmentError = validateStockRequestFiles(lineAttachments[line.key] ?? []);
+      if (attachmentError) {
+        setFormError(attachmentError);
+        return;
+      }
+    }
 
     const stores = loadStores();
     const destinationStore =
@@ -343,6 +370,7 @@ function NewRequestDialog({
     const destinationName =
       stores.find((store) => store.id === destinationStore)?.name ?? "Main store";
     const created: StockRequest[] = [];
+    const filesBySyncId: Record<string, File[]> = {};
     let pool = requests;
     for (const line of filled) {
       const shelfItem = inventory.find((entry) => entry.name === line.item);
@@ -362,6 +390,7 @@ function NewRequestDialog({
         ...(actor.email ? { submittedByEmail: actor.email } : {}),
       };
       created.push(request);
+      filesBySyncId[request.syncId!] = lineAttachments[line.key] ?? [];
       pool = [request, ...pool];
     }
 
@@ -369,7 +398,7 @@ function NewRequestDialog({
     setFormError(null);
     let result: StockRequestSubmitResult;
     try {
-      result = await onCreated(created);
+      result = await onCreated(created, filesBySyncId);
     } catch (error) {
       setSubmitting(false);
       setFormError(
@@ -388,13 +417,17 @@ function NewRequestDialog({
         ? "Request saved — not yet delivered"
         : result.queued
           ? "Request saved for sending"
+          : result.attachmentError
+            ? "Request sent — attachment upload incomplete"
           : result.created > 0
             ? `${noun[0]?.toUpperCase()}${noun.slice(1)} sent to Pulse`
             : "Request already in the queue",
       description: result.error
         ? result.error
         : result.queued
-          ? `${units} unit${units === 1 ? "" : "s"} will reach the Pulse hub when the connection returns.`
+          ? `${units} unit${units === 1 ? "" : "s"} will reach the Pulse hub when the connection returns.${result.attachmentError ? ` ${result.attachmentError}` : ""}`
+          : result.attachmentError
+            ? result.attachmentError
           : result.emailError
             ? `The hub received ${units} unit${units === 1 ? "" : "s"}, but the admin email could not be sent.`
             : `${units} unit${units === 1 ? "" : "s"} ${created.length === 1 ? "is" : "are"} with the Pulse hub. The receiving desk has been emailed.`,
@@ -662,6 +695,36 @@ function NewRequestDialog({
                     </button>
                   )}
                 </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-white/5">
+                  <input
+                    ref={(node) => { attachmentInputRefs.current[line.key] = node; }}
+                    type="file"
+                    multiple
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.rtf,.txt,.csv,image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      const error = validateStockRequestFiles(files);
+                      if (error) {
+                        setLineAttachments((previous) => ({ ...previous, [line.key]: [] }));
+                        setFormError(error);
+                      }
+                      else {
+                        setLineAttachments((previous) => ({ ...previous, [line.key]: files }));
+                        setFormError(null);
+                      }
+                      event.target.value = "";
+                    }}
+                  />
+                  <button type="button" onClick={() => attachmentInputRefs.current[line.key]?.click()} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 px-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5">
+                    <Paperclip className="h-3.5 w-3.5" /> Add files
+                  </button>
+                  <span className="text-[11.5px] text-slate-500">
+                    {lineAttachments[line.key]?.length
+                      ? lineAttachments[line.key].map((file) => file.name).join(", ")
+                      : "PDF, Word, or image · up to 5 files, 10 MB each"}
+                  </span>
+                </div>
               </div>
             );
           })}
@@ -781,9 +844,7 @@ function ReceiveRequestDialog({
   onOpenChange: (open: boolean) => void;
   onReceive: (retailUnitPrice: number) => Promise<void>;
 }) {
-  const cost = Math.max(0, request.unitCost ?? 0);
-  const markup = request.markupPercent ?? DUNIYA_MARKUP_PERCENT;
-  const duniya = request.duniyaUnitPrice ?? duniyaUnitPrice(cost, markup);
+  const duniya = Math.max(0, request.duniyaUnitPrice ?? 0);
   const [retail, setRetail] = useState(String(request.retailUnitPrice ?? duniya));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -821,22 +882,15 @@ function ReceiveRequestDialog({
           </DialogTitle>
           <DialogDescription className="text-[13.5px] leading-relaxed text-slate-500 dark:text-slate-400">
             {request.qty} units are on the way from the Pulse hub. Confirm your selling price and
-            the batch lands on your shelf with its cost and Duniya price attached.
+            the batch lands on your shelf with the Duniya price attached.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-white/10 dark:bg-white/5">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">Cost price</p>
-            <p className="mt-1 text-[16px] font-bold tabular-nums">{formatZmw(cost)}</p>
-            <p className="mt-0.5 text-[11.5px] text-slate-500 dark:text-slate-400">What Duniya paid the supplier</p>
-          </div>
+        <div className="mt-4">
           <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-3.5 dark:border-purple-500/30 dark:bg-purple-500/10">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-purple-500 dark:text-purple-300">
-              Duniya price · +{markup}%
-            </p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-purple-500 dark:text-purple-300">Duniya price</p>
             <p className="mt-1 text-[16px] font-bold tabular-nums text-purple-700 dark:text-purple-200">{formatZmw(duniya)}</p>
-            <p className="mt-0.5 text-[11.5px] text-purple-600/80 dark:text-purple-200/70">What you settle with Duniya</p>
+            <p className="mt-0.5 text-[11.5px] text-purple-600/80 dark:text-purple-200/70">What you settle with Duniya per unit</p>
           </div>
         </div>
 
@@ -916,8 +970,11 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
   const [hydrated, setHydrated] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [receiveTarget, setReceiveTarget] = useState<StockRequest | null>(null);
+  const [discussionTarget, setDiscussionTarget] = useState<StockRequest | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [actor, setActor] = useState({ name: "", email: "" });
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
 
   const refreshNetwork = useCallback(async () => {
     try {
@@ -978,17 +1035,29 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
     return map;
   }, [visible]);
 
-  const sorted = useMemo(
-    () => [...visible].sort((a, b) => b.submittedAt - a.submittedAt),
-    [visible]
-  );
+  const filteredRequests = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return [...visible]
+      .filter((request) => {
+        if (statusFilter !== "all" && request.status !== statusFilter) return false;
+        if (!q) return true;
+        return [request.item, request.id, request.storeName, request.priority, request.status]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => b.submittedAt - a.submittedAt);
+  }, [visible, query, statusFilter]);
 
   const persist = (next: StockRequest[]) => {
     setRequests(next);
     saveStockRequests(next);
   };
 
-  const onCreated = async (created: StockRequest[]): Promise<StockRequestSubmitResult> => {
+  const onCreated = async (
+    created: StockRequest[],
+    filesBySyncId: Record<string, File[]>
+  ): Promise<StockRequestSubmitResult> => {
     // Local-first: the device owns the row immediately, then the queue syncs.
     // Use the functional form so a background network refresh cannot be lost.
     setRequests((prev) => {
@@ -997,14 +1066,15 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
       return next;
     });
     try {
-      const result = await submitPharmacyStockRequests(created);
-      if (result.created > 0 || result.queued) void refreshNetwork();
+      const result = await submitPharmacyStockRequests(created, filesBySyncId);
+      if (result.created > 0 || result.queued || result.requestDocs.length > 0) void refreshNetwork();
       return result;
     } catch (error) {
       return {
         created: 0,
         skipped: 0,
         emailed: 0,
+        requestDocs: [],
         queued: false,
         error:
           error instanceof Error
@@ -1106,9 +1176,8 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
         (!received.batch || entry.batch === received.batch)
     );
     const itemId = existing?.id ?? nextId(inventory, "inv");
-    const costPrice = received.unitCost ?? 0;
-    const markupPercent = received.markupPercent ?? DUNIYA_MARKUP_PERCENT;
-    const duniya = received.duniyaUnitPrice ?? duniyaUnitPrice(costPrice, markupPercent);
+    const duniya = Math.max(0, received.duniyaUnitPrice ?? 0);
+    const pharmacyUnitCost = duniya;
     const nextInventory: InventoryItem[] = existing
       ? inventory.map((entry) =>
           entry.id === existing.id
@@ -1116,8 +1185,7 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
                 ...entry,
                 qty: entry.qty + received.qty,
                 unitPrice: retailUnitPrice,
-                costPrice,
-                markupPercent,
+                costPrice: pharmacyUnitCost,
                 ...(received.productId && !entry.productId
                   ? { productId: received.productId }
                   : {}),
@@ -1137,8 +1205,7 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
             qty: received.qty,
             reorderLevel: 5,
             unitPrice: retailUnitPrice,
-            costPrice,
-            markupPercent,
+            costPrice: pharmacyUnitCost,
             storeId: store,
             ...(received.productId ? { productId: received.productId } : {}),
           },
@@ -1155,10 +1222,9 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
       toStoreId: store,
       reason: "Pulse hub stock request",
       note: `${received.requestId} · retail ${formatZmw(retailUnitPrice)}`,
-      unitCost: costPrice,
-      markupPercent,
+      unitCost: pharmacyUnitCost,
       duniyaUnitPrice: duniya,
-      totalCost: costPrice * received.qty,
+      totalCost: pharmacyUnitCost * received.qty,
       totalDuniya: received.totalDuniya ?? duniya * received.qty,
       retailUnitPrice,
       totalRetail: retailUnitPrice * received.qty,
@@ -1178,8 +1244,8 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
               status: "delivered" as const,
               batch,
               expiry,
-              unitCost: costPrice,
-              markupPercent,
+              unitCost: undefined,
+              totalCost: undefined,
               duniyaUnitPrice: duniya,
               totalDuniya: received.totalDuniya,
               retailUnitPrice,
@@ -1251,9 +1317,8 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
           <Truck className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
         <p className="text-slate-600 dark:text-slate-300">
-          <span className="font-semibold text-slate-900 dark:text-white">Sent straight to the Pulse desk.</span>{" "}
-          When the hub dispatches, confirm the delivery here and set your retail price — the cost
-          and Duniya price are already attached to the batch.
+          <span className="font-semibold text-slate-900 dark:text-white">Sent straight to the Duniya team.</span>{" "}
+          When the hub dispatches, confirm the delivery here and set your retail price — the Duniya price is attached to the batch.
         </p>
       </div>
 
@@ -1274,16 +1339,44 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
         ))}
       </div>
 
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <label className="relative block w-full max-w-md flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search item, reference, store or status…"
+            aria-label="Search stock requests"
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+          />
+        </label>
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value as RequestStatus | "all")}
+          aria-label="Filter stock requests by status"
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] text-slate-700 outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+        >
+          <option value="all">All statuses</option>
+          {STATUS_ORDER.map((status) => <option key={status} value={status}>{status[0].toUpperCase() + status.slice(1)}</option>)}
+        </select>
+        <span className="text-[12.5px] text-slate-500 dark:text-slate-400" aria-live="polite">
+          {filteredRequests.length} of {visible.length} requests
+        </span>
+      </div>
+
       {/* Requests table */}
       <motion.div
         variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
         className={cn(pharmacyCardCls, "mt-5 overflow-hidden")}
       >
-        {sorted.length === 0 ? (
+        {filteredRequests.length === 0 ? (
           <div className="flex min-h-[140px] flex-col items-center justify-center gap-2.5 px-4 py-8 text-center">
             <EmptyIcon className="h-7 w-7 text-slate-300 dark:text-slate-600" aria-hidden="true" />
             <p className="text-[13.5px] font-medium text-slate-500 dark:text-slate-400">
-              No stock requests yet — submit your first one.
+              {visible.length === 0
+                ? "No stock requests yet — submit your first one."
+                : "No requests match these filters. Clear the search or choose another status."}
             </p>
           </div>
         ) : (
@@ -1303,9 +1396,9 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                {sorted.map((request) => (
+                {filteredRequests.map((request) => (
+                  <Fragment key={request.networkDocId ?? `${request.id}-${request.submittedAt}`}>
                   <tr
-                    key={request.networkDocId ?? `${request.id}-${request.submittedAt}`}
                     className="transition-colors hover:bg-slate-50/80 dark:hover:bg-white/5"
                   >
                     <td className="max-w-[280px] px-5 py-3">
@@ -1322,7 +1415,7 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
                       <StatusPill status={request.priority} />
                     </td>
                     <td className="px-3 py-3 text-right">
-                      {request.unitCost ? (
+                      {request.duniyaUnitPrice !== undefined ? (
                         <>
                           <p className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
                             {formatZmw(request.totalDuniya ?? request.duniyaUnitPrice! * request.qty)}
@@ -1367,6 +1460,11 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
                         {request.status === "dispatched" && !request.networkDocId && (
                           <span className="text-[12px] text-slate-400">Syncing dispatch…</span>
                         )}
+                        {(request.status === "returned" || request.status === "pending" || request.status === "approved") && request.networkDocId && (
+                          <button type="button" onClick={() => setDiscussionTarget(request)} className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-semibold", request.status === "returned" ? "bg-orange-50 text-orange-700 hover:bg-orange-100 dark:bg-orange-500/10 dark:text-orange-300" : "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5")}>
+                            {request.status === "returned" ? "Reply to Pulse" : "Add comment / files"}
+                          </button>
+                        )}
                         {(request.status === "pending" || request.status === "approved") && (
                           <button
                             type="button"
@@ -1385,6 +1483,26 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
                       </span>
                     </td>
                   </tr>
+                  {discussionTarget?.networkDocId === request.networkDocId && request.networkDocId && (
+                    <tr>
+                      <td colSpan={7} className="px-5 pb-5">
+                        <StockRequestDiscussion
+                          docId={request.networkDocId}
+                          comments={request.comments}
+                          resubmitOnReply={request.status === "returned"}
+                          onUpdated={(updated) => {
+                            const next = requests.map((entry) => entry.networkDocId === updated.docId
+                              ? { ...entry, status: updated.status, comments: updated.comments, decisionNote: updated.decisionNote }
+                              : entry);
+                            persist(next);
+                            setDiscussionTarget(null);
+                            void refreshNetwork();
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -1394,7 +1512,7 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
 
       {hydrated && (
         <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
-          {visible.length} requests in this store view · newest first · synced with the Pulse desk
+          {visible.length} requests in this store view · newest first · synced with the Duniya team
         </p>
       )}
 
@@ -1419,9 +1537,6 @@ export function PharmacyStockRequests({ storeId = "all" }: { storeId?: string })
       />
       </section>
 
-      <section aria-label="Purchase orders">
-        <PharmacyPurchaseOrders storeId={storeId} />
-      </section>
     </div>
   );
 }

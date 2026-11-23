@@ -9,6 +9,7 @@ import {
   History,
   LockKeyhole,
   Receipt,
+  Search,
   TriangleAlert,
   Wallet,
 } from "lucide-react";
@@ -159,6 +160,8 @@ export function PharmacyShifts({
   const [now, setNow] = useState(() => Date.now());
   const [openDialog, setOpenDialog] = useState(false);
   const [closeDialog, setCloseDialog] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyStatus, setHistoryStatus] = useState<"all" | "open" | "closed">("all");
 
   const reload = useCallback(() => {
     setShifts(loadShifts());
@@ -195,6 +198,19 @@ export function PharmacyShifts({
       shifts.filter((shift) => !activeStore || shift.storeId === activeStore.id),
     [shifts, activeStore]
   );
+
+  const filteredShifts = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    return [...storeShifts]
+      .filter((shift) => {
+        if (historyStatus !== "all" && shift.status !== historyStatus) return false;
+        if (!q) return true;
+        return `${shift.id} ${shift.cashierName} ${shift.cashierEmail} ${shift.storeName} ${shift.handoverTo ?? ""} ${shift.closingNotes ?? ""}`
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => b.openedAt - a.openedAt);
+  }, [storeShifts, historyQuery, historyStatus]);
 
   const myShift = useMemo(
     () =>
@@ -501,9 +517,35 @@ export function PharmacyShifts({
             </p>
           </div>
           <span className="ml-auto text-[12.5px] font-semibold text-slate-500 dark:text-slate-400">
-            {storeShifts.length} shift{storeShifts.length === 1 ? "" : "s"}
+            {filteredShifts.length} of {storeShifts.length} shifts
           </span>
         </div>
+
+        {storeShifts.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <label className="relative block w-full max-w-md flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+              <input
+                type="search"
+                value={historyQuery}
+                onChange={(event) => setHistoryQuery(event.target.value)}
+                placeholder="Search shifts, cashiers, handovers or notes…"
+                aria-label="Search shift history"
+                className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+              />
+            </label>
+            <select
+              value={historyStatus}
+              onChange={(event) => setHistoryStatus(event.target.value as typeof historyStatus)}
+              aria-label="Filter shifts by status"
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] text-slate-700 outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            >
+              <option value="all">All shifts</option>
+              <option value="open">Open</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+        )}
 
         <div className={cn(pharmacyCardCls, "overflow-hidden")}>
           {!hydrated ? (
@@ -520,6 +562,11 @@ export function PharmacyShifts({
                 Open a shift with the starting cash in the drawer. When it closes, the counted and
                 expected totals stay here for handover.
               </p>
+            </div>
+          ) : filteredShifts.length === 0 ? (
+            <div className="flex min-h-[150px] flex-col items-center justify-center gap-2 px-5 py-8 text-center">
+              <p className="text-[13.5px] text-slate-500 dark:text-slate-400">No shifts match these filters.</p>
+              <button type="button" onClick={() => { setHistoryQuery(""); setHistoryStatus("all"); }} className="text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-300">Clear filters</button>
             </div>
           ) : (
             <>
@@ -538,7 +585,7 @@ export function PharmacyShifts({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                    {storeShifts.map((shift) => (
+                    {filteredShifts.map((shift) => (
                       <tr key={shift.id} className="align-top transition-colors hover:bg-slate-50/70 dark:hover:bg-white/[0.03]">
                         <td className="py-3.5 pl-5 pr-3">
                           <p className="whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 dark:text-white">{shift.id}</p>
@@ -574,7 +621,7 @@ export function PharmacyShifts({
               </div>
 
               <ul className="divide-y divide-slate-100 md:hidden dark:divide-white/5">
-                {storeShifts.map((shift) => (
+                {filteredShifts.map((shift) => (
                   <li key={shift.id} className="p-4">
                     <div className="flex flex-wrap items-start gap-2">
                       <div className="min-w-0 flex-1">

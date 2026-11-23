@@ -31,6 +31,11 @@ import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
 import { hardDeletePharmacyAccount } from "@/lib/cloud/pharmacy-admin";
 import {
+  listPulsePharmacies,
+  setPharmacyApproval,
+  updatePharmacyListing,
+} from "@/lib/cloud/pulse-users";
+import {
   listPharmacyProvisioning,
   type PharmacyProvisioning,
 } from "@/lib/cloud/pharmacy-provisioning";
@@ -121,58 +126,6 @@ function formatDate(ts: number | null | undefined): string {
   });
 }
 
-type FirestoreTimestampLike = {
-  toMillis?: () => number;
-  seconds?: number;
-};
-
-type PharmacyProfileData = {
-  pharmacy_name?: string;
-  pharmacy_id?: string;
-  address?: string;
-  email?: string;
-  role?: string;
-  role_label?: string;
-  approved_by_duniya?: boolean;
-  access_revoked?: boolean;
-  listing_removed?: boolean;
-  listing_status?: string;
-  created_time?: FirestoreTimestampLike;
-  removed_at?: FirestoreTimestampLike;
-};
-
-function timestampMillis(value: FirestoreTimestampLike | undefined): number | null {
-  if (typeof value?.toMillis === "function") return value.toMillis();
-  if (typeof value?.seconds === "number") return value.seconds * 1000;
-  return null;
-}
-
-function mapPharmacyRecord(
-  docId: string,
-  data: PharmacyProfileData,
-  removed: boolean
-): Pharmacy {
-  const listedStatus = data.listing_status;
-  const previousStatus: RestorableStatus =
-    listedStatus === "active" || listedStatus === "pending" || listedStatus === "rejected"
-      ? listedStatus
-      : data.approved_by_duniya === false
-        ? "pending"
-        : "active";
-
-  return {
-    id: data.pharmacy_id ?? docId,
-    uid: docId,
-    name: data.pharmacy_name?.trim() || "Unnamed pharmacy",
-    address: data.address?.trim() ?? "",
-    ownerEmail: data.email ?? null,
-    registeredAt: timestampMillis(data.created_time),
-    status: removed ? "removed" : previousStatus,
-    ...(removed
-      ? { previousStatus, removedAt: timestampMillis(data.removed_at) }
-      : {}),
-  };
-}
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
@@ -726,40 +679,35 @@ export function PulsePharmacies() {
 
   const loadNetworkPharmacies = useCallback(async () => {
     try {
-      const { getFirebaseDb } = await import("@/lib/firebase");
-      const db = getFirebaseDb();
-      if (!db) return;
-      const { collection, getDocs, query, where } = await import("firebase/firestore");
-      const snap = await getDocs(
-        query(collection(db, "User"), where("account_type", "==", "Pharmacy"))
-      );
-      const activeRemote: Pharmacy[] = [];
-      const removedRemote: Pharmacy[] = [];
-      for (const entry of snap.docs) {
-        const data = entry.data() as PharmacyProfileData;
-        // Owners are the pharmacy accounts; invited team members share their
-        // pharmacy's name and would otherwise appear as extra listings.
-        if (String(data.role ?? data.role_label ?? "").toLowerCase() !== "owner") continue;
-        const isRemoved = data.access_revoked === true || data.listing_removed === true;
-        const mapped = mapPharmacyRecord(entry.id, data, isRemoved);
-        if (isRemoved) removedRemote.push(mapped);
-        else activeRemote.push(mapped);
-      }
-      removedRemote.sort((a, b) => (b.removedAt ?? 0) - (a.removedAt ?? 0));
+      const rows = await listPulsePharmacies();
+      const remote = rows.map((row): Pharmacy => ({
+        id: row.id,
+        uid: row.uid,
+        name: row.name,
+        address: row.address,
+        ownerEmail: row.email,
+        registeredAt: row.registeredAt,
+        status: row.status,
+        ...(row.status === "removed"
+          ? {
+              previousStatus: row.previousStatus ?? "pending",
+              removedAt: row.removedAt,
+            }
+          : {}),
+      }));
+      const activeRemote = remote.filter((pharmacy) => pharmacy.status !== "removed");
+      const removedRemote = remote
+        .filter((pharmacy) => pharmacy.status === "removed")
+        .sort((a, b) => (b.removedAt ?? 0) - (a.removedAt ?? 0));
       setRemoved(removedRemote);
       setPharmacies((prev) => {
-        const byEmail = new Map(activeRemote.map((p) => [(p.ownerEmail ?? "").toLowerCase(), p]));
-        // Drop registry-backed rows the network no longer returns (removed
-        // accounts, or staff seats that used to be listed as pharmacies).
-        const fresh = prev.filter(
-          (p) => !p.uid || byEmail.has((p.ownerEmail ?? "").toLowerCase())
-        );
-        const merged = fresh.map((p) => byEmail.get((p.ownerEmail ?? "").toLowerCase()) ?? p);
-        const known = new Set(merged.map((p) => (p.ownerEmail ?? "").toLowerCase()));
-        return [...merged, ...activeRemote.filter((p) => !known.has((p.ownerEmail ?? "").toLowerCase()))];
+        const byUid = new Map(remote.map((pharmacy) => [pharmacy.uid, pharmacy]));
+        const merged = prev.map((pharmacy) => byUid.get(pharmacy.uid ?? "") ?? pharmacy);
+        const known = new Set(merged.map((pharmacy) => pharmacy.uid).filter(Boolean));
+        return [...merged, ...activeRemote.filter((pharmacy) => !known.has(pharmacy.uid))];
       });
     } catch {
-      /* offline or rules — the local registry remains the fallback */
+      /* Offline or not a Pulse account — keep the local registry fallback. */
     }
   }, []);
 
@@ -852,28 +800,29 @@ export function PulsePharmacies() {
 
   /* ---------------- mutations ---------------- */
 
-  const changeStatus = (pharmacy: Pharmacy, status: PharmacyStatus) => {
+  const changeStatus = async (pharmacy: Pharmacy, status: PharmacyStatus) => {
     const key = pharmacy.uid ?? pharmacy.id;
+    if (pharmacy.uid) {
+      try {
+        if (status === "removed") {
+          await updatePharmacyListing(pharmacy.uid, "remove", {
+            previousStatus: pharmacy.status === "removed" ? pharmacy.previousStatus : pharmacy.status,
+          });
+        } else {
+          await setPharmacyApproval(pharmacy.uid, status);
+        }
+      } catch {
+        toast({
+          title: "Pharmacy status not saved",
+          description: "The registry couldn't be updated. Check your permissions and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     setPharmacies((prev) =>
       prev.map((p) => ((p.uid ?? p.id) === key ? { ...p, status } : p))
     );
-    // Registry-backed rows write through to Firestore, so approval is seen
-    // by the pharmacy itself (approved_by_duniya) on its next sign-in.
-    if (pharmacy.uid) {
-      void (async () => {
-        try {
-          const { getFirebaseDb } = await import("@/lib/firebase");
-          const db = getFirebaseDb();
-          if (!db) return;
-          const { doc, updateDoc } = await import("firebase/firestore");
-          await updateDoc(doc(db, "User", pharmacy.uid!), {
-            approved_by_duniya: status === "active",
-          });
-        } catch {
-          /* best-effort — local status still reflects the decision here */
-        }
-      })();
-    }
     setDetails((d) =>
       d && (d.uid ?? d.id) === key ? { ...d, status } : d
     );
@@ -918,19 +867,9 @@ export function PulsePharmacies() {
 
   const removePharmacyRecord = async (pharmacy: Pharmacy) => {
     if (!pharmacy.uid) return;
-    const { getFirebaseAuth, getFirebaseDb } = await import("@/lib/firebase");
-    const db = getFirebaseDb();
-    if (!db) throw new Error("The network registry isn't available right now.");
-    const { doc, serverTimestamp, updateDoc } = await import("firebase/firestore");
-    await updateDoc(doc(db, "User", pharmacy.uid), {
-      access_revoked: true,
-      listing_removed: true,
-      listing_status:
-        pharmacy.status === "removed"
-          ? pharmacy.previousStatus ?? "pending"
-          : pharmacy.status,
-      removed_at: serverTimestamp(),
-      removed_by: getFirebaseAuth()?.currentUser?.uid ?? null,
+    await updatePharmacyListing(pharmacy.uid, "remove", {
+      previousStatus:
+        pharmacy.status === "removed" ? pharmacy.previousStatus ?? "pending" : pharmacy.status,
     });
   };
 
@@ -1020,16 +959,10 @@ export function PulsePharmacies() {
     setRestoringUid(pharmacy.uid);
 
     try {
-      const { getFirebaseAuth, getFirebaseDb } = await import("@/lib/firebase");
-      const db = getFirebaseDb();
-      if (!db) throw new Error("The network registry isn't available right now.");
-      const { doc, serverTimestamp, updateDoc } = await import("firebase/firestore");
-      await updateDoc(doc(db, "User", pharmacy.uid), {
-        access_revoked: false,
-        listing_removed: false,
-        approved_by_duniya: (pharmacy.previousStatus ?? "pending") === "active",
-        restored_at: serverTimestamp(),
-        restored_by: getFirebaseAuth()?.currentUser?.uid ?? null,
+      const restoredStatus = pharmacy.previousStatus ?? "pending";
+      await updatePharmacyListing(pharmacy.uid, "restore", {
+        approved: restoredStatus === "active",
+        status: restoredStatus,
       });
 
       const restored: Pharmacy = {

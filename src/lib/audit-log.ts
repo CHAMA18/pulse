@@ -22,7 +22,6 @@ export type AuditEvent = {
 export const AUDIT_STORAGE_KEY = "pulse.audit.v1";
 const AUDIT_PENDING_KEY = "pulse.audit.pending.v1";
 const AUDIT_RECENT_CACHE_CAP = 500;
-const AUDIT_PENDING_CAP = 2_000;
 
 /** Audit trails are per-pharmacy: scoped to the active pharmacy when one is set. */
 function auditScope(): string {
@@ -40,8 +39,9 @@ function auditKey(): string {
 }
 
 function pendingKey(): string {
-  const scope = auditScope();
-  return scope ? `${AUDIT_PENDING_KEY}:${scope}` : AUDIT_PENDING_KEY;
+  // One durable browser queue for all signed-in users. flushAuditQueue filters
+  // it by authenticated email so one account cannot discard another's events.
+  return AUDIT_PENDING_KEY;
 }
 
 export const AUDIT_EVENT_NAME = "pulse:audit";
@@ -82,24 +82,51 @@ function humanizeLegacyTitle(title: string): string {
 function loadPending(): AuditEvent[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(pendingKey());
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(isValidEvent) : [];
+    const keys = [pendingKey()];
+    // Migrate queues from older builds that were split by active pharmacy.
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key?.startsWith(`${AUDIT_PENDING_KEY}:`)) keys.push(key);
+    }
+    const byId = new Map<string, AuditEvent>();
+    for (const key of keys) {
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const entry of parsed) {
+            if (isValidEvent(entry)) {
+              byId.set(`${entry.email.trim().toLowerCase()}:${entry.id}`, entry);
+            }
+          }
+        }
+      } catch {
+        // One damaged legacy queue must not hide healthy queues for other users.
+      }
+    }
+    const events = [...byId.values()].sort((a, b) => b.ts - a.ts);
+    const legacyKeys = keys.slice(1);
+    if (legacyKeys.length > 0 && savePending(events)) {
+      for (const key of legacyKeys) window.localStorage.removeItem(key);
+    }
+    return events;
   } catch {
     return [];
   }
 }
 
-function savePending(events: AuditEvent[]): void {
-  if (typeof window === "undefined") return;
+function savePending(events: AuditEvent[]): boolean {
+  if (typeof window === "undefined") return false;
   try {
     window.localStorage.setItem(
       pendingKey(),
-      JSON.stringify(events.slice(0, AUDIT_PENDING_CAP))
+      JSON.stringify(events)
     );
+    return true;
   } catch {
     /* pending queue is best-effort; Firestore remains authoritative */
+    return false;
   }
 }
 
@@ -136,7 +163,11 @@ let flushTimer: number | null = null;
 let flushing = false;
 
 function scheduleAuditFlush(): void {
-  if (typeof window === "undefined" || flushTimer !== null) return;
+  if (
+    typeof window === "undefined" ||
+    process.env.NEXT_PUBLIC_FIREBASE_EMULATORS === "true" ||
+    flushTimer !== null
+  ) return;
   flushTimer = window.setTimeout(() => {
     flushTimer = null;
     void flushAuditQueue();
@@ -148,16 +179,22 @@ function scheduleAuditFlush(): void {
  * queued and are retried on the next record/refresh.
  */
 export async function flushAuditQueue(): Promise<void> {
+  if (process.env.NEXT_PUBLIC_FIREBASE_EMULATORS === "true") return;
   if (flushing) return;
-  const pending = loadPending();
+  const { getFirebaseAuth } = await import("@/lib/firebase");
+  const accountEmail = getFirebaseAuth()?.currentUser?.email?.trim().toLowerCase();
+  if (!accountEmail) return;
+  // Multiple users can use the same browser and local queue. Only submit this
+  // account's events; leave other users' pending entries for their next sign-in.
+  const pending = loadPending().filter((event) => event.email.trim().toLowerCase() === accountEmail);
   if (pending.length === 0) return;
 
   flushing = true;
   try {
     const { recordAuditEvents } = await import("@/lib/cloud/audit-logs");
     await recordAuditEvents(pending);
-    const sent = new Set(pending.map((event) => event.id));
-    savePending(loadPending().filter((event) => !sent.has(event.id)));
+    const sent = new Set(pending.map((event) => `${event.email.trim().toLowerCase()}:${event.id}`));
+    savePending(loadPending().filter((event) => !sent.has(`${event.email.trim().toLowerCase()}:${event.id}`)));
   } catch {
     /* offline or function unavailable — keep the queue for the next attempt */
   } finally {
@@ -194,7 +231,7 @@ export function recordAudit(event: {
     /* recent cache full or unavailable — Firestore still receives the event */
   }
 
-  savePending([entry, ...loadPending()].slice(0, AUDIT_PENDING_CAP));
+  savePending([entry, ...loadPending()]);
   scheduleAuditFlush();
   window.dispatchEvent(new CustomEvent(AUDIT_EVENT_NAME));
 }

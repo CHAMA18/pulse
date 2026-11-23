@@ -31,6 +31,7 @@ import {
 import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
 import { formatCachedAt, loadCachedRead, saveCachedRead } from "@/lib/offline/read-cache";
 import { cn } from "@/lib/utils";
+import { StockRequestDiscussion } from "@/components/stock-request-discussion";
 import { trackEvent } from "@/lib/firebase";
 import {
   Dialog,
@@ -52,12 +53,13 @@ const inputCls =
 
 const CACHE_KEY = "dashboard-stock-requests-received";
 
-type Filter = "all" | "pending" | "approved" | "dispatched" | "delivered" | "closed";
+type Filter = "all" | "pending" | "returned" | "approved" | "dispatched" | "delivered" | "closed";
 type CachedPage = { requests: NetworkStockRequest[] };
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "pending", label: "Pending" },
+  { id: "returned", label: "Returned" },
   { id: "approved", label: "Approved" },
   { id: "dispatched", label: "Dispatched" },
   { id: "delivered", label: "Received" },
@@ -66,6 +68,7 @@ const FILTERS: { id: Filter; label: string }[] = [
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Pending review",
+  returned: "Returned to pharmacy",
   approved: "Approved",
   dispatched: "Dispatched",
   delivered: "Received",
@@ -75,6 +78,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function statusPill(status: string): string {
   if (status === "pending") return "pending";
+  if (status === "returned") return "pending";
   if (status === "approved") return "approved";
   if (status === "dispatched") return "in-transit";
   if (status === "delivered") return "received";
@@ -482,7 +486,7 @@ function RejectDialog({
 /* Detail dialog                                                       */
 /* ------------------------------------------------------------------ */
 
-function DetailDialog({ request, onClose }: { request: NetworkStockRequest; onClose: () => void }) {
+function DetailDialog({ request, onClose, onUpdated }: { request: NetworkStockRequest; onClose: () => void; onUpdated: (request: NetworkStockRequest) => void }) {
   const rows: { label: string; value: string }[] = [
     { label: "Pharmacy", value: request.pharmacyName },
     { label: "Store", value: request.storeName },
@@ -530,6 +534,13 @@ function DetailDialog({ request, onClose }: { request: NetworkStockRequest; onCl
             </div>
           ))}
         </dl>
+        <StockRequestDiscussion
+          docId={request.docId}
+          comments={request.comments}
+          returnToPharmacy={request.status === "pending" || request.status === "approved"}
+          readOnly={request.status !== "pending" && request.status !== "approved"}
+          onUpdated={(updated) => { onUpdated(updated); }}
+        />
         <DialogFooter className="mt-2">
           <button type="button" onClick={onClose} className="h-10 rounded-md border border-slate-200 px-4 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5">
             Close
@@ -605,7 +616,7 @@ export function StockRequestsReceived() {
   };
 
   const counts = useMemo(() => {
-    const map = { pending: 0, approved: 0, dispatched: 0, delivered: 0, rejected: 0, cancelled: 0 };
+    const map: Record<string, number> = { pending: 0, returned: 0, approved: 0, dispatched: 0, delivered: 0, rejected: 0, cancelled: 0 };
     for (const request of requests) {
       map[request.status] = (map[request.status] ?? 0) + 1;
     }
@@ -640,6 +651,7 @@ export function StockRequestsReceived() {
 
   const stats = [
     statTile("Pending review", String(counts.pending), "Waiting for approval", "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"),
+    statTile("Returned", String(counts.returned), "Waiting for pharmacy edits", "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300"),
     statTile("Approved", String(counts.approved), "Ready to dispatch", "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"),
     statTile("Dispatched", String(counts.dispatched), "With the pharmacy", "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"),
     statTile("Received", String(counts.delivered), "Closed by pharmacy", "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"),
@@ -651,7 +663,7 @@ export function StockRequestsReceived() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-[26px] font-bold tracking-tight text-slate-900 dark:text-white">
-            Stock Requests Received
+            Stock Requests
           </h2>
           <p className="mt-1 max-w-3xl text-[14px] text-slate-500 dark:text-slate-400">
             Every replenishment request from the network. Approve it, dispatch a priced batch, and the
@@ -804,9 +816,9 @@ export function StockRequestsReceived() {
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex flex-wrap justify-end gap-1.5">
-                        {request.status === "pending" && (
+                        {(request.status === "pending" || request.status === "returned") && (
                           <>
-                            <button
+                            {request.status === "returned" ? <span className="inline-flex h-8 items-center text-[12px] font-medium text-orange-700 dark:text-orange-300">Awaiting pharmacy reply</span> : <button
                               type="button"
                               onClick={() => void approve(request)}
                               disabled={busyId === request.docId}
@@ -814,10 +826,10 @@ export function StockRequestsReceived() {
                             >
                               {busyId === request.docId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                               Approve
-                            </button>
-                            <button type="button" onClick={() => setRejectTarget(request)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-200 px-2.5 text-[12px] font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10">
+                            </button>}
+                            {request.status === "pending" && <button type="button" onClick={() => setRejectTarget(request)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-200 px-2.5 text-[12px] font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10">
                               <XCircle className="h-3.5 w-3.5" /> Reject
-                            </button>
+                            </button>}
                           </>
                         )}
                         {request.status === "approved" && (
@@ -872,7 +884,7 @@ export function StockRequestsReceived() {
           }}
         />
       )}
-      {detailTarget && <DetailDialog request={detailTarget} onClose={() => setDetailTarget(null)} />}
+      {detailTarget && <DetailDialog request={detailTarget} onClose={() => setDetailTarget(null)} onUpdated={(updated) => { replace(updated); setDetailTarget(updated); }} />}
     </div>
   );
 }

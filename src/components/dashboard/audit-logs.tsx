@@ -67,9 +67,10 @@ const PAGE_SIZE = 60;
 
 /** Merge Firestore events with recent local events that are still queued. */
 function mergeWithLocal(events: AuditEvent[]): AuditEvent[] {
-  const byId = new Map(events.map((event) => [event.id, event]));
+  const eventKey = (event: AuditEvent) => `${event.email.trim().toLowerCase()}:${event.id}`;
+  const byId = new Map(events.map((event) => [eventKey(event), event]));
   for (const event of loadAuditEvents()) {
-    if (!byId.has(event.id)) byId.set(event.id, event);
+    if (!byId.has(eventKey(event))) byId.set(eventKey(event), event);
   }
   return [...byId.values()].sort((a, b) => b.ts - a.ts);
 }
@@ -116,8 +117,12 @@ export function AuditLogs() {
     // Move any pre-Firestore history from this device into the shared trail.
     // The server only accepts events attributed to the signed-in email.
     if (backfill) {
-      const remoteIds = new Set(feed.events.map((event) => event.id));
-      const missing = loadAuditEvents().filter((event) => !remoteIds.has(event.id));
+      const remoteIds = new Set(feed.events.map((event) => `${event.email.trim().toLowerCase()}:${event.id}`));
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const accountEmail = getFirebaseAuth()?.currentUser?.email?.trim().toLowerCase();
+      const missing = loadAuditEvents().filter(
+        (event) => event.email.trim().toLowerCase() === accountEmail && !remoteIds.has(`${event.email.trim().toLowerCase()}:${event.id}`)
+      );
       if (missing.length > 0) {
         try {
           await recordAuditEvents(missing);

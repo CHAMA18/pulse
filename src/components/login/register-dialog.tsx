@@ -258,7 +258,6 @@ export function RegisterDialog({
           kind: invitation.kind,
           portal: invitation.portal,
           role: invitation.role,
-          profile_saved: result.profileSaved,
         });
       } catch (err) {
         setStatus("idle");

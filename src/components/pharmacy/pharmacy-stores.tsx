@@ -9,6 +9,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Search,
   Star,
   Store,
   Trash2,
@@ -285,6 +286,8 @@ export function PharmacyStores({
   const [editing, setEditing] = useState<PharmacyStore | null>(null);
   const [defaultLimit, setDefaultLimit] = useState(10);
   const [actor, setActor] = useState({ name: "", email: "" });
+  const [query, setQuery] = useState("");
+  const [mainFilter, setMainFilter] = useState<"all" | "main" | "other">("all");
 
   useEffect(() => {
     let active = true;
@@ -328,6 +331,17 @@ export function PharmacyStores({
     const value = inventory.reduce((acc, entry) => acc + entry.qty * entry.unitPrice, 0);
     return { skus: inventory.length, units, value };
   }, [inventory]);
+
+  const visibleStores = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return stores.filter((store) => {
+      if (mainFilter === "main" && !store.isMain) return false;
+      if (mainFilter === "other" && store.isMain) return false;
+      return !q || `${store.name} ${store.location} ${store.address} ${store.phone}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [stores, query, mainFilter]);
 
   const openAdd = () => {
     setEditing(null);
@@ -500,6 +514,35 @@ export function PharmacyStores({
         </div>
       </div>
 
+      {stores.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <label className="relative block w-full max-w-md flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search stores by name, location or phone…"
+              aria-label="Search stores"
+              className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] outline-none placeholder:text-slate-400 focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            />
+          </label>
+          <select
+            value={mainFilter}
+            onChange={(event) => setMainFilter(event.target.value as typeof mainFilter)}
+            aria-label="Filter stores by main status"
+            className="h-10 rounded-md border border-slate-200 bg-white px-3 text-[13.5px] text-slate-700 outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white"
+          >
+            <option value="all">All stores</option>
+            <option value="main">Main store</option>
+            <option value="other">Other stores</option>
+          </select>
+          <span className="text-[12px] text-slate-500 dark:text-slate-400" aria-live="polite">
+            {visibleStores.length} of {stores.length} stores
+          </span>
+        </div>
+      )}
+
       {/* Store cards */}
       <motion.div
         variants={{ hidden: {}, show: { transition: { staggerChildren: 0.05 } } }}
@@ -530,8 +573,13 @@ export function PharmacyStores({
               Add your first store
             </button>
           </div>
+        ) : visibleStores.length === 0 ? (
+          <div className={cn(pharmacyCardCls, "col-span-full p-8 text-center")}>
+            <p className="text-[13.5px] text-slate-500 dark:text-slate-400">No stores match these filters.</p>
+            <button type="button" onClick={() => { setQuery(""); setMainFilter("all"); }} className="mt-2 text-[13px] font-semibold text-purple-600 hover:underline dark:text-purple-300">Clear filters</button>
+          </div>
         ) : (
-          stores.map((store) => {
+          visibleStores.map((store) => {
             const stats = statsFor(store.id);
           return (
             <motion.article

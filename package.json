@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
+    "dev:stock-sandbox": "node scripts/dev-stock-sandbox.mjs",
+    "emulators:stock-sandbox": "firebase emulators:start --only auth,firestore,functions --project demo-pulse-stock-sandbox --config firebase.stock-sandbox.json",
+    "seed:stock-sandbox": "node scripts/seed-stock-sandbox.cjs",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "build:export": "NEXT_EXPORT=1 next build",
     "desktop:icons": "node scripts/desktop-icons.mjs",
@@ -15,7 +18,7 @@
     "lint": "eslint .",
     "test:rbac": "node --experimental-strip-types --test tests/pulse-rbac.test.ts",
     "test:flow": "node --experimental-strip-types --test tests/pharmacy-flow.test.ts",
-    "test": "node --experimental-strip-types --test tests/account-policy.test.ts tests/pulse-rbac.test.ts tests/pharmacy-flow.test.ts tests/warehouse.test.ts",
+    "test": "node --experimental-strip-types --test tests/account-policy.test.ts tests/pulse-rbac.test.ts tests/pharmacy-flow.test.ts tests/warehouse.test.ts tests/portal-access.test.ts",
     "test:warehouse": "node --experimental-strip-types --test tests/warehouse.test.ts"
   },
   "dependencies": {

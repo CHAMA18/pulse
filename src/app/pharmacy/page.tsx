@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function PharmacyPortalPage() {
   return (
-    <AuthGuard>
+    <AuthGuard portal="pharmacy">
       <PharmacyApp />
     </AuthGuard>
   );

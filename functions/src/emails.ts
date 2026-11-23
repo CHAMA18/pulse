@@ -575,6 +575,104 @@ export function stockRequestEmail(params: StockRequestEmailParams): EmailContent
   };
 }
 
+export type StockRequestFulfilledEmailParams = {
+  item: string;
+  qty: number;
+  batch: string;
+  expiry: string;
+  dispatchedAt: string;
+  pharmacyUrl: string;
+};
+
+/** Network-wide notice that Pulse has dispatched a requested item. */
+export function stockRequestFulfilledEmail(
+  params: StockRequestFulfilledEmailParams
+): EmailContent {
+  return {
+    subject: `Stock fulfilled: ${params.item} dispatched by Pulse`,
+    html: layout({
+      preheader: `Pulse has dispatched ${params.qty} units of ${params.item}.`,
+      eyebrow: "Stock request fulfilled",
+      heading: "Stock has been dispatched",
+      intro: `Pulse has fulfilled a pharmacy stock request and dispatched <strong style="color:${INK};">${esc(params.item)}</strong>. This update is shared with registered pharmacy owners across the network.`,
+      bodyHtml: detailsCard("Dispatch details", [
+        { label: "Item", value: params.item },
+        { label: "Units", value: String(params.qty), accent: true },
+        { label: "Batch", value: params.batch, mono: true },
+        { label: "Expiry", value: params.expiry },
+        { label: "Dispatched", value: params.dispatchedAt },
+      ], "Fulfilled"),
+      ctaLabel: "Open Stock Requests",
+      ctaHref: params.pharmacyUrl,
+      ctaNote: "Open Pulse to follow your own requests or submit a replenishment request.",
+      footerNote: "This is an operational stock update from the Pulse hub.",
+      reason: "Pulse dispatched stock requested through the pharmacy network.",
+    }),
+    text: [
+      "Stock request fulfilled — dispatched by Pulse",
+      "",
+      `${params.qty} units of ${params.item} have been dispatched.`,
+      `Batch: ${params.batch}`,
+      `Expiry: ${params.expiry}`,
+      `Dispatched: ${params.dispatchedAt}`,
+      "",
+      `Open Stock Requests: ${params.pharmacyUrl}`,
+      "",
+      "— Pulse · Pharmacy intelligence, delivered",
+    ].join("\n"),
+  };
+}
+
+export type StockDeliveryCompletedEmailParams = {
+  pharmacyName: string;
+  item: string;
+  qty: number;
+  batch: string;
+  receivedBy: string;
+  deliveredAt: string;
+  consoleUrl: string;
+};
+
+/** Pulse receiving-desk notice after a pharmacy confirms delivery. */
+export function stockDeliveryCompletedEmail(
+  params: StockDeliveryCompletedEmailParams
+): EmailContent {
+  return {
+    subject: `Delivery completed: ${params.item} · ${params.pharmacyName}`,
+    html: layout({
+      preheader: `${params.pharmacyName} confirmed receipt of ${params.qty} ${params.item}.`,
+      eyebrow: "Delivery completed",
+      heading: "A pharmacy confirmed delivery",
+      intro: `<strong style="color:${INK};">${esc(params.pharmacyName)}</strong> marked its Pulse stock delivery as received.`,
+      bodyHtml: detailsCard("Delivery details", [
+        { label: "Pharmacy", value: params.pharmacyName },
+        { label: "Item", value: params.item },
+        { label: "Units received", value: String(params.qty), accent: true },
+        { label: "Batch", value: params.batch, mono: true },
+        { label: "Received by", value: params.receivedBy },
+        { label: "Completed", value: params.deliveredAt },
+      ], "Delivered"),
+      ctaLabel: "Open receiving queue",
+      ctaHref: params.consoleUrl,
+      ctaNote: "The request is now recorded as delivered in the Pulse receiving queue.",
+      footerNote: "This delivery confirmation was recorded by the pharmacy in Pulse.",
+      reason: `${params.pharmacyName} confirmed receipt of a Pulse dispatch.`,
+    }),
+    text: [
+      `Delivery completed — ${params.pharmacyName}`,
+      "",
+      `${params.qty} units of ${params.item} were received.`,
+      `Batch: ${params.batch}`,
+      `Received by: ${params.receivedBy}`,
+      `Completed: ${params.deliveredAt}`,
+      "",
+      `Open receiving queue: ${params.consoleUrl}`,
+      "",
+      "— Pulse · Pharmacy intelligence, delivered",
+    ].join("\n"),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Low stock alert — one consolidated email per trigger                 */
 /* ------------------------------------------------------------------ */

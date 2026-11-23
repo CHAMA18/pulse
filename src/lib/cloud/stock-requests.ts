@@ -42,6 +42,8 @@ export type NetworkStockRequest = {
   dispatchedAt?: number;
   dispatchedBy?: string;
   decisionNote?: string;
+  comments?: StockRequestComment[];
+  returnedAt?: number;
   rejectedAt?: number;
   retailUnitPrice?: number;
   totalRetail?: number;
@@ -53,10 +55,114 @@ export type NetworkStockRequest = {
   alreadyDelivered?: boolean;
 };
 
+export type StockRequestAttachment = {
+  path: string;
+  name: string;
+  contentType: string;
+  size: number;
+};
+
+export type StockRequestComment = {
+  id: string;
+  side: "pulse" | "pharmacy";
+  author: string;
+  comment: string;
+  attachments: StockRequestAttachment[];
+  createdAt: number;
+};
+
+const STOCK_REQUEST_FILE_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "text/plain",
+  "text/csv",
+  "application/rtf",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+
+export function validateStockRequestFiles(files: File[]): string | null {
+  if (files.length > 5) return "Attach up to 5 files to each stock request.";
+  for (const file of files) {
+    if (!STOCK_REQUEST_FILE_TYPES.has(file.type.toLowerCase())) {
+      return `${file.name} must be a PDF, Word document, or image.`;
+    }
+    if (file.size < 1 || file.size > 10 * 1024 * 1024) {
+      return `${file.name} must be 10 MB or smaller.`;
+    }
+  }
+  return null;
+}
+
+export async function uploadStockRequestFiles(docId: string, files: File[]): Promise<StockRequestAttachment[]> {
+  if (!files.length) return [];
+  const validationError = validateStockRequestFiles(files);
+  if (validationError) throw new Error(validationError);
+  const { getFirebaseAuth, getFirebaseStorage } = await import("@/lib/firebase");
+  const user = getFirebaseAuth()?.currentUser;
+  const storage = getFirebaseStorage();
+  if (!user || !storage) throw new Error("Sign in before uploading request attachments.");
+  const { ref, uploadBytes } = await import("firebase/storage");
+  return Promise.all(files.map(async (file) => {
+    const contentType = file.type.toLowerCase();
+    const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "attachment";
+    const path = `stock-request-attachments/${docId}/${user.uid}/${crypto.randomUUID()}-${safeName}`;
+    await uploadBytes(ref(storage, path), file, { contentType });
+    return { path, name: file.name.slice(0, 180), contentType, size: file.size };
+  }));
+}
+
+export async function openStockRequestAttachment(attachment: StockRequestAttachment): Promise<void> {
+  const storage = (await import("@/lib/firebase")).getFirebaseStorage();
+  if (!storage) throw new Error("File storage is not available.");
+  const { getBlob, ref } = await import("firebase/storage");
+  const blob = await getBlob(ref(storage, attachment.path));
+  const url = URL.createObjectURL(blob);
+  const opened = window.open(url, "_blank", "noopener,noreferrer");
+  if (!opened) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = attachment.name;
+    link.click();
+  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export async function respondToStockRequest(input: {
+  docId: string;
+  comment: string;
+  files: File[];
+  returnToPharmacy?: boolean;
+}): Promise<NetworkStockRequest> {
+  const attachments = await uploadStockRequestFiles(input.docId, input.files);
+  const functions = functionsOrThrow();
+  const callable = httpsCallable<{
+    docId: string;
+    comment: string;
+    attachments: StockRequestAttachment[];
+    returnToPharmacy?: boolean;
+  }, { request: NetworkStockRequest }>(functions, "respondToStockRequest");
+  const result = await callable({
+    docId: input.docId,
+    comment: input.comment,
+    attachments,
+    ...(input.returnToPharmacy ? { returnToPharmacy: true } : {}),
+  });
+  return result.data.request;
+}
+
 export type StockRequestSyncResult = {
   created: number;
   skipped: number;
   emailed: number;
+  requestDocs: { docId: string; requestId: string; syncId: string }[];
   emailError?: string;
 };
 
@@ -64,6 +170,7 @@ export type StockRequestSubmitResult = StockRequestSyncResult & {
   queued: boolean;
   /** Set when the local row was saved but the network rejected the send. */
   error?: string;
+  attachmentError?: string;
 };
 
 function functionsOrThrow() {
@@ -123,7 +230,7 @@ export async function syncPharmacyStockRequests(
     functions,
     "createPharmacyStockRequests"
   );
-  const total: StockRequestSyncResult = { created: 0, skipped: 0, emailed: 0 };
+  const total: StockRequestSyncResult = { created: 0, skipped: 0, emailed: 0, requestDocs: [] };
   for (let offset = 0; offset < requests.length; offset += 50) {
     const chunk = requests.slice(offset, offset + 50);
     if (chunk.length === 0) continue;
@@ -131,6 +238,7 @@ export async function syncPharmacyStockRequests(
     total.created += result.data.created;
     total.skipped += result.data.skipped;
     total.emailed += result.data.emailed;
+    total.requestDocs.push(...(result.data.requestDocs ?? []));
     if (result.data.emailError) total.emailError = result.data.emailError;
   }
   return total;
@@ -142,14 +250,40 @@ export async function syncPharmacyStockRequests(
  * idempotent, so a reconnect never duplicates a request.
  */
 export async function submitPharmacyStockRequests(
-  requests: StockRequest[]
+  requests: StockRequest[],
+  filesBySyncId: Record<string, File[]> = {}
 ): Promise<StockRequestSubmitResult> {
   if (requests.length === 0) {
-    return { created: 0, skipped: 0, emailed: 0, queued: false };
+    return { created: 0, skipped: 0, emailed: 0, requestDocs: [], queued: false };
   }
   try {
     const result = await syncPharmacyStockRequests(requests);
-    return { ...result, queued: false };
+    let attachmentError: string | undefined;
+    const filesByRequest = new Map(
+      result.requestDocs.map((entry) => [entry.syncId, filesBySyncId[entry.syncId] ?? []])
+    );
+    const withFiles = result.requestDocs.filter((entry) => (filesByRequest.get(entry.syncId)?.length ?? 0) > 0);
+    if (withFiles.length > 0) {
+      if (result.requestDocs.length === 0) {
+        attachmentError = "The request reached Pulse, but the server needs an update before it can attach files.";
+      } else {
+        const outcomes = await Promise.allSettled(withFiles.map((entry) =>
+          respondToStockRequest({
+            docId: entry.docId,
+            comment: "",
+            files: filesByRequest.get(entry.syncId) ?? [],
+          })
+        ));
+        const failures = outcomes.filter((outcome) => outcome.status === "rejected");
+        if (failures.length > 0) {
+          const detail = failures[0]?.status === "rejected" && failures[0].reason instanceof Error
+            ? failures[0].reason.message
+            : "Try again from the request conversation.";
+          attachmentError = `${failures.length} request${failures.length === 1 ? "" : "s"} sent, but some attachments could not be uploaded. ${detail}`;
+        }
+      }
+    }
+    return { ...result, queued: false, ...(attachmentError ? { attachmentError } : {}) };
   } catch (error) {
     const cloudError = toCloudError(error, "The stock request could not be sent to Pulse.");
     if (isTransient(cloudError)) {
@@ -159,8 +293,12 @@ export async function submitPharmacyStockRequests(
         created: 0,
         skipped: 0,
         emailed: 0,
+        requestDocs: [],
         queued: true,
         emailError: cloudError.message,
+        ...(Object.values(filesBySyncId).some((files) => files.length) ? {
+          attachmentError: "The request was saved for sending, but attachments require a connection. Once it syncs, add them from the request conversation.",
+        } : {}),
       };
     }
     throw cloudError;

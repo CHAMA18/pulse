@@ -19,7 +19,6 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
-  type User,
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -35,58 +34,20 @@ import {
   type InvitationRecord,
 } from "@/lib/cloud/invitations";
 import { cn } from "@/lib/utils";
-import { routeForPortal, setStoredPortal, type Portal } from "@/lib/portal";
+import { routeForPortal, setStoredPortal } from "@/lib/portal";
 import {
   authErrorCode,
   describeAuthError,
   ensurePulseAdminProfile,
   getFirebaseAuth,
   googleProvider,
-  resolveAccountAccess,
+  resolvePortalAccess,
   trackEvent,
 } from "@/lib/firebase";
+import { isPulseAdminEmail } from "@/lib/account-policy";
+import { portalAccessError, portalDisplayName } from "@/lib/portal-access";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-type LoginPortalResult = { portal: Portal } | { error: string };
-
-/**
- * Selects the console for a signed-in account. The invitation is the explicit
- * authority; otherwise the stored account type wins, with the email policy
- * filling the gap for a first-time Pulse admin (for example, Google sign-in).
- */
-async function resolveLoginPortal(
-  user: User,
-  inviteMatch: InvitationRecord | null
-): Promise<LoginPortalResult> {
-  if (inviteMatch) {
-    try {
-      await acceptInvitation(inviteMatch.id);
-    } catch {
-      /* already accepted — the account still signs in to the right portal */
-    }
-    return { portal: inviteMatch.portal };
-  }
-
-  const access = await resolveAccountAccess(user);
-  if (!access) {
-    return {
-      error:
-        "No Pulse account is linked to this email. Create an account below or ask your pharmacy owner for an invitation.",
-    };
-  }
-  if (access.revoked) {
-    return {
-      error: "This account's access has been revoked. Contact your administrator.",
-    };
-  }
-  if (access.source === "email") {
-    // A first-time admin signing in with Google (or an account whose profile
-    // predates this flow) gets the canonical console profile created now.
-    await ensurePulseAdminProfile(user);
-  }
-  return { portal: access.portal };
-}
 
 const container = {
   hidden: {},
@@ -256,36 +217,44 @@ export function LoginCard({
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const user = credential.user;
 
-      // Existing account opening an invitation link: claim the seat and land
-      // in the portal the invitation belongs to.
       const inviteMatch =
         invitation && user.email?.trim().toLowerCase() === invitation.email.trim().toLowerCase()
           ? invitation
           : null;
-      const resolved = await resolveLoginPortal(user, inviteMatch);
-      if ("error" in resolved) {
+      if (inviteMatch) {
+        try {
+          await acceptInvitation(inviteMatch.id);
+        } catch {
+          /* If acceptance fails, only an already-authoritative profile may grant access. */
+        }
+      }
+
+      let access = await resolvePortalAccess(user);
+      if (access.status === "unassigned" && isPulseAdminEmail(user.email)) {
+        await ensurePulseAdminProfile(user);
+        access = await resolvePortalAccess(user);
+      }
+      if (access.status !== "allowed") {
         await signOut(auth);
         setStatus("idle");
-        void trackEvent("login_failure", { method: "password", reason: "no_portal_access" });
-        setFormError(resolved.error);
+        void trackEvent("login_failure", {
+          method: "password",
+          reason: access.status,
+        });
+        setFormError(portalAccessError(access.status));
         return;
       }
-      const effectivePortal = resolved.portal;
 
+      const landingPortal = access.portal;
       setStatus("success");
-      // The account and invitation decide which console the session opens.
-      setStoredPortal(effectivePortal);
-      void trackEvent("login", { method: "password", status: "success", portal: effectivePortal });
+      setStoredPortal(landingPortal);
+      void trackEvent("login", { method: "password", status: "success", portal: landingPortal });
       const firstName = (user.displayName ?? user.email?.split("@")[0] ?? "there").split(" ")[0];
       toast({
         title: `Welcome back, ${firstName} 👋`,
-        description:
-          effectivePortal === "pharmacy"
-            ? "Signing you in to the Pharmacy portal…"
-            : "Signing you in to Pulse…",
+        description: `Signing you in to the ${portalDisplayName(landingPortal)}…`,
       });
-      // Hand the fresh session to the console for this portal.
-      window.setTimeout(() => router.push(routeForPortal(effectivePortal)), 900);
+      window.setTimeout(() => router.push(routeForPortal(landingPortal)), 900);
     } catch (err) {
       setStatus("idle");
       void trackEvent("login_failure", { method: "password", reason: authErrorCode(err) });
@@ -314,27 +283,43 @@ export function LoginCard({
         invitation && user.email?.trim().toLowerCase() === invitation.email.trim().toLowerCase()
           ? invitation
           : null;
-      const resolved = await resolveLoginPortal(user, inviteMatch);
-      if ("error" in resolved) {
+      if (inviteMatch) {
+        try {
+          await acceptInvitation(inviteMatch.id);
+        } catch {
+          /* If acceptance fails, only an already-authoritative profile may grant access. */
+        }
+      }
+
+      let access = await resolvePortalAccess(user);
+      if (access.status === "unassigned" && isPulseAdminEmail(user.email)) {
+        await ensurePulseAdminProfile(user);
+        access = await resolvePortalAccess(user);
+      }
+      if (access.status !== "allowed") {
         await signOut(auth);
-        void trackEvent("login_failure", { method: "google", reason: "no_portal_access" });
+        void trackEvent("login_failure", {
+          method: "google",
+          reason: access.status,
+        });
         toast({
-          title: "No portal access",
-          description: resolved.error,
+          title: "Portal access unavailable",
+          description: portalAccessError(access.status),
           variant: "destructive",
         });
         return;
       }
-      const effectivePortal = resolved.portal;
 
-      void trackEvent("login", { method: "google", status: "success", portal: effectivePortal });
-      setStoredPortal(effectivePortal);
+      const landingPortal = access.portal;
+      void trackEvent("login", { method: "google", status: "success", portal: landingPortal });
+      setStoredPortal(landingPortal);
       toast({
         title: "Signed in with Google",
-        description: [user.displayName, user.email].filter(Boolean).join(" · ") || "Welcome to Pulse",
+        description:
+          [user.displayName, user.email].filter(Boolean).join(" · ") ||
+          `Welcome to the ${portalDisplayName(landingPortal)}`,
       });
-      // Hand the fresh session to the console for this portal.
-      window.setTimeout(() => router.push(routeForPortal(effectivePortal)), 900);
+      window.setTimeout(() => router.push(routeForPortal(landingPortal)), 900);
     } catch (err) {
       const code = authErrorCode(err);
       void trackEvent("login_failure", { method: "google", reason: code });

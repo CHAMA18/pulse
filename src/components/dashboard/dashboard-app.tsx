@@ -81,12 +81,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import {
-  getFirebaseAuth,
-  getFirebaseDb,
-  getInvitedAccountRole,
-  trackEvent,
-} from "@/lib/firebase";
+import { getFirebaseAuth, getFirebaseDb, trackEvent } from "@/lib/firebase";
 import {
   ALL_PULSE_PAGES,
   canOpenPulsePage,
@@ -206,7 +201,7 @@ const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   audit: "Audit Logs",
   users: "User Management",
   pharmacies: "Pulse Pharmacies",
-  requests: "Stock Requests Received",
+  requests: "Stock Requests",
   reconciliation: "Stock Reconciliation",
   sales: "Sales Report",
   transactions: "POS Transactions",
@@ -223,7 +218,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
     section: "Pulse",
     items: [
       { label: "Pulse Pharmacies", page: "pharmacies", icon: LayoutGrid },
-      { label: "Stock Requests Received", page: "requests", icon: Inbox },
+      { label: "Stock Requests", page: "requests", icon: Inbox },
       { label: "Stock Reconciliation", page: "reconciliation", icon: ClipboardCheck },
       { label: "Sales Report", page: "sales", icon: TrendingUp },
       { label: "POS Transactions", page: "transactions", icon: Receipt },
@@ -765,12 +760,9 @@ export function DashboardApp() {
           }
           role = normalizePulseRole(profile?.role ?? profile?.role_label);
         } catch {
-          /* rules or offline — the local invitation fallback below still applies */
+          /* unreadable profile — fall back to the least-privilege console role */
         }
       }
-      role ??= normalizePulseRole(
-        current ? getInvitedAccountRole(current.uid, email) : null
-      );
 
       if (!active) return;
       setUser({

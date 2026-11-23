@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function DashboardPage() {
   return (
-    <AuthGuard>
+    <AuthGuard portal="pulse">
       <DashboardApp />
     </AuthGuard>
   );

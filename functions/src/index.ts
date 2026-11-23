@@ -33,7 +33,9 @@ import {
   pharmacyWelcomeEmail,
   pulseAdminInviteEmail,
   receiptEmail,
+  stockDeliveryCompletedEmail,
   stockRequestEmail,
+  stockRequestFulfilledEmail,
   teamInviteEmail,
   type EmailContent,
   type ReceiptEmailLine,
@@ -122,6 +124,48 @@ type PharmacyActor = {
   pharmacyName: string;
 };
 
+const PHARMACY_ROLES = new Set(["owner", "manager", "pharmacist", "technician", "cashier"]);
+
+const PHARMACY_ROLE_LABEL: Record<string, string> = {
+  owner: "Owner",
+  manager: "Manager",
+  pharmacist: "Pharmacist",
+  technician: "Technician",
+  cashier: "Cashier",
+};
+
+function pharmacyRole(value: unknown): string {
+  const role = String(value ?? "").trim().toLowerCase();
+  if (role === "pharmacy manager") return "manager";
+  if (role === "team member") return "cashier";
+  return role;
+}
+
+async function ownerIdsByPharmacyName(
+  profiles?: admin.firestore.QuerySnapshot
+): Promise<Map<string, string>> {
+  const snap =
+    profiles ?? (await db.collection("User").where("account_type", "==", "Pharmacy").get());
+  const owners = new Map<string, string>();
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    const name = String(data.pharmacy_name ?? "").trim().toLowerCase();
+    if (name && pharmacyRole(data.role ?? data.role_label) === "owner") owners.set(name, doc.id);
+  }
+  return owners;
+}
+
+function resolvePharmacyId(
+  data: admin.firestore.DocumentData,
+  uid: string,
+  owners: Map<string, string>
+): string {
+  const stored = String(data.pharmacy_id ?? "").trim();
+  if (stored) return stored;
+  const name = String(data.pharmacy_name ?? "").trim().toLowerCase();
+  return owners.get(name) ?? uid;
+}
+
 /** Reads the caller's active Pulse profile, or refuses the call. */
 async function requirePulseActor(request: { auth?: { uid: string } }): Promise<PulseActor> {
   if (!request.auth) {
@@ -158,22 +202,14 @@ async function requirePharmacyActor(request: { auth?: { uid: string } }): Promis
 
   let pharmacyId = String(data.pharmacy_id ?? "").trim();
   if (!pharmacyId) {
-    const sameName = await db.collection("User").where("pharmacy_name", "==", pharmacyName).get();
-    const owner = sameName.docs.find((candidate) => {
-      const profile = candidate.data();
-      return profile.account_type === "Pharmacy" &&
-        String(profile.role ?? profile.role_label ?? "").trim().toLowerCase() === "owner";
-    });
-    // Canonical fallback is the owner's uid — never a name slug, which
-    // collides across pharmacies that share a trading name.
-    pharmacyId = owner?.id ?? request.auth.uid;
+    pharmacyId = resolvePharmacyId(data, request.auth.uid, await ownerIdsByPharmacyName());
   }
 
   return {
     uid: request.auth.uid,
     email: String(data.email ?? "").trim().toLowerCase(),
     name: String(data.display_name ?? data.name ?? data.email ?? "Pharmacy staff"),
-    role: String(data.role ?? data.role_label ?? "").trim().toLowerCase(),
+    role: pharmacyRole(data.role ?? data.role_label),
     pharmacyId,
     pharmacyName,
   };
@@ -187,6 +223,38 @@ async function requireConsoleManager(request: { auth?: { uid: string } }): Promi
   return actor;
 }
 
+/** Ensures an eligible Pulse email has a server-owned profile without changing an existing role. */
+export const ensurePulseAdminProfile = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to create a Pulse profile.");
+  const email = assertEmail(request.auth.token.email, "email");
+  const allowed = email === "chungu424@gmail.com" || email.endsWith("@duniyahealthcare.com");
+  if (!allowed) throw new HttpsError("permission-denied", "This email isn't eligible for a Pulse account.");
+  const ref = db.collection("User").doc(request.auth.uid);
+  const existing = await ref.get();
+  const data = existing.data();
+  if (existing.exists && data?.account_type !== "Pulse") {
+    throw new HttpsError("failed-precondition", "This account is already assigned to another portal.");
+  }
+  if (existing.exists) return { ok: true };
+  const emailProfile = await db.collection("User").where("email", "==", email).get();
+  if (emailProfile.docs.some((profile) => profile.id !== request.auth!.uid)) {
+    throw new HttpsError("failed-precondition", "This email is already linked to another portal account.");
+  }
+  const name = String(request.data?.name ?? request.auth.token.name ?? "").trim().slice(0, 120) || email.split("@")[0];
+  await ref.create({
+    uid: request.auth.uid,
+    email,
+    display_name: name,
+    role: "admin",
+    role_label: "Admin",
+    account_type: "Pulse",
+    approved_by_duniya: true,
+    access_revoked: false,
+    created_time: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { ok: true };
+});
+
 /** Deliver one email through Resend and archive it for the portals' outbox views. */
 async function deliver(
   fn: string,
@@ -194,6 +262,10 @@ async function deliver(
   content: EmailContent,
   detail: string
 ): Promise<string> {
+  if (process.env.FUNCTIONS_EMULATOR === "true") {
+    throw new Error("Email delivery is disabled in the local Functions emulator.");
+  }
+
   const id = `MSG-${Date.now().toString(36).toUpperCase()}`;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -345,7 +417,7 @@ export const sendTeamInvite = onCall({ secrets: [resendApiKey] }, async (request
 
   // Only owners and managers may invite, only into known roles, and only an
   // owner may create another owner — regardless of what the client sends.
-  const actorRole = actor.role === "pharmacy manager" ? "manager" : actor.role;
+  const actorRole = pharmacyRole(actor.role);
   if (actorRole !== "owner" && actorRole !== "manager") {
     throw new HttpsError("permission-denied", "Only Owners and Managers can invite team members.");
   }
@@ -354,8 +426,7 @@ export const sendTeamInvite = onCall({ secrets: [resendApiKey] }, async (request
   const inviteeName = String(request.data?.inviteeName ?? "").trim();
   const inviteeEmail = assertEmail(request.data?.inviteeEmail, "inviteeEmail");
   const role = requireString(request.data?.role, "role");
-  const PHARMACY_ROLES = new Set(["owner", "manager", "pharmacist", "technician", "cashier"]);
-  const normalizedRole = role.trim().toLowerCase() === "team member" ? "cashier" : role.trim().toLowerCase();
+  const normalizedRole = pharmacyRole(role);
   if (!PHARMACY_ROLES.has(normalizedRole)) {
     throw new HttpsError("invalid-argument", "Unknown pharmacy role.");
   }
@@ -548,6 +619,146 @@ export const listPulseConsoleUsers = onCall(async (request) => {
   if (repairs > 0) await batch.commit();
 
   return { users };
+});
+
+/** Complete application directory for Pulse Owners and Admins. */
+export const listApplicationUsers = onCall(async (request) => {
+  await requireConsoleManager(request);
+  const profiles = await db.collection("User").get();
+  const users = await Promise.all(profiles.docs.map(async (doc) => {
+    const data = doc.data();
+    const rawAccountType = String(data.account_type ?? "").trim();
+    const accountType = rawAccountType === "Pulse" || rawAccountType === "Pharmacy"
+      ? rawAccountType
+      : "Other";
+    const rawRole = String(data.role ?? data.role_label ?? "").trim();
+    const pulseUserRole = accountType === "Pulse" ? pulseRole(rawRole) : undefined;
+    const pharmacyUserRole = accountType === "Pharmacy" ? pharmacyRole(rawRole) : "";
+    const roleLabel = pulseUserRole
+      ? PULSE_ROLE_LABEL[pulseUserRole]
+      : PHARMACY_ROLE_LABEL[pharmacyUserRole] ?? (rawRole || "User");
+    let authDisabled = false;
+    try {
+      authDisabled = (await admin.auth().getUser(doc.id)).disabled;
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code === "auth/user-not-found") authDisabled = true;
+      else throw error;
+    }
+    const status = data.status === "removed"
+      ? "removed"
+      : data.access_revoked === true || data.status === "suspended" || authDisabled
+        ? "suspended"
+        : "active";
+    return {
+      uid: doc.id,
+      name: String(data.display_name ?? data.name ?? data.email ?? "Application user"),
+      email: String(data.email ?? ""),
+      accountType,
+      role: pulseUserRole ?? (pharmacyUserRole ? "pharmacy" : "user"),
+      roleLabel,
+      status,
+      source: "profile" as const,
+    };
+  }));
+  const inviteSnap = await db.collection("Invitation").where("status", "==", "pending").get();
+  const now = Date.now();
+  const activeEmails = new Set(users.map((user) => user.email.trim().toLowerCase()).filter(Boolean));
+  const invitations = inviteSnap.docs.flatMap((doc) => {
+    const data = doc.data();
+    const email = String(data.email ?? "").trim().toLowerCase();
+    const expiry = data.expiresAt as admin.firestore.Timestamp | undefined;
+    if (!email || activeEmails.has(email) || (expiry?.toMillis && expiry.toMillis() <= now)) return [];
+    const accountType = data.kind === "console" || data.portal === "pulse" ? "Pulse" : "Pharmacy";
+    const rawRole = String(data.role ?? "").trim();
+    const pulseUserRole = accountType === "Pulse" ? pulseRole(rawRole) : undefined;
+    const teamRole = accountType === "Pharmacy" ? pharmacyRole(rawRole) : "";
+    return [{
+      uid: `invite:${doc.id}`,
+      name: String(data.name ?? email.split("@")[0]),
+      email,
+      accountType,
+      role: pulseUserRole ?? (teamRole ? "pharmacy" : "user"),
+      roleLabel: pulseUserRole ? PULSE_ROLE_LABEL[pulseUserRole] : PHARMACY_ROLE_LABEL[teamRole] ?? (rawRole || "User"),
+      status: "invited" as const,
+      source: "invitation" as const,
+    }];
+  });
+  return { users: [...users, ...invitations] };
+});
+
+/** Pulse Owners and Admins can suspend, restore, or delete individual users. */
+export const manageApplicationUser = onCall(async (request) => {
+  const actor = await requireConsoleManager(request);
+  const uid = requireString(request.data?.uid, "uid");
+  const action = String(request.data?.action ?? "").trim().toLowerCase();
+  if (!["suspend", "reactivate", "delete"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Choose suspend, reactivate, or delete.");
+  }
+  if (uid === actor.uid) {
+    throw new HttpsError("failed-precondition", "You can't change or delete your own account.");
+  }
+
+  const targetRef = db.collection("User").doc(uid);
+  const target = await targetRef.get();
+  const profile = target.data();
+  if (!target.exists || !profile) {
+    throw new HttpsError("not-found", "That application user no longer exists.");
+  }
+
+  if (profile.account_type === "Pulse" && pulseRole(profile.role ?? profile.role_label) === "owner" && action !== "reactivate") {
+    const others = await db.collection("User").where("account_type", "==", "Pulse").get();
+    const otherActiveOwners = others.docs.filter((doc) => {
+      if (doc.id === uid) return false;
+      const data = doc.data();
+      return data.access_revoked !== true && data.status !== "suspended" &&
+        pulseRole(data.role ?? data.role_label) === "owner";
+    });
+    if (otherActiveOwners.length === 0) {
+      throw new HttpsError("failed-precondition", "The network needs one active Owner. Promote another Owner first.");
+    }
+  }
+
+  if (action === "suspend") {
+    await admin.auth().updateUser(uid, { disabled: true });
+    await admin.auth().revokeRefreshTokens(uid);
+    await targetRef.update({
+      access_revoked: true,
+      status: "suspended",
+      status_updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      status_updated_by: actor.uid,
+    });
+  } else if (action === "reactivate") {
+    if (profile.status === "removed") {
+      throw new HttpsError("failed-precondition", "A removed account can't be reactivated.");
+    }
+    await admin.auth().updateUser(uid, { disabled: false });
+    await targetRef.update({
+      access_revoked: false,
+      status: "active",
+      status_updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      status_updated_by: actor.uid,
+    });
+  } else {
+    await admin.auth().deleteUser(uid).catch((error: unknown) => {
+      if ((error as { code?: string } | null)?.code !== "auth/user-not-found") throw error;
+    });
+    await targetRef.delete();
+  }
+
+  const eventId = randomUUID();
+  await db.collection("AuditLog").doc(`${actor.uid}_${eventId}`).set({
+    eventId,
+    title: action === "delete" ? "User deleted" : action === "suspend" ? "User suspended" : "User reactivated",
+    detail: `${String(profile.display_name ?? profile.name ?? profile.email ?? uid)} (${String(profile.email ?? uid)})`,
+    action: "Update",
+    ts: Date.now(),
+    actor: actor.name,
+    email: actor.email,
+    scope: "pulse",
+    portal: "pulse",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { uid, action };
 });
 
 /** Counts the other active Owners while a transaction holds the target doc. */
@@ -770,6 +981,7 @@ function storedAuditAction(value: unknown): StoredAuditAction | null {
 async function resolveAuditActor(request: {
   auth?: { uid: string; token?: { email?: string } };
 }): Promise<{
+  uid: string;
   name: string;
   email: string;
   scope: string;
@@ -793,6 +1005,7 @@ async function resolveAuditActor(request: {
     .trim()
     .toLowerCase();
   return {
+    uid: request.auth.uid,
     name: String(data?.display_name ?? data?.name ?? email.split("@")[0] ?? "Pulse user"),
     email,
     scope:
@@ -807,9 +1020,11 @@ async function resolveAuditActor(request: {
 export const recordAuditEvents = onCall(async (request) => {
   const actor = await resolveAuditActor(request);
   const raw: unknown[] = Array.isArray(request.data?.events) ? request.data.events : [];
+  if (raw.length > 100) {
+    throw new HttpsError("invalid-argument", "Send no more than 100 audit events at a time.");
+  }
   const now = Date.now();
   const events = raw
-    .slice(0, 100)
     .map((entry) => {
       if (!entry || typeof entry !== "object") return null;
       const data = entry as Record<string, unknown>;
@@ -831,11 +1046,19 @@ export const recordAuditEvents = onCall(async (request) => {
     })
     .filter((event): event is NonNullable<typeof event> => event !== null);
 
+  // Never report success after silently dropping another user's events. Older
+  // clients may share a local queue between accounts; rejecting the batch lets
+  // them retain it until the updated client can split it by signed-in user.
+  if (events.length !== raw.length) {
+    throw new HttpsError("failed-precondition", "Some audit events belong to a different account or are invalid.");
+  }
+
   if (events.length === 0) return { recorded: 0 };
 
   const batch = db.batch();
   for (const event of events) {
-    batch.set(db.collection("AuditLog").doc(event.id), {
+    batch.set(db.collection("AuditLog").doc(`${actor.uid}_${event.id}`), {
+      eventId: event.id,
       title: event.title,
       detail: event.detail,
       action: event.action,
@@ -865,6 +1088,7 @@ export const listAuditLogs = onCall(async (request) => {
   }> = [];
 
   let cursor: admin.firestore.QueryDocumentSnapshot | null = null;
+  const seenIds = new Set<string>();
   for (let page = 0; page < 100; page += 1) {
     let query: admin.firestore.Query = db
       .collection("AuditLog")
@@ -874,15 +1098,20 @@ export const listAuditLogs = onCall(async (request) => {
     const snap = await query.get();
     for (const doc of snap.docs) {
       const data = doc.data();
+      const eventId = String(data.eventId ?? doc.id);
+      const email = String(data.email ?? "").trim().toLowerCase();
+      const uniqueId = `${email}:${eventId}`;
+      if (seenIds.has(uniqueId)) continue;
+      seenIds.add(uniqueId);
       const created = data.createdAt as admin.firestore.Timestamp | undefined;
       const ts = Number(data.ts);
       events.push({
-        id: doc.id,
+        id: eventId,
         title: String(data.title ?? "Activity"),
         action: storedAuditAction(data.action) ?? "Activity",
         actor: String(data.actor ?? "Pulse user"),
         detail: String(data.detail ?? "Pulse workspace"),
-        email: String(data.email ?? "").trim().toLowerCase(),
+        email,
         ts: Number.isFinite(ts) ? ts : created?.toMillis?.() ?? 0,
       });
     }
@@ -993,6 +1222,251 @@ export const deletePharmacyAccount = onCall(async (request) => {
     deletedInvitations,
     authErrors,
   };
+});
+
+/* ------------------------------------------------------------------ */
+/* Pharmacy directory + approval (Pulse Owners and Admins)             */
+/* ------------------------------------------------------------------ */
+
+export const listPulsePharmacies = onCall(async (request) => {
+  await requirePulseActor(request);
+  const profiles = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+  const owners = await ownerIdsByPharmacyName(profiles);
+  type Row = {
+    uid: string;
+    id: string;
+    name: string;
+    email: string | null;
+    address: string;
+    approved: boolean;
+    status: "active" | "pending" | "rejected" | "removed";
+    previousStatus: "active" | "pending" | "rejected" | null;
+    registeredAt: number | null;
+    removedAt: number | null;
+  };
+  const pharmacies: Row[] = [];
+  for (const doc of profiles.docs) {
+    const data = doc.data();
+    if (pharmacyRole(data.role ?? data.role_label) !== "owner") continue;
+    const name = String(data.pharmacy_name ?? "").trim();
+    if (!name) continue;
+    const listed = String(data.listing_status ?? "").trim().toLowerCase();
+    const removed = data.listing_removed === true || data.access_revoked === true;
+    const previousStatus =
+      listed === "pending" || listed === "rejected" || listed === "active"
+        ? listed
+        : data.approved_by_duniya === true
+          ? "active"
+          : "pending";
+    const status: Row["status"] = removed
+      ? "removed"
+      : listed === "pending" || listed === "rejected" || listed === "active"
+        ? listed
+        : data.approved_by_duniya === true
+          ? "active"
+          : "pending";
+    const created = data.created_time as admin.firestore.Timestamp | undefined;
+    const removedAt = data.removed_at as admin.firestore.Timestamp | undefined;
+    pharmacies.push({
+      uid: doc.id,
+      id: resolvePharmacyId(data, doc.id, owners),
+      name,
+      email: String(data.email ?? "").trim().toLowerCase() || null,
+      address: String(data.address ?? "").trim(),
+      approved: status === "removed" ? previousStatus === "active" : status === "active",
+      status,
+      previousStatus: status === "removed" ? previousStatus : null,
+      registeredAt: created?.toMillis?.() ?? null,
+      removedAt: removed ? removedAt?.toMillis?.() ?? null : null,
+    });
+  }
+  return { pharmacies: pharmacies.sort((a, b) => a.name.localeCompare(b.name)) };
+});
+
+export const setPharmacyApproval = onCall(async (request) => {
+  const actor = await requireConsoleManager(request);
+  const uid = requireString(request.data?.uid, "uid");
+  const status = String(request.data?.status ?? "pending").trim().toLowerCase();
+  if (!["active", "pending", "rejected"].includes(status)) {
+    throw new HttpsError("invalid-argument", "Unknown pharmacy approval status.");
+  }
+  const approved = status === "active";
+  const profiles = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+  const owners = await ownerIdsByPharmacyName(profiles);
+  const target = profiles.docs.find((doc) => doc.id === uid);
+  if (!target) throw new HttpsError("not-found", "That pharmacy is not on the Pulse network.");
+  const pharmacyId = resolvePharmacyId(target.data(), target.id, owners);
+  const batch = db.batch();
+  let updated = 0;
+  for (const doc of profiles.docs) {
+    if (doc.data().access_revoked === true || doc.data().listing_removed === true) continue;
+    if (resolvePharmacyId(doc.data(), doc.id, owners) !== pharmacyId) continue;
+    batch.update(doc.ref, {
+      approved_by_duniya: approved,
+      listing_status: status,
+      approval_updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      approval_updated_by: actor.uid,
+    });
+    updated += 1;
+  }
+  await batch.commit();
+  return { uid, pharmacyId, approved, status, updated };
+});
+
+/* ------------------------------------------------------------------ */
+/* Pharmacy team management (pharmacy Owners and Managers)             */
+/* ------------------------------------------------------------------ */
+
+export const updatePharmacyTeamMember = onCall(async (request) => {
+  const actor = await requirePharmacyActor(request);
+  const actorRole = pharmacyRole(actor.role);
+  if (actorRole !== "owner" && actorRole !== "manager") {
+    throw new HttpsError("permission-denied", "Only Owners and Managers can manage team access.");
+  }
+  const email = assertEmail(request.data?.email, "email");
+  const action = String(request.data?.action ?? "").trim().toLowerCase();
+  if (!["role", "suspend", "reactivate", "remove"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Unknown team action.");
+  }
+  const nextRole = action === "role" ? pharmacyRole(request.data?.role) : "";
+  if (action === "role" && !PHARMACY_ROLES.has(nextRole)) {
+    throw new HttpsError("invalid-argument", "Unknown pharmacy role.");
+  }
+  if (nextRole === "owner" && actorRole !== "owner") {
+    throw new HttpsError("permission-denied", "Only an Owner can hand out the Owner role.");
+  }
+  const matches = await db.collection("User").where("email", "==", email).get();
+  const allProfiles = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+  const owners = await ownerIdsByPharmacyName(allProfiles);
+  const targets = matches.docs.filter((doc) => {
+    const data = doc.data();
+    return data.account_type === "Pharmacy" &&
+      resolvePharmacyId(data, doc.id, owners) === actor.pharmacyId;
+  });
+  if (targets.length === 0) {
+    throw new HttpsError("not-found", "That teammate isn't part of your pharmacy.");
+  }
+  if (targets.some((doc) => doc.id === actor.uid)) {
+    throw new HttpsError("failed-precondition", "You can't change your own access.");
+  }
+  const target = targets[0];
+  const targetData = target.data();
+  const currentRole = pharmacyRole(targetData.role ?? targetData.role_label);
+  if (currentRole === "owner") {
+    throw new HttpsError("failed-precondition", "The account owner can't be changed here.");
+  }
+  if (actorRole === "manager" && currentRole === "manager") {
+    throw new HttpsError("permission-denied", "Only an Owner can change another Manager.");
+  }
+  const patch: Record<string, unknown> = {
+    updated_at: admin.firestore.FieldValue.serverTimestamp(),
+    updated_by: actor.uid,
+  };
+  if (action === "role") {
+    patch.role = nextRole;
+    patch.role_label = PHARMACY_ROLE_LABEL[nextRole] ?? nextRole;
+  }
+  if (action === "suspend") patch.access_revoked = true;
+  if (action === "reactivate") patch.access_revoked = false;
+  if (action === "remove") {
+    patch.access_revoked = true;
+    patch.status = "removed";
+  }
+  const batch = db.batch();
+  for (const doc of targets) batch.update(doc.ref, patch);
+  await batch.commit();
+  for (const doc of targets) {
+    try {
+      if (action === "suspend" || action === "remove") {
+        await admin.auth().updateUser(doc.id, { disabled: true });
+        await admin.auth().revokeRefreshTokens(doc.id);
+      } else if (action === "reactivate") {
+        await admin.auth().updateUser(doc.id, { disabled: false });
+      }
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code;
+      if (code !== "auth/user-not-found") {
+        console.error(`[updatePharmacyTeamMember] could not update ${doc.id}:`, error);
+      }
+    }
+  }
+  return { email, action, role: action === "role" ? nextRole : currentRole, updated: targets.length };
+});
+
+export const updatePharmacyListing = onCall(async (request) => {
+  const actor = await requireConsoleManager(request);
+  const uid = requireString(request.data?.uid, "uid");
+  const action = String(request.data?.action ?? "").trim().toLowerCase();
+  if (!["remove", "restore"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Unknown pharmacy listing action.");
+  }
+  const target = await db.collection("User").doc(uid).get();
+  const data = target.data();
+  if (!target.exists || data?.account_type !== "Pharmacy" || pharmacyRole(data.role ?? data.role_label) !== "owner") {
+    throw new HttpsError("not-found", "That pharmacy owner listing no longer exists.");
+  }
+  if (action === "remove") {
+    const patch = {
+      access_revoked: true,
+      listing_removed: true,
+      listing_status: String(request.data?.previousStatus ?? "pending"),
+      removed_at: admin.firestore.FieldValue.serverTimestamp(),
+      removed_by: actor.uid,
+    };
+    const pharmacyId = String(data.pharmacy_id ?? uid).trim() || uid;
+    const profiles = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+    const owners = await ownerIdsByPharmacyName(profiles);
+    const batch = db.batch();
+    for (const profile of profiles.docs) {
+      if (resolvePharmacyId(profile.data(), profile.id, owners) === pharmacyId) {
+        batch.update(profile.ref, patch);
+      }
+    }
+    await batch.commit();
+    for (const profile of profiles.docs) {
+      if (resolvePharmacyId(profile.data(), profile.id, owners) !== pharmacyId) continue;
+      try {
+        await admin.auth().updateUser(profile.id, { disabled: true });
+        await admin.auth().revokeRefreshTokens(profile.id);
+      } catch (error) {
+        const code = (error as { code?: string } | null)?.code;
+        if (code !== "auth/user-not-found") console.error(`[updatePharmacyListing] could not disable ${profile.id}:`, error);
+      }
+    }
+  } else {
+    const pharmacyId = String(data.pharmacy_id ?? uid).trim() || uid;
+    const profiles = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+    const owners = await ownerIdsByPharmacyName(profiles);
+    const batch = db.batch();
+    for (const profile of profiles.docs) {
+      if (resolvePharmacyId(profile.data(), profile.id, owners) !== pharmacyId) continue;
+      batch.update(profile.ref, {
+        access_revoked: false,
+        listing_removed: false,
+        approved_by_duniya:
+          request.data?.status === "active" ||
+          (request.data?.status === undefined && request.data?.approved === true),
+        listing_status: ["active", "pending", "rejected"].includes(String(request.data?.status))
+          ? String(request.data.status)
+          : request.data?.approved === true
+            ? "active"
+            : "pending",
+        restored_at: admin.firestore.FieldValue.serverTimestamp(),
+        restored_by: actor.uid,
+      });
+    }
+    await batch.commit();
+    for (const profile of profiles.docs) {
+      if (resolvePharmacyId(profile.data(), profile.id, owners) !== pharmacyId) continue;
+      try {
+        await admin.auth().updateUser(profile.id, { disabled: false });
+      } catch (error) {
+        const code = (error as { code?: string } | null)?.code;
+        if (code !== "auth/user-not-found") console.error(`[updatePharmacyListing] could not enable ${profile.id}:`, error);
+      }
+    }
+  }
+  return { uid, action };
 });
 
 /* ------------------------------------------------------------------ */
@@ -1205,6 +1679,11 @@ export const claimPharmacyOtp = onCall(async (request) => {
     throw new HttpsError("not-found", "That OTP is invalid. Check the code and try again.");
   }
 
+  const emailProfile = await db.collection("User").where("email", "==", authEmail).get();
+  if (emailProfile.docs.some((profile) => profile.id !== uid)) {
+    throw new HttpsError("already-exists", "This email is already linked to another account.");
+  }
+
   const provisioningRef = snap.docs[0].ref;
   const userRef = db.collection("User").doc(uid);
   const result = await db.runTransaction(async (transaction) => {
@@ -1214,6 +1693,17 @@ export const claimPharmacyOtp = onCall(async (request) => {
       throw new HttpsError("not-found", "That OTP is no longer available.");
     }
     const data = fresh.data() ?? {};
+    if (data.status === "claimed" && data.claimed_by_uid === uid) {
+      const profile = existing.data() ?? {};
+      if (profile.account_type === "Pharmacy" && profile.provisioning_id === provisioningRef.id) {
+        return {
+          uid,
+          email: authEmail,
+          pharmacyName: String(profile.pharmacy_name ?? data.pharmacy_name ?? ""),
+          ownerName: String(profile.display_name ?? data.owner_name ?? authEmail.split("@")[0]),
+        };
+      }
+    }
     if (data.status === "claimed") {
       throw new HttpsError("failed-precondition", "This OTP has already been used.");
     }
@@ -1245,6 +1735,12 @@ export const claimPharmacyOtp = onCall(async (request) => {
         throw new HttpsError(
           "failed-precondition",
           "This sign-in is already linked to another pharmacy."
+        );
+      }
+      if (accountType === "Pharmacy" && profile.provisioning_id !== provisioningRef.id) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This account already has a pharmacy profile. Use that pharmacy sign-in instead."
         );
       }
     }
@@ -1664,6 +2160,99 @@ export const syncPharmacyInventory = onCall(async (request) => {
   return { synced: cleaned.length, removed: stale.length };
 });
 
+type MedicalProductRecord = {
+  id: string;
+  name: string;
+  category: string;
+  normalizedName: string;
+  createdAt?: number;
+};
+
+/** The shared medical register is independent of warehouse batch quantities. */
+export const listMedicalProducts = onCall(async (request) => {
+  await requirePulseActor(request);
+  const collection = db.collection("MedicalProductCatalogue");
+  const query = String(request.data?.query ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US");
+  const base = collection.orderBy("normalizedName");
+  const snap = query
+    ? await base.startAt(query).endAt(`${query}\uf8ff`).limit(100).get()
+    : await base.limit(250).get();
+  return {
+    products: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as MedicalProductRecord[],
+  };
+});
+
+/** Mirror each pharmacy's existing local catalogue into the shared register. */
+export const syncPharmacyMedicalProducts = onCall(async (request) => {
+  await requirePharmacyActor(request);
+  const input: unknown = request.data?.products;
+  if (!Array.isArray(input) || input.length > 400) {
+    throw new HttpsError("invalid-argument", "Sync up to 400 catalogue products at a time.");
+  }
+  const unique = new Map<string, { ref: admin.firestore.DocumentReference; product: MedicalProductRecord }>();
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const product = raw as Record<string, unknown>;
+    const name = String(product.name ?? "").trim().replace(/\s+/g, " ");
+    if (name.length < 2 || name.length > 180) continue;
+    const normalizedName = name.normalize("NFKC").toLocaleLowerCase("en-US");
+    const id = `med_${createHash("sha256").update(normalizedName).digest("hex").slice(0, 40)}`;
+    const category = String(product.category ?? "General").trim().slice(0, 80) || "General";
+    unique.set(id, {
+      ref: db.collection("MedicalProductCatalogue").doc(id),
+      product: { id, name, category, normalizedName },
+    });
+  }
+  const entries = [...unique.values()];
+  if (!entries.length) return { synced: 0 };
+  const existing = await db.getAll(...entries.map((entry) => entry.ref));
+  const batch = db.batch();
+  let synced = 0;
+  for (const [index, snapshot] of existing.entries()) {
+    if (snapshot.exists) continue;
+    batch.set(entries[index].ref, { ...entries[index].product, createdAt: Date.now() });
+    synced += 1;
+  }
+  if (synced) await batch.commit();
+  return { synced };
+});
+
+/** Add a shared medical product definition without creating any stock. */
+export const registerMedicalProduct = onCall(async (request) => {
+  await requirePulseActor(request);
+  const name = String(request.data?.name ?? "").trim().replace(/\s+/g, " ");
+  const category = String(request.data?.category ?? "General").trim().slice(0, 80) || "General";
+  if (name.length < 2 || name.length > 180) {
+    throw new HttpsError("invalid-argument", "Enter a product name between 2 and 180 characters.");
+  }
+  const normalizedName = name.normalize("NFKC").toLocaleLowerCase("en-US");
+  const id = `med_${createHash("sha256").update(normalizedName).digest("hex").slice(0, 40)}`;
+  const ref = db.collection("MedicalProductCatalogue").doc(id);
+  return db.runTransaction(async (transaction) => {
+    const existing = await transaction.get(ref);
+    if (existing.exists) {
+      const data = existing.data() ?? {};
+      return {
+        product: {
+          id: existing.id,
+          name: String(data.name ?? name),
+          category: String(data.category ?? category),
+          normalizedName: String(data.normalizedName ?? normalizedName),
+          ...(typeof data.createdAt === "number" ? { createdAt: data.createdAt } : {}),
+        } satisfies MedicalProductRecord,
+        created: false,
+      };
+    }
+    const product: MedicalProductRecord = { id, name, category, normalizedName, createdAt: Date.now() };
+    transaction.create(ref, product);
+    return { product, created: true };
+  });
+});
+
 /** Registered pharmacies for network views, resolved exactly like sales. */
 async function networkPharmacyDirectory() {
   const profileSnap = await db.collection("User").where("account_type", "==", "Pharmacy").get();
@@ -1713,6 +2302,7 @@ export const listNetworkInventory = onCall(async (request) => {
 
 type StockRequestRecordStatus =
   | "pending"
+  | "returned"
   | "approved"
   | "dispatched"
   | "delivered"
@@ -1786,6 +2376,19 @@ function stockRequestView(doc: admin.firestore.DocumentSnapshot) {
   return { docId: doc.id, ...data } as Record<string, unknown> & { docId: string };
 }
 
+/** Supplier acquisition figures are for Pulse staff only. Pharmacies see the
+ * Duniya price, which is their purchase price for a dispatched batch. */
+function pharmacyStockRequestView(value: Record<string, unknown>) {
+  const view = { ...value };
+  delete view.unitCost;
+  delete view.totalCost;
+  delete view.costPrice;
+  delete view.supplierCost;
+  delete view.supplierUnitCost;
+  delete view.totalSupplierCost;
+  return view;
+}
+
 async function pulseAdminRecipients(): Promise<string[]> {
   const snap = await db.collection("User").where("account_type", "==", "Pulse").get();
   const recipients = new Set<string>();
@@ -1798,6 +2401,56 @@ async function pulseAdminRecipients(): Promise<string[]> {
     if (EMAIL_RE.test(email)) recipients.add(email);
   }
   return [...recipients];
+}
+
+/** One approved, active owner mailbox per pharmacy, with duplicate emails removed. */
+async function registeredPharmacyRecipients(): Promise<string[]> {
+  const snap = await db.collection("User").where("account_type", "==", "Pharmacy").get();
+  const recipients = new Set<string>();
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    if (
+      pharmacyRole(data.role ?? data.role_label) !== "owner" ||
+      data.approved_by_duniya !== true ||
+      data.access_revoked === true ||
+      data.listing_removed === true ||
+      data.status === "suspended" ||
+      data.status === "removed"
+    ) continue;
+    const email = String(data.email ?? "").trim().toLowerCase();
+    if (EMAIL_RE.test(email)) recipients.add(email);
+  }
+  return [...recipients];
+}
+
+/** Send individually so pharmacy addresses are never visible to other recipients. */
+async function notifyEmailRecipients(
+  fn: string,
+  recipients: string[],
+  content: EmailContent,
+  detail: string
+): Promise<{ sent: number; failed: number }> {
+  let sent = 0;
+  let failed = 0;
+  for (let offset = 0; offset < recipients.length; offset += 5) {
+    const batch = recipients.slice(offset, offset + 5);
+    const results = await Promise.allSettled(
+      batch.map((email) => deliver(fn, [email], content, detail))
+    );
+    sent += results.filter((result) => result.status === "fulfilled").length;
+    failed += results.length - results.filter((result) => result.status === "fulfilled").length;
+  }
+  return { sent, failed };
+}
+
+function lusakaTimestamp(value: unknown): string {
+  const timestamp = Number(value);
+  return new Date(Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now())
+    .toLocaleString("en-GB", {
+      timeZone: "Africa/Lusaka",
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
 }
 
 /** Pharmacy submits one or more lines; the receiving desk is emailed once. */
@@ -1890,6 +2543,11 @@ export const createPharmacyStockRequests = onCall(
       created: created.length,
       skipped: cleaned.length - created.length,
       emailed,
+      requestDocs: refs.map((ref, index) => ({
+        docId: ref.id,
+        requestId: cleaned[index].requestId,
+        syncId: cleaned[index].syncId,
+      })),
       ...(emailError ? { emailError } : {}),
     };
   }
@@ -1905,7 +2563,7 @@ export const listMyPharmacyStockRequests = onCall(async (request) => {
     .get();
   return {
     requests: snap.docs
-      .map(stockRequestView)
+      .map((doc) => pharmacyStockRequestView(stockRequestView(doc)))
       .sort((a, b) => Number(b.submittedAt ?? 0) - Number(a.submittedAt ?? 0)),
   };
 });
@@ -1925,8 +2583,128 @@ export const listReceivedStockRequests = onCall(async (request) => {
   return { requests: snap.docs.map(stockRequestView) };
 });
 
+/** Shared stock request discussion. Pulse may return a request for edits; the
+ * pharmacy replies to that return and moves it back into the review queue. */
+export const respondToStockRequest = onCall(async (request) => {
+  const docId = String(request.data?.docId ?? "").trim();
+  const suppliedComment = String(request.data?.comment ?? "").trim().slice(0, 2000);
+  const shouldReturn = request.data?.returnToPharmacy === true;
+  const attachments = Array.isArray(request.data?.attachments) ? request.data.attachments : [];
+  if (!docId || (!suppliedComment && attachments.length === 0)) {
+    throw new HttpsError("invalid-argument", "Add a comment or an attachment before sending.");
+  }
+  if (attachments.length > 5) throw new HttpsError("invalid-argument", "Attach up to 5 files per comment.");
+
+  let actor: PulseActor | PharmacyActor;
+  let side: "pulse" | "pharmacy";
+  if (shouldReturn) {
+    actor = await requirePulseActor(request);
+    side = "pulse";
+  } else {
+    // Resolve the actor from the profile while keeping the request scoped to
+    // its pharmacy below. A Pulse user cannot use this path to impersonate one.
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to reply to this request.");
+    const profile = await db.collection("User").doc(request.auth.uid).get();
+    if (profile.data()?.account_type === "Pulse") {
+      actor = await requirePulseActor(request);
+      side = "pulse";
+    } else {
+      actor = await requirePharmacyActor(request);
+      side = "pharmacy";
+    }
+  }
+
+  const safeAttachments = attachments.map((raw: unknown) => {
+    if (!raw || typeof raw !== "object") throw new HttpsError("invalid-argument", "An attachment is invalid.");
+    const value = raw as Record<string, unknown>;
+    const path = String(value.path ?? "");
+    const name = String(value.name ?? "").trim().slice(0, 180);
+    const contentType = String(value.contentType ?? "").toLowerCase();
+    const size = Number(value.size);
+    if (!path.startsWith(`stock-request-attachments/${docId}/${actor.uid}/`) || !name ||
+      !Number.isInteger(size) || size < 1 || size > 10 * 1024 * 1024 ||
+      !["application/pdf", "application/msword", "image/jpeg", "image/png", "image/webp", "image/gif", "text/plain", "text/csv", "application/rtf", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"].includes(contentType)) {
+      throw new HttpsError("invalid-argument", "An attachment is invalid or too large.");
+    }
+    return { path, name, contentType, size };
+  });
+  const comment = suppliedComment || "Supporting files attached with this request.";
+  for (const attachment of safeAttachments) {
+    const [exists] = await admin.storage().bucket().file(attachment.path).exists();
+    if (!exists) throw new HttpsError("failed-precondition", "An attachment did not finish uploading. Try again.");
+  }
+
+  const ref = db.collection("PharmacyStockRequests").doc(docId);
+  const result = await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists) throw new HttpsError("not-found", "That stock request no longer exists.");
+    const data = snap.data() ?? {};
+    if (side === "pulse" && !shouldReturn) {
+      throw new HttpsError("failed-precondition", "Use the return action to request changes from the pharmacy.");
+    }
+    if (side === "pharmacy" && String(data.pharmacyId ?? "") !== (actor as PharmacyActor).pharmacyId) {
+      throw new HttpsError("permission-denied", "This stock request belongs to another pharmacy.");
+    }
+    const status = String(data.status ?? "");
+    if (shouldReturn && (status !== "pending" && status !== "approved")) {
+      throw new HttpsError("failed-precondition", "Only pending or approved requests can be returned.");
+    }
+    if (side === "pharmacy" && status !== "returned" && status !== "pending" && status !== "approved") {
+      throw new HttpsError("failed-precondition", "This request can no longer be updated by the pharmacy.");
+    }
+    const entry = {
+      id: randomUUID(),
+      side,
+      author: actor.name,
+      authorUid: actor.uid,
+      comment,
+      attachments: safeAttachments,
+      createdAt: Date.now(),
+    };
+    const updatedAt = Date.now();
+    const patch: Record<string, unknown> = {
+      comments: admin.firestore.FieldValue.arrayUnion(entry),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (shouldReturn) {
+      patch.status = "returned";
+      patch.approvedAt = admin.firestore.FieldValue.delete();
+      patch.approvedBy = admin.firestore.FieldValue.delete();
+      patch.approvedByUid = admin.firestore.FieldValue.delete();
+      patch.returnedAt = Date.now();
+      patch.returnedBy = actor.name;
+      patch.returnedByUid = actor.uid;
+    } else if (side === "pharmacy" && status === "returned") {
+      patch.status = "pending";
+      patch.resubmittedAt = Date.now();
+      patch.resubmittedBy = actor.name;
+      patch.resubmittedByUid = actor.uid;
+    }
+    transaction.update(ref, patch);
+    const returnedFields = shouldReturn
+      ? { status: "returned", returnedAt: entry.createdAt, returnedBy: actor.name, returnedByUid: actor.uid }
+      : side === "pharmacy" && status === "returned"
+        ? { status: "pending", resubmittedAt: entry.createdAt, resubmittedBy: actor.name, resubmittedByUid: actor.uid }
+        : { status };
+    const view: Record<string, unknown> = {
+      docId,
+      ...data,
+      ...returnedFields,
+      comments: [...(Array.isArray(data.comments) ? data.comments : []), entry],
+      updatedAt,
+    };
+    if (shouldReturn) {
+      delete view.approvedAt;
+      delete view.approvedBy;
+      delete view.approvedByUid;
+    }
+    return view;
+  });
+  return { request: side === "pharmacy" ? pharmacyStockRequestView(result) : result };
+});
+
 /** Approve, reject or dispatch a request. Prices are computed server-side. */
-export const updateReceivedStockRequest = onCall(async (request) => {
+export const updateReceivedStockRequest = onCall({ secrets: [resendApiKey] }, async (request) => {
   const actor = await requirePulseActor(request);
   const docId = String(request.data?.docId ?? "").trim();
   const action = String(request.data?.action ?? "").trim();
@@ -1935,7 +2713,7 @@ export const updateReceivedStockRequest = onCall(async (request) => {
   }
 
   const ref = db.collection("PharmacyStockRequests").doc(docId);
-  const updated = await db.runTransaction(async (transaction) => {
+  const updated = await db.runTransaction<Record<string, unknown>>(async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists) throw new HttpsError("not-found", "That stock request no longer exists.");
     const data = snap.data() ?? {};
@@ -2003,6 +2781,35 @@ export const updateReceivedStockRequest = onCall(async (request) => {
     return { docId: ref.id, ...data, ...patch };
   });
 
+  if (action === "dispatch") {
+    try {
+      const recipients = await registeredPharmacyRecipients();
+      if (recipients.length === 0) {
+        console.warn("[updateReceivedStockRequest] no active pharmacy owners to notify about dispatch");
+      } else {
+        const content = stockRequestFulfilledEmail({
+          item: String(updated.item ?? "Requested stock"),
+          qty: Math.max(0, Math.round(Number(updated.qty ?? 0))),
+          batch: String(updated.batch ?? ""),
+          expiry: String(updated.expiry ?? ""),
+          dispatchedAt: lusakaTimestamp(updated.dispatchedAt),
+          pharmacyUrl: `${APP_URL}pharmacy/`,
+        });
+        const result = await notifyEmailRecipients(
+          "updateReceivedStockRequest",
+          recipients,
+          content,
+          `Stock dispatched: ${String(updated.item ?? "requested stock")}`
+        );
+        if (result.failed > 0) {
+          console.warn(`[updateReceivedStockRequest] fulfillment email sent to ${result.sent}; failed for ${result.failed} pharmacies`);
+        }
+      }
+    } catch (error) {
+      console.error("[updateReceivedStockRequest] dispatch saved but pharmacy notification failed", error);
+    }
+  }
+
   return { request: updated };
 });
 
@@ -2024,7 +2831,7 @@ export const cancelPharmacyStockRequest = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "Dispatched stock can no longer be cancelled.");
     }
     if (status === "rejected" || status === "cancelled") {
-      return stockRequestView(snap);
+      return pharmacyStockRequestView(stockRequestView(snap));
     }
     const reason = String(request.data?.reason ?? "Withdrawn by pharmacy").trim().slice(0, 500);
     const patch = {
@@ -2038,13 +2845,13 @@ export const cancelPharmacyStockRequest = onCall(async (request) => {
       ...patch,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    return { docId: ref.id, ...data, ...patch };
+    return pharmacyStockRequestView({ docId: ref.id, ...data, ...patch });
   });
   return { request: updated };
 });
 
 /** Pharmacy receives a dispatched line and records the retail price it chose. */
-export const receivePharmacyStockRequest = onCall(async (request) => {
+export const receivePharmacyStockRequest = onCall({ secrets: [resendApiKey] }, async (request) => {
   const actor = await requirePharmacyActor(request);
   const docId = String(request.data?.docId ?? "").trim();
   const retailUnitPrice = money(Number(request.data?.retailUnitPrice));
@@ -2054,7 +2861,10 @@ export const receivePharmacyStockRequest = onCall(async (request) => {
   }
 
   const ref = db.collection("PharmacyStockRequests").doc(docId);
-  const updated = await db.runTransaction(async (transaction) => {
+  const outcome = await db.runTransaction<{
+    request: Record<string, unknown>;
+    newlyDelivered: boolean;
+  }>(async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists) throw new HttpsError("not-found", "That stock request no longer exists.");
     const data = snap.data() ?? {};
@@ -2063,7 +2873,10 @@ export const receivePharmacyStockRequest = onCall(async (request) => {
     }
     const status = String(data.status ?? "");
     if (status === "delivered") {
-      return { ...stockRequestView(snap), alreadyDelivered: true };
+      return {
+        request: pharmacyStockRequestView({ ...stockRequestView(snap), alreadyDelivered: true }),
+        newlyDelivered: false,
+      };
     }
     if (status !== "dispatched") {
       throw new HttpsError("failed-precondition", "This request has not been dispatched yet.");
@@ -2081,9 +2894,41 @@ export const receivePharmacyStockRequest = onCall(async (request) => {
       ...patch,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    return { docId: ref.id, ...data, ...patch };
+    return {
+      request: pharmacyStockRequestView({ docId: ref.id, ...data, ...patch }),
+      newlyDelivered: true,
+    };
   });
-  return { request: updated };
+  if (outcome.newlyDelivered) {
+    try {
+      const recipients = await pulseAdminRecipients();
+      if (recipients.length === 0) {
+        console.warn("[receivePharmacyStockRequest] no active Pulse Owners or Admins to notify about delivery");
+      } else {
+        const content = stockDeliveryCompletedEmail({
+          pharmacyName: String(outcome.request.pharmacyName ?? actor.pharmacyName),
+          item: String(outcome.request.item ?? "Requested stock"),
+          qty: Math.max(0, Math.round(Number(outcome.request.qty ?? 0))),
+          batch: String(outcome.request.batch ?? ""),
+          receivedBy: actor.name,
+          deliveredAt: lusakaTimestamp(outcome.request.deliveredAt),
+          consoleUrl: `${APP_URL}dashboard/?page=requests`,
+        });
+        const result = await notifyEmailRecipients(
+          "receivePharmacyStockRequest",
+          recipients,
+          content,
+          `Delivery completed: ${String(outcome.request.item ?? "requested stock")}`
+        );
+        if (result.failed > 0) {
+          console.warn(`[receivePharmacyStockRequest] delivery email sent to ${result.sent}; failed for ${result.failed} Pulse admins`);
+        }
+      }
+    } catch (error) {
+      console.error("[receivePharmacyStockRequest] delivery saved but Pulse notification failed", error);
+    }
+  }
+  return { request: outcome.request };
 });
 
 /* ------------------------------------------------------------------ */
@@ -2585,6 +3430,11 @@ export const acceptInvitation = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "Your account has no email address.");
   }
 
+  const linkedProfiles = await db.collection("User").where("email", "==", email).get();
+  if (linkedProfiles.docs.some((profile) => profile.id !== request.auth!.uid)) {
+    throw new HttpsError("failed-precondition", "This email is already linked to another account.");
+  }
+
   const ref = db.collection("Invitation").doc(inviteId);
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(ref);
@@ -2593,6 +3443,7 @@ export const acceptInvitation = onCall(async (request) => {
     }
     const data = snap.data() ?? {};
     if (data.status !== "pending") {
+      if (data.status === "accepted" && data.acceptedBy === request.auth!.uid) return;
       throw new HttpsError("failed-precondition", "This invitation has already been used.");
     }
     const expiresAt =
@@ -2608,11 +3459,36 @@ export const acceptInvitation = onCall(async (request) => {
         "Sign in with the email address this invitation was sent to."
       );
     }
+    const targetProfile = await transaction.get(db.collection("User").doc(request.auth!.uid));
+    const invitedAccountType = data.kind === "console" ? "Pulse" : "Pharmacy";
+    const currentAccountType = String(targetProfile.data()?.account_type ?? "");
+    if (currentAccountType && currentAccountType !== invitedAccountType) {
+      throw new HttpsError(
+        "failed-precondition",
+        "This account is already assigned to the other portal. Use a separate sign-in for the invitation."
+      );
+    }
+
+    const invitedPharmacyId = String(data.pharmacyId ?? "").trim();
+    let inheritedApproval = false;
+    if (data.kind !== "console" && invitedPharmacyId) {
+      const pharmacySnap = await transaction.get(db.collection("User").doc(invitedPharmacyId));
+      inheritedApproval = pharmacySnap.data()?.approved_by_duniya === true;
+    }
+
     transaction.update(ref, {
       status: "accepted",
       acceptedBy: request.auth!.uid,
       acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    const displayName = String(request.auth!.token.name ?? "").trim() || email.split("@")[0];
+    const shared = {
+      uid: request.auth!.uid,
+      email,
+      display_name: displayName,
+      access_revoked: false,
+    };
 
     // The invitation is the authority for a console seat — never trust the
     // role the browser wrote while registering.
@@ -2622,6 +3498,7 @@ export const acceptInvitation = onCall(async (request) => {
         transaction.set(
           db.collection("User").doc(request.auth!.uid),
           {
+            ...shared,
             role: invitedRole,
             role_label: PULSE_ROLE_LABEL[invitedRole],
             account_type: "Pulse",
@@ -2630,27 +3507,24 @@ export const acceptInvitation = onCall(async (request) => {
             pharmacy_name: admin.firestore.FieldValue.delete(),
             pharmacy_id: admin.firestore.FieldValue.delete(),
             approved_by_duniya: true,
-            access_revoked: false,
+            invited: true,
           },
           { merge: true }
         );
       }
     } else {
-      const acceptedRoleRaw = String(data.role ?? "Team member").trim();
-      const acceptedRole =
-        acceptedRoleRaw.toLowerCase() === "team member" ? "cashier" : acceptedRoleRaw.toLowerCase();
+      const acceptedRole = pharmacyRole(data.role || "Team member");
       transaction.set(
         db.collection("User").doc(request.auth!.uid),
         {
+          ...shared,
           role: acceptedRole,
-          role_label: acceptedRole === "cashier" && acceptedRoleRaw.toLowerCase() === "team member" ? "Cashier" : acceptedRoleRaw,
+          role_label: PHARMACY_ROLE_LABEL[acceptedRole] ?? acceptedRole,
           account_type: "Pharmacy",
           pharmacy_name: data.pharmacyName ?? null,
           pharmacy_id: data.pharmacyId ?? null,
-          // A staff seat is approved by its pharmacy, not the network — the
-          // network listing belongs to the owner's account only.
-          approved_by_duniya: true,
-          access_revoked: false,
+          approved_by_duniya: inheritedApproval,
+          invited: true,
         },
         { merge: true }
       );
@@ -2677,6 +3551,10 @@ export const onPharmacyCreated = onCall(
   const pharmacyName = requireString(request.data?.pharmacyName, "pharmacyName");
   const ownerName = requireString(request.data?.ownerName, "ownerName");
   const ownerEmail = assertEmail(request.data?.ownerEmail, "ownerEmail");
+  const signedInEmail = String(request.auth.token.email ?? "").trim().toLowerCase();
+  if (signedInEmail && signedInEmail !== ownerEmail) {
+    throw new HttpsError("permission-denied", "Register the pharmacy with the email address you signed in with.");
+  }
   const teamEmails: string[] = Array.isArray(request.data?.teamEmails)
     ? request.data.teamEmails.map((entry: unknown) => assertEmail(entry, "teamEmails"))
     : [];

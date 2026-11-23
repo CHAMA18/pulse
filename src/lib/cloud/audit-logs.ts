@@ -36,7 +36,10 @@ export async function recordAuditEvents(events: AuditEvent[]): Promise<void> {
         ts,
         email,
       }));
-    await callable({ events: batch });
+    const result = await callable({ events: batch });
+    if (result.data.recorded !== batch.length) {
+      throw new Error("Some audit events were not accepted for the signed-in account.");
+    }
   }
 }
 

@@ -9,14 +9,15 @@ import {
   getAuth,
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
+  connectAuthEmulator,
   sendPasswordResetEmail,
   updateProfile,
   type Auth,
   type User,
 } from "firebase/auth";
 import {
-  deleteField,
   doc,
+  connectFirestoreEmulator,
   getDoc,
   getFirestore,
   initializeFirestore,
@@ -26,9 +27,15 @@ import {
   setDoc,
   type Firestore,
 } from "firebase/firestore";
-import { getFunctions, type Functions } from "firebase/functions";
-import { isPulseAdminEmail, type Portal } from "@/lib/account-policy";
+import { connectFunctionsEmulator, getFunctions, httpsCallable, type Functions } from "firebase/functions";
+import { connectStorageEmulator, getStorage, type FirebaseStorage } from "firebase/storage";
+import { isPulseAdminEmail } from "@/lib/account-policy";
 import { recordAudit } from "@/lib/audit-log";
+import {
+  evaluatePortalAccess,
+  normalizeAccountType,
+  type PortalAccess,
+} from "@/lib/portal-access";
 
 /**
  * Firebase web app configuration — "pharmacy-system-2fb27".
@@ -50,8 +57,25 @@ const firebaseConfig = {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let auth: Auth | null = null;
 let cloudFunctions: Functions | null = null;
+let cloudStorage: FirebaseStorage | null = null;
 let analyticsPromise: Promise<Analytics | null> | null = null;
+
+const STOCK_SANDBOX_PROJECT_ID = "demo-pulse-stock-sandbox";
+
+export function isStockSandboxEnabled(): boolean {
+  if (process.env.NEXT_PUBLIC_FIREBASE_EMULATORS !== "true") return false;
+  if (typeof window === "undefined") return false;
+  if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+    throw new Error("The stock sandbox can only run on localhost.");
+  }
+  return true;
+}
+
+function emulatorHost(): string {
+  return window.location.hostname;
+}
 
 /**
  * Returns the shared Firebase app instance (lazily initialized, browser only).
@@ -60,7 +84,15 @@ let analyticsPromise: Promise<Analytics | null> | null = null;
 export function getFirebaseApp(): FirebaseApp | null {
   if (typeof window === "undefined") return null; // never init on the server
   if (!app) {
-    app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+    const sandbox = isStockSandboxEnabled();
+    const config = sandbox
+      ? {
+          ...firebaseConfig,
+          projectId: STOCK_SANDBOX_PROJECT_ID,
+          authDomain: `${STOCK_SANDBOX_PROJECT_ID}.firebaseapp.com`,
+        }
+      : firebaseConfig;
+    app = getApps().length > 0 ? getApp() : initializeApp(config);
   }
   return app;
 }
@@ -86,6 +118,7 @@ export function getFirebaseDb(): Firestore | null {
       // Private mode or an unsupported browser — fall back to the memory cache.
       db = getFirestore(application);
     }
+    if (isStockSandboxEnabled()) connectFirestoreEmulator(db, emulatorHost(), 8080);
   }
   return db;
 }
@@ -102,8 +135,20 @@ export function getFirebaseFunctions(): Functions | null {
   if (!application) return null; // never init on the server
   if (!cloudFunctions) {
     cloudFunctions = getFunctions(application, CLOUD_FUNCTIONS_REGION);
+    if (isStockSandboxEnabled()) connectFunctionsEmulator(cloudFunctions, emulatorHost(), 5001);
   }
   return cloudFunctions;
+}
+
+/** Request evidence lives in Firebase Storage and follows the sandbox emulator. */
+export function getFirebaseStorage(): FirebaseStorage | null {
+  const application = getFirebaseApp();
+  if (!application) return null;
+  if (!cloudStorage) {
+    cloudStorage = getStorage(application);
+    if (isStockSandboxEnabled()) connectStorageEmulator(cloudStorage, emulatorHost(), 9199);
+  }
+  return cloudStorage;
 }
 
 /**
@@ -114,7 +159,7 @@ export function getFirebaseFunctions(): Functions | null {
  *   so callers never have to handle failures
  */
 export function initAnalytics(): Promise<Analytics | null> {
-  if (typeof window === "undefined") return Promise.resolve(null);
+  if (typeof window === "undefined" || isStockSandboxEnabled()) return Promise.resolve(null);
   if (!analyticsPromise) {
     analyticsPromise = isSupported()
       .then((supported) => {
@@ -196,235 +241,78 @@ function mirrorTrackEventToAudit(name: string): void {
 export function getFirebaseAuth(): Auth | null {
   const application = getFirebaseApp();
   if (!application) return null;
-  return getAuth(application);
+  if (!auth) {
+    auth = getAuth(application);
+    if (isStockSandboxEnabled()) {
+      connectAuthEmulator(auth, `http://${emulatorHost()}:9099`, { disableWarnings: true });
+    }
+  }
+  return auth;
 }
 
 /** Google sign-in provider (used with signInWithPopup). */
 export const googleProvider = new GoogleAuthProvider();
 
 /**
- * Elevated-access eligibility check, applied when signing in through the
- * Pharmacy portal (pharmacy administrators/staff with elevated rights).
- * Four mechanisms, in order of strength:
- *  1. A custom claim `admin: true` (set via the Firebase Admin SDK — recommended)
- *  2. The NEXT_PUBLIC_ADMIN_EMAILS allowlist (comma-separated emails), a
- *     pragmatic fallback while claims aren't set up yet
- *  3. The local pharmacy registration registry — an account created through
- *     "Register your pharmacy" on this browser is recognized immediately,
- *     even if its Firestore profile write was rejected by security rules
- *  4. The Firestore `User/{uid}` document with `account_type: "Pharmacy"` —
- *     the same document the Pulse pharmacy app reads, so an account that
- *     registered on the web (or any device) is recognized everywhere
- * Returns false when none match so the caller can refuse the session.
+ * Resolves which console a signed-in account may enter.
+ *
+ * The `User/{uid}` profile is authoritative (it carries `account_type` and
+ * `access_revoked`). A custom claim named `account_type` is honoured only
+ * when the profile cannot be read, and a failed read with no claim fails
+ * closed as `unverified`. The portal toggle and the stored portal value are
+ * never consulted: both consoles use a role called "owner", so a role label
+ * cannot tell a Pulse administrator from a pharmacy owner.
  */
-export async function isAdminUser(user: User): Promise<boolean> {
+export async function resolvePortalAccess(user: User): Promise<PortalAccess> {
+  const store = getFirebaseDb();
+  if (store) {
+    try {
+      const snap = await getDoc(doc(store, "User", user.uid));
+      const profile = snap.data() as
+        | { account_type?: unknown; access_revoked?: unknown }
+        | undefined;
+      return evaluatePortalAccess({ profile, verified: true });
+    } catch {
+      /* offline or denied — a trusted claim may still identify the account */
+    }
+  }
+
   try {
     const token = await user.getIdTokenResult();
-    if (token.claims.admin === true) return true;
+    const claimed = normalizeAccountType(token.claims.account_type);
+    if (claimed) {
+      return evaluatePortalAccess({ profile: { account_type: claimed }, verified: false });
+    }
   } catch {
-    /* fall through to the allowlist */
-  }
-  const allowlist = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-  if (user.email && allowlist.includes(user.email.toLowerCase())) return true;
-
-  const registry = readPharmacyRegistry();
-  const email = user.email?.toLowerCase();
-  if (registry.some((r) => r.uid === user.uid || (email && r.email === email))) {
-    return true;
+    /* no claim available — fail closed below */
   }
 
-  // Accounts created through a pharmacy team invitation are team members
-  // even if the Firestore profile write was blocked by rules.
-  if (
-    readInvitedAccounts().some(
-      (account) =>
-        account.kind === "team" &&
-        (account.uid === user.uid || (email && account.email === email))
-    )
-  ) {
-    return true;
-  }
-
-  const store = getFirebaseDb();
-  if (store) {
-    try {
-      const snap = await getDoc(doc(store, "User", user.uid));
-      const profile = snap.data() as { account_type?: string } | undefined;
-      if (profile?.account_type === "Pharmacy") return true;
-    } catch {
-      /* Firestore unavailable or rules deny the read — registry already covered it */
-    }
-  }
-  return false;
+  return { status: "unverified" };
 }
 
 /* ------------------------------------------------------------------ */
-/* Account resolution + Pulse admin registration                      */
+/* Pulse admin profile provisioning                                   */
 /* ------------------------------------------------------------------ */
 
-export type AccountAccess = {
-  portal: Portal;
-  accountType: "Pulse" | "Pharmacy";
-  revoked: boolean;
-  /** Where the decision came from — useful for diagnostics and fallbacks. */
-  source: "profile" | "local" | "email" | "offline";
-};
-
-/**
- * Resolves the console a signed-in account belongs to.
- *
- * The Firestore profile is authoritative for existing accounts (including
- * accounts that were explicitly invited to the other console). When no
- * profile exists, the email policy supplies the default for eligible Pulse
- * admins; invitations and local registrations are respected as fallbacks.
- */
-export async function resolveAccountAccess(user: User): Promise<AccountAccess | null> {
-  const email = user.email?.trim().toLowerCase() ?? "";
-  const store = getFirebaseDb();
-  let profileReadFailed = false;
-
-  if (store) {
-    try {
-      const snap = await getDoc(doc(store, "User", user.uid));
-      const data = snap.data() as
-        | { account_type?: string; access_revoked?: boolean }
-        | undefined;
-      const accountType =
-        data?.account_type === "Pulse"
-          ? "Pulse"
-          : data?.account_type === "Pharmacy"
-            ? "Pharmacy"
-            : null;
-
-      if (data?.access_revoked === true) {
-        const fallbackType =
-          accountType ?? (isPulseAdminEmail(email) ? "Pulse" : "Pharmacy");
-        return {
-          portal: fallbackType === "Pulse" ? "pulse" : "pharmacy",
-          accountType: fallbackType,
-          revoked: true,
-          source: "profile",
-        };
-      }
-
-      if (accountType) {
-        return {
-          portal: accountType === "Pulse" ? "pulse" : "pharmacy",
-          accountType,
-          revoked: false,
-          source: "profile",
-        };
-      }
-    } catch {
-      // A failed read must not convert an existing profile. Use local evidence
-      // or the email default, but never write a replacement profile here.
-      profileReadFailed = true;
-    }
-  }
-
-  const local = readInvitedAccounts().find(
-    (account) =>
-      account.uid === user.uid || (email.length > 0 && account.email === email)
-  );
-  if (local) {
-    return {
-      portal: local.kind === "console" ? "pulse" : "pharmacy",
-      accountType: local.kind === "console" ? "Pulse" : "Pharmacy",
-      revoked: false,
-      source: "local",
-    };
-  }
-
-  const registration = readPharmacyRegistry().find(
-    (entry) => entry.uid === user.uid || (email.length > 0 && entry.email === email)
-  );
-  if (registration) {
-    return {
-      portal: "pharmacy",
-      accountType: "Pharmacy",
-      revoked: false,
-      source: "local",
-    };
-  }
-
-  if (isPulseAdminEmail(email)) {
-    return {
-      portal: "pulse",
-      accountType: "Pulse",
-      revoked: false,
-      source: profileReadFailed ? "offline" : "email",
-    };
-  }
-
-  return null;
-}
-
-/**
- * Writes the canonical Pulse admin profile for an eligible email.
- * Only called after a profile read established that no console type exists,
- * so it can never silently convert an existing Pharmacy profile.
- */
-async function savePulseAdminProfile(
-  user: User,
-  name?: string,
-  created = false
-): Promise<boolean> {
-  const email = user.email?.trim().toLowerCase() ?? "";
-  if (!isPulseAdminEmail(email)) return false;
-  const store = getFirebaseDb();
-  if (!store) return false;
-
-  const displayName =
-    name?.trim() || user.displayName?.trim() || email.split("@")[0];
-
+async function provisionPulseProfile(user: User, name?: string): Promise<boolean> {
+  const functions = getFirebaseFunctions();
+  if (!functions || !isPulseAdminEmail(user.email)) return false;
   try {
-    await setDoc(
-      doc(store, "User", user.uid),
-      {
-        email,
-        uid: user.uid,
-        display_name: displayName,
-        ...(created ? { created_time: serverTimestamp() } : {}),
-        role: "admin",
-        role_label: "Admin",
-        account_type: "Pulse",
-        approved_by_duniya: true,
-        invited: false,
-        access_revoked: false,
-        pharmacy_name: deleteField(),
-        pharmacy_id: deleteField(),
-      },
-      { merge: true }
+    const callable = httpsCallable<{ name: string }, { ok: boolean }>(
+      functions,
+      "ensurePulseAdminProfile"
     );
-    return true;
+    const response = await callable({ name: name?.trim() || user.displayName?.trim() || "" });
+    return response.data.ok === true;
   } catch {
-    /* rules or offline — the caller decides whether to continue */
     return false;
   }
 }
 
-/** Ensures a first-time Google/password admin gets a console profile. */
+/** Creates the first Pulse profile only through the server-side allowlist. */
 export async function ensurePulseAdminProfile(user: User): Promise<boolean> {
-  const email = user.email?.trim().toLowerCase() ?? "";
-  if (!isPulseAdminEmail(email)) return false;
-  const saved = await savePulseAdminProfile(user);
-  if (!saved) {
-    // The dashboard can still resolve the role locally while Firestore is
-    // unavailable; the profile write is retried on the next admin sign-in.
-    recordInvitedAccount({
-      uid: user.uid,
-      email,
-      name: user.displayName?.trim() || email.split("@")[0],
-      role: "Admin",
-      kind: "console",
-      pharmacyName: null,
-      at: new Date().toISOString(),
-    });
-  }
-  return saved;
+  if (!isPulseAdminEmail(user.email)) return false;
+  return provisionPulseProfile(user);
 }
 
 export type PulseAdminRegistrationInput = {
@@ -440,11 +328,6 @@ export type PulseAdminRegistrationResult = {
   profileSaved: boolean;
 };
 
-/**
- * Creates a self-service Pulse admin account. The email policy is checked
- * before an Auth account exists; the profile is written with no pharmacy
- * identity so the account can never appear in the Pharmacy portal.
- */
 export async function registerPulseAdminAccount(
   input: PulseAdminRegistrationInput
 ): Promise<PulseAdminRegistrationResult> {
@@ -466,21 +349,17 @@ export async function registerPulseAdminAccount(
   try {
     await updateProfile(user, { displayName: name });
   } catch {
-    /* the profile write below still carries the display name */
+    /* The server falls back to the email local part. */
   }
-
-  const profileSaved = await savePulseAdminProfile(user, name, true);
-  recordInvitedAccount({
-    uid: user.uid,
-    email,
-    name,
-    role: "Admin",
-    kind: "console",
-    pharmacyName: null,
-    at: new Date().toISOString(),
-  });
-
-  return { uid: user.uid, email, name, profileSaved };
+  await user.getIdToken(true);
+  const profileSaved = await provisionPulseProfile(user, name);
+  if (!profileSaved) {
+    throw new FirebaseError(
+      "auth/network-request-failed",
+      "Pulse couldn't securely assign this account. Try signing in again in a moment."
+    );
+  }
+  return { uid: user.uid, email, name, profileSaved: true };
 }
 
 /* ------------------------------------------------------------------ */
@@ -496,7 +375,6 @@ type PharmacyRegistration = {
 };
 
 const PHARMACY_REGISTRY_KEY = "pulse.pharmacy-registrations.v1";
-const INVITED_ACCOUNTS_KEY = "pulse.invited-accounts.v1";
 
 /** Reads the local pharmacy registry (this browser only). */
 function readPharmacyRegistry(): PharmacyRegistration[] {
@@ -534,46 +412,6 @@ export function getPharmacyRegistrations(): PharmacyRegistration[] {
 /* Invitation acceptance                                               */
 /* ------------------------------------------------------------------ */
 
-type InvitedAccount = {
-  uid: string;
-  email: string;
-  name: string;
-  role: string;
-  kind: "team" | "console";
-  pharmacyName: string | null;
-  at: string;
-};
-
-function readInvitedAccounts(): InvitedAccount[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(INVITED_ACCOUNTS_KEY);
-    const parsed = raw ? (JSON.parse(raw) as InvitedAccount[]) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Role carried by a team invitation accepted on this device, if any. */
-export function getInvitedAccountRole(uid: string, email: string): string | null {
-  const normalized = email.trim().toLowerCase();
-  const match = readInvitedAccounts().find(
-    (account) => account.uid === uid || (normalized && account.email === normalized)
-  );
-  return match?.role ?? null;
-}
-
-function recordInvitedAccount(entry: InvitedAccount): void {
-  try {
-    const accounts = readInvitedAccounts().filter((account) => account.uid !== entry.uid);
-    accounts.push(entry);
-    window.localStorage.setItem(INVITED_ACCOUNTS_KEY, JSON.stringify(accounts));
-  } catch {
-    /* best-effort fallback — the Firestore profile remains the primary record */
-  }
-}
-
 export type InvitedAccountInput = {
   name: string;
   email: string;
@@ -588,14 +426,14 @@ export type InvitedAccountResult = {
   email: string;
   name: string;
   kind: "team" | "console";
-  profileSaved: boolean;
 };
 
 /**
  * Creates the Firebase Auth account for someone who arrived through an
- * invitation, then stores the role and organisation the invitation carried.
- * The pharmacy was created earlier by the inviter, so no new pharmacy is
- * registered here — the new account simply joins the right console.
+ * invitation. The account profile is deliberately NOT written here: account
+ * type and role come from the server's `acceptInvitation` callable, which
+ * reads the invitation record. That stops a browser from assigning itself
+ * `account_type` or a role when it registers.
  */
 export async function registerInvitedAccount(
   input: InvitedAccountInput
@@ -611,44 +449,13 @@ export async function registerInvitedAccount(
   const name = input.name.trim() || email.split("@")[0];
   try {
     await updateProfile(user, { displayName: name });
+    // Refresh the ID token so acceptInvitation can read the new display name.
+    await user.getIdToken(true);
   } catch {
-    /* the profile write below still carries the display name */
+    /* the invitation profile falls back to the email local part */
   }
 
-  const pharmacyName = input.pharmacyName?.trim() || null;
-  let profileSaved = false;
-  const store = getFirebaseDb();
-  if (store) {
-    try {
-      await setDoc(doc(store, "User", user.uid), {
-        email,
-        uid: user.uid,
-        display_name: name,
-        created_time: serverTimestamp(),
-        role: input.role.trim().toLowerCase(),
-        role_label: input.role.trim(),
-        account_type: input.kind === "console" ? "Pulse" : "Pharmacy",
-        pharmacy_name: pharmacyName,
-        invited: true,
-        approved_by_duniya: input.kind === "console",
-      });
-      profileSaved = true;
-    } catch {
-      /* rules or offline — the local fallback keeps the seat usable */
-    }
-  }
-
-  recordInvitedAccount({
-    uid: user.uid,
-    email,
-    name,
-    role: input.role.trim(),
-    kind: input.kind,
-    pharmacyName,
-    at: new Date().toISOString(),
-  });
-
-  return { uid: user.uid, email, name, kind: input.kind, profileSaved };
+  return { uid: user.uid, email, name, kind: input.kind };
 }
 
 export type PharmacyRegistrationInput = {
@@ -673,14 +480,13 @@ export type PharmacyRegistrationResult = {
  *     new owner in.
  *  2. Sets the auth display name to the owner's name.
  *  3. Writes a `User/{uid}` profile in the exact shape the Pulse pharmacy
- *     app reads (`account_type: "Pharmacy"`, `role: "owner"`,
- *     `pharmacy_name`, `approved_by_duniya: true` — self-registration is
- *     auto-approved, so the account is live on the Pulse network right
- *     away), so the same account works in the pharmacy app immediately.
+ *     app reads (`account_type: "Pharmacy"`, `role: "owner"`, and a
+ *     pending listing that Pulse can review before it becomes active).
  *
- * The Firestore write is best-effort: security rules or an outage must not
- * lose an already-created Auth account, so failures fall back to the local
- * registry (mechanism 3 of [isAdminUser]) and the caller still gets success.
+ * The Firestore write is constrained by security rules to this exact
+ * self-registration shape, so the browser can never assign `Pulse` or an
+ * arbitrary role. Failures fall back to the local registry for display only;
+ * they never grant portal access.
  *
  * Errors thrown before the Auth account exists are Firebase auth errors the
  * caller maps to friendly copy (see describeAuthError).
@@ -718,7 +524,8 @@ export async function registerPharmacyAccount(
         account_type: "Pharmacy",
         pharmacy_name: pharmacyName,
         pharmacy_id: user.uid,
-        approved_by_duniya: true, // self-registration is auto-approved
+        approved_by_duniya: false,
+        access_revoked: false,
       });
       profileSaved = true;
     } catch {

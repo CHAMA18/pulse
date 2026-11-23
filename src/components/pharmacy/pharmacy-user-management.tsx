@@ -31,6 +31,7 @@ import {
   CloudFunctionError,
   type InvitationMessage,
 } from "@/lib/cloud/invitations";
+import { updatePharmacyTeamMember } from "@/lib/cloud/pharmacy-team";
 import { recordAudit } from "@/lib/audit-log";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -874,27 +875,30 @@ export function PharmacyUserManagement({
       });
   };
 
-  /** Writes a team change through to the member's Firestore profile, so it
-      is enforced at their next sign-in on any device (not just listed here). */
-  const syncMemberToFirestore = (email: string, patch: Record<string, unknown>) => {
-    void (async () => {
-      try {
-        const { getFirebaseDb } = await import("@/lib/firebase");
-        const db = getFirebaseDb();
-        if (!db || !email) return;
-        const { collection, getDocs, query, where, doc, updateDoc } = await import("firebase/firestore");
-        const snap = await getDocs(query(collection(db, "User"), where("email", "==", email.toLowerCase())));
-        await Promise.all(snap.docs.map((entry) => updateDoc(doc(db, "User", entry.id), patch)));
-      } catch {
-        /* offline or rules — local roster still reflects the change */
-      }
-    })();
+  /** Applies an access change on the server; nothing is saved locally until
+      the callable confirms this caller may make the change for this pharmacy. */
+  const applyMemberChange = async (
+    member: PharmacyMember,
+    change: { action: "role"; role: PharmacyRole } | { action: "suspend" | "reactivate" | "remove" }
+  ): Promise<boolean> => {
+    try {
+      await updatePharmacyTeamMember(member.email, change);
+      return true;
+    } catch (err) {
+      const code = err instanceof CloudFunctionError ? err.code : "unknown";
+      toast({
+        title: "Access not updated",
+        description: `No change was saved (${code}). Check that you have permission for this teammate.`,
+        variant: "destructive",
+      });
+      return false;
+    }
   };
 
-  const changeRole = (member: PharmacyMember, role: PharmacyRole) => {
+  const changeRole = async (member: PharmacyMember, role: PharmacyRole) => {
     if (member.role === role) return;
+    if (!(await applyMemberChange(member, { action: "role", role }))) return;
     setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, role } : m)));
-    syncMemberToFirestore(member.email, { role, role_label: ROLE_META[role].label });
     toast({
       title: "Role updated",
       description: `${member.name} is now ${articleFor(ROLE_META[role].label)} ${ROLE_META[
@@ -908,7 +912,7 @@ export function PharmacyUserManagement({
     void trackEvent("pharmacy_user_role_changed", { to: role });
   };
 
-  const toggleStatus = (member: PharmacyMember) => {
+  const toggleStatus = async (member: PharmacyMember) => {
     if (member.role === "owner") {
       toast({
         title: "The account owner can't be suspended",
@@ -917,8 +921,9 @@ export function PharmacyUserManagement({
       return;
     }
     const next: MemberStatus = member.status === "suspended" ? "active" : "suspended";
+    const change = { action: next === "suspended" ? "suspend" : "reactivate" } as const;
+    if (!(await applyMemberChange(member, change))) return;
     setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, status: next } : m)));
-    syncMemberToFirestore(member.email, { access_revoked: next === "suspended" });
     toast({
       title: next === "suspended" ? "Account suspended" : "Account reactivated",
       description:
@@ -933,7 +938,7 @@ export function PharmacyUserManagement({
     void trackEvent("pharmacy_user_status_changed", { to: next });
   };
 
-  const removeMember = (member: PharmacyMember) => {
+  const removeMember = async (member: PharmacyMember) => {
     if (member.role === "owner") {
       toast({
         title: "The account owner can't be removed",
@@ -941,8 +946,8 @@ export function PharmacyUserManagement({
       });
       return;
     }
+    if (!(await applyMemberChange(member, { action: "remove" }))) return;
     setMembers((prev) => prev.filter((m) => m.id !== member.id));
-    syncMemberToFirestore(member.email, { access_revoked: true });
     toast({
       title: "User removed",
       description: `${member.name} no longer has access to this pharmacy.`,
