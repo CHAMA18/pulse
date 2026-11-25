@@ -7,6 +7,7 @@
     "dev:stock-sandbox": "node scripts/dev-stock-sandbox.mjs",
     "emulators:stock-sandbox": "firebase emulators:start --only auth,firestore,functions --project demo-pulse-stock-sandbox --config firebase.stock-sandbox.json",
     "seed:stock-sandbox": "node scripts/seed-stock-sandbox.cjs",
+    "deploy:functions": "./scripts/deploy-functions.sh",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "build:export": "NEXT_EXPORT=1 next build",
     "desktop:icons": "node scripts/desktop-icons.mjs",
