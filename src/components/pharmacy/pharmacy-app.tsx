@@ -34,7 +34,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PulseMark } from "@/components/login/pulse-logo";
@@ -1082,7 +1082,14 @@ export function PharmacyApp() {
       const db = getFirebaseDb();
       if (db && current) {
         try {
-          const snap = await getDoc(doc(db, "User", current.uid));
+          // Approval is written by the Pulse console on another device, so the
+          // cached profile can still say "not approved" right after the
+          // pharmacy is approved. Read the server copy and only fall back to
+          // the cache when we're offline.
+          const profileRef = doc(db, "User", current.uid);
+          const snap = await getDocFromServer(profileRef).catch(() =>
+            getDoc(profileRef)
+          );
           const data = snap.data() as
             | {
                 account_type?: string;

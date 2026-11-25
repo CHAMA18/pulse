@@ -677,7 +677,7 @@ export function PulsePharmacies() {
     }
   }, []);
 
-  const loadNetworkPharmacies = useCallback(async () => {
+  const loadNetworkPharmacies = useCallback(async (): Promise<boolean> => {
     try {
       const rows = await listPulsePharmacies();
       const remote = rows.map((row): Pharmacy => ({
@@ -706,8 +706,10 @@ export function PulsePharmacies() {
         const known = new Set(merged.map((pharmacy) => pharmacy.uid).filter(Boolean));
         return [...merged, ...activeRemote.filter((pharmacy) => !known.has(pharmacy.uid))];
       });
+      return true;
     } catch {
       /* Offline or not a Pulse account — keep the local registry fallback. */
+      return false;
     }
   }, []);
 
@@ -727,10 +729,25 @@ export function PulsePharmacies() {
 
   // Network registry: pharmacies that registered through Firebase live on
   // their Firestore User profile — merge them in so a registration or OTP
-  // claim made on another device is visible here too.
+  // claim made on another device is visible here too. The first call right
+  // after sign-in can fail transiently, which used to leave the roster empty
+  // until a manual refresh, so retry a couple of times before giving up.
   useEffect(() => {
     if (!hydrated) return;
-    void loadNetworkPharmacies();
+    let cancelled = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      const ok = await loadNetworkPharmacies();
+      if (cancelled || ok) return;
+      attempt += 1;
+      if (attempt < 3) timer = setTimeout(() => void load(), 1200 * attempt);
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [hydrated, loadNetworkPharmacies]);
 
   useEffect(() => {
