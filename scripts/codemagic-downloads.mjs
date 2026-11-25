@@ -10,7 +10,8 @@
  * static site (GitHub Pages) can still download the real builds.
  *
  * Usage:
- *   CODEMAGIC_API_TOKEN=... npm run desktop:downloads
+ *   CODEMAGIC_API_KEY=... npm run desktop:downloads
+ *   (CODEMAGIC_API_TOKEN is accepted as an alias.)
  */
 
 import { writeFileSync } from "node:fs";
@@ -19,7 +20,9 @@ import { fileURLToPath } from "node:url";
 
 const API = "https://api.codemagic.io";
 const APP_ID = process.env.CODEMAGIC_APP_ID?.trim() || "6af775a24cd793dd9f8cb82b";
-const TOKEN = process.env.CODEMAGIC_API_TOKEN?.trim();
+const TOKEN = (
+  process.env.CODEMAGIC_API_KEY ?? process.env.CODEMAGIC_API_TOKEN
+)?.trim();
 const OUTPUT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../src/lib/desktop-downloads.ts"
@@ -28,7 +31,7 @@ const EXPIRES_AT = Math.floor(Date.now() / 1000) + 10 * 365 * 24 * 60 * 60;
 
 if (!TOKEN) {
   console.error(
-    "CODEMAGIC_API_TOKEN is required. Find it in Codemagic → Account settings → API token."
+    "CODEMAGIC_API_KEY is required. Find it in Codemagic → Account settings → API token."
   );
   process.exit(1);
 }
