@@ -51,6 +51,7 @@ import {
   PageHeader,
   pharmacyCardCls,
   brandBtnCls,
+  stockStatusOf,
 } from "@/components/pharmacy/pharmacy-shared";
 import { CloseShiftDialog, OpenShiftDialog } from "@/components/pharmacy/shift-dialogs";
 import {
@@ -265,6 +266,24 @@ export function PharmacyPOS({
   const scopeAll = storeId === "all";
   const stockOf = (name: string, productId?: string) =>
     stockForProduct(name, items, scopeAll ? "all" : sellingStoreId, productId);
+
+  /**
+   * The reorder level this counter's shelves set for a product. The tile's
+   * "low" badge must agree with Stock Balance, so it reads each item's own
+   * trigger instead of a hard-coded number.
+   */
+  const reorderLevelOf = (name: string, productId?: string) => {
+    const levels = items
+      .filter((item) => {
+        const linked = productId
+          ? item.productId === productId || (!item.productId && item.name === name)
+          : item.name === name;
+        return linked && (scopeAll || resolveStoreId(item) === sellingStoreId);
+      })
+      .map((item) => item.reorderLevel)
+      .filter((level) => Number.isFinite(level) && level > 0);
+    return levels.length > 0 ? Math.max(...levels) : 10;
+  };
 
   const categories = useMemo(
     () => ["All", ...Array.from(new Set(catalogue.map((product) => product.category))).sort()],
@@ -862,7 +881,8 @@ export function PharmacyPOS({
               {filtered.map((product) => {
                 const stock = stockOf(product.name, product.id);
                 const out = stock <= 0;
-                const low = !out && stock <= 10;
+                const low =
+                  !out && stockStatusOf(stock, reorderLevelOf(product.name, product.id)) === "low";
                 const inCart = cart.find((line) => line.product.id === product.id)?.qty ?? 0;
                 return (
                   <button
@@ -1044,9 +1064,9 @@ export function PharmacyPOS({
                     <dd className="font-semibold tabular-nums">− {formatZMW(discount)}</dd>
                   </div>
                 )}
-                <div className="mt-1 flex items-baseline justify-between border-t border-dashed border-slate-200 pt-2.5 dark:border-white/10">
+                <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-dashed border-slate-200 pt-2.5 dark:border-white/10">
                   <dt className="text-[13.5px] font-bold">Total</dt>
-                  <dd className="text-[22px] font-bold leading-none tracking-tight tabular-nums text-slate-900 dark:text-white">
+                  <dd className="min-w-0 break-words text-right text-[22px] font-bold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">
                     {formatZMW(total)}
                   </dd>
                 </div>

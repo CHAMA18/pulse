@@ -214,7 +214,7 @@ function StatCard({
   tile: string;
 }) {
   return (
-    <motion.div variants={item} className={cn(pharmacyCardCls, "flex items-center gap-4 p-5")}>
+    <motion.div variants={item} className={cn(pharmacyCardCls, "flex min-w-0 items-center gap-4 overflow-hidden p-5")}>
       <span
         className={cn(
           "flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl",
@@ -223,11 +223,11 @@ function StatCard({
       >
         <Icon className="h-6 w-6" strokeWidth={2} aria-hidden="true" />
       </span>
-      <div className="min-w-0">
-        <p className="whitespace-nowrap text-[28px] font-bold leading-none tracking-tight text-slate-900 dark:text-white">
+      <div className="min-w-0 flex-1">
+        <p className="break-words text-[28px] font-bold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">
           {value}
         </p>
-        <p className="mt-1.5 whitespace-nowrap text-[14px] font-medium leading-none text-slate-600 dark:text-slate-300">
+        <p className="mt-1.5 text-[14px] font-medium leading-tight text-slate-600 dark:text-slate-300">
           {label}
         </p>
       </div>

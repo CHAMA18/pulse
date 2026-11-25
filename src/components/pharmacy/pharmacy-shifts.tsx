@@ -128,15 +128,15 @@ function StatCard({
   tile: string;
 }) {
   return (
-    <motion.div variants={item} className={cn(pharmacyCardCls, "flex items-center gap-4 p-5")}>
+    <motion.div variants={item} className={cn(pharmacyCardCls, "flex min-w-0 items-center gap-4 overflow-hidden p-5")}>
       <span className={cn("flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl", tile)}>
         <Icon className="h-6 w-6" strokeWidth={2} aria-hidden="true" />
       </span>
-      <div className="min-w-0">
-        <p className="whitespace-nowrap text-[24px] font-bold leading-none tracking-tight tabular-nums">
+      <div className="min-w-0 flex-1">
+        <p className="break-words text-[24px] font-bold leading-tight tracking-tight tabular-nums">
           {value}
         </p>
-        <p className="mt-1.5 text-[14px] font-semibold leading-none">{label}</p>
+        <p className="mt-1.5 text-[14px] font-semibold leading-tight">{label}</p>
         <p className="mt-1.5 truncate text-[12px] text-slate-500 dark:text-slate-400">{hint}</p>
       </div>
     </motion.div>
@@ -380,22 +380,22 @@ export function PharmacyShifts({
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-white/5">
                   <p className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Shift</p>
-                  <p className="mt-1 text-[16px] font-bold tabular-nums text-slate-900 dark:text-white">{myShift.id}</p>
+                  <p className="mt-1 break-words text-[16px] font-bold tabular-nums text-slate-900 dark:text-white">{myShift.id}</p>
                   <p className="mt-0.5 text-[11.5px] text-slate-500 dark:text-slate-400">Opened {dateTime(myShift.openedAt)}</p>
                 </div>
                 <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-white/5">
                   <p className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Opening float</p>
-                  <p className="mt-1 text-[16px] font-bold tabular-nums text-slate-900 dark:text-white">{money(myShift.openingFloat)}</p>
+                  <p className="mt-1 break-words text-[16px] font-bold tabular-nums text-slate-900 dark:text-white">{money(myShift.openingFloat)}</p>
                   <p className="mt-0.5 text-[11.5px] text-slate-500 dark:text-slate-400">Duration {shiftDuration(myShift)}</p>
                 </div>
                 <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-white/5">
                   <p className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Cash in</p>
-                  <p className="mt-1 text-[16px] font-bold tabular-nums text-slate-900 dark:text-white">{money(currentTotals.cashSales)}</p>
+                  <p className="mt-1 break-words text-[16px] font-bold tabular-nums text-slate-900 dark:text-white">{money(currentTotals.cashSales)}</p>
                   <p className="mt-0.5 text-[11.5px] text-slate-500 dark:text-slate-400">Refunds {money(currentTotals.cashRefunds)}</p>
                 </div>
                 <div className="rounded-xl bg-purple-50 px-4 py-3 dark:bg-purple-500/10">
                   <p className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-purple-600 dark:text-purple-300">Expected in till</p>
-                  <p className="mt-1 text-[20px] font-bold tabular-nums text-purple-700 dark:text-purple-200">{money(currentTotals.expectedCash)}</p>
+                  <p className="mt-1 break-words text-[20px] font-bold tabular-nums text-purple-700 dark:text-purple-200">{money(currentTotals.expectedCash)}</p>
                   <p className="mt-0.5 text-[11.5px] text-purple-600/80 dark:text-purple-300/80">
                     {currentTotals.transactionCount} sale{currentTotals.transactionCount === 1 ? "" : "s"} · {currentTotals.itemsSold} item{currentTotals.itemsSold === 1 ? "" : "s"}
                   </p>

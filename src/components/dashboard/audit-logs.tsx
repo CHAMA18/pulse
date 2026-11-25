@@ -273,15 +273,15 @@ export function AuditLogs() {
             { value: stats.people, label: "Active people", icon: Users },
           ] as const
         ).map(({ value, label, icon: Icon }) => (
-          <motion.div key={label} variants={item} className={cn(cardCls, "flex items-center gap-4 p-5")}>
+          <motion.div key={label} variants={item} className={cn(cardCls, "flex min-w-0 items-center gap-4 overflow-hidden p-5")}>
             <span className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400">
               <Icon className="h-6 w-6" strokeWidth={2} aria-hidden="true" />
             </span>
-            <div className="min-w-0">
-              <p className="whitespace-nowrap text-[28px] font-bold leading-none tracking-tight text-slate-700 dark:text-slate-100">
+            <div className="min-w-0 flex-1">
+              <p className="break-words text-[28px] font-bold leading-tight tracking-tight tabular-nums text-slate-700 dark:text-slate-100">
                 {value}
               </p>
-              <p className="mt-1.5 whitespace-nowrap text-[14.5px] font-medium leading-none text-slate-500 dark:text-slate-400">
+              <p className="mt-1.5 text-[14.5px] font-medium leading-tight text-slate-500 dark:text-slate-400">
                 {label}
               </p>
             </div>

@@ -353,7 +353,7 @@ function StatCard({
   return (
     <motion.div
       variants={item}
-      className={cn(cardCls, "flex items-center gap-4 p-5")}
+      className={cn(cardCls, "flex min-w-0 items-center gap-4 overflow-hidden p-5")}
     >
       <span
         className={cn(
@@ -363,11 +363,11 @@ function StatCard({
       >
         <Icon className="h-6 w-6" strokeWidth={2} aria-hidden="true" />
       </span>
-      <div className="min-w-0">
-        <p className="whitespace-nowrap text-[26px] font-bold leading-none tracking-tight text-slate-900 dark:text-white">
+      <div className="min-w-0 flex-1">
+        <p className="break-words text-[26px] font-bold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">
           {value}
         </p>
-        <p className="mt-1.5 whitespace-nowrap text-[13.5px] font-medium leading-none text-slate-500 dark:text-slate-400">
+        <p className="mt-1.5 text-[13.5px] font-medium leading-tight text-slate-500 dark:text-slate-400">
           {label}
         </p>
       </div>
