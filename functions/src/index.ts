@@ -302,6 +302,37 @@ export const ensurePulseAdminProfile = onCall(async (request) => {
   return { ok: true };
 });
 
+/**
+ * Portal verification fallback for the web client.
+ *
+ * The browser normally reads its own `User` profile directly, but that read
+ * can fail when the request is blocked, the device is offline, or a suspended
+ * tab holds the shared persistent-cache lease. Rather than stranding a
+ * signed-in user on "Couldn't verify your account", the client asks this
+ * callable, which reads the same document with the Admin SDK.
+ */
+export const resolveMyPortalAccess = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Sign in to continue.");
+  }
+  const snap = await db.collection("User").doc(request.auth.uid).get();
+  if (!snap.exists) {
+    return { exists: false, accountType: null, accessRevoked: false };
+  }
+  const data = snap.data() ?? {};
+  // The Flutter app wrote `accountType`; the web app writes `account_type`.
+  const normalized = String(data.account_type ?? data.accountType ?? "")
+    .trim()
+    .toLowerCase();
+  const accountType =
+    normalized === "pulse" ? "Pulse" : normalized === "pharmacy" ? "Pharmacy" : null;
+  return {
+    exists: true,
+    accountType,
+    accessRevoked: data.access_revoked === true,
+  };
+});
+
 /** Deliver one email through Resend and archive it for the portals' outbox views. */
 async function deliver(
   fn: string,

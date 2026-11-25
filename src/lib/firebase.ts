@@ -35,6 +35,7 @@ import {
   evaluatePortalAccess,
   normalizeAccountType,
   type PortalAccess,
+  type PortalProfile,
 } from "@/lib/portal-access";
 
 /**
@@ -60,6 +61,7 @@ let db: Firestore | null = null;
 let auth: Auth | null = null;
 let cloudFunctions: Functions | null = null;
 let cloudStorage: FirebaseStorage | null = null;
+
 let analyticsPromise: Promise<Analytics | null> | null = null;
 
 const STOCK_SANDBOX_PROJECT_ID = "demo-pulse-stock-sandbox";
@@ -263,19 +265,62 @@ export const googleProvider = new GoogleAuthProvider();
  * never consulted: both consoles use a role called "owner", so a role label
  * cannot tell a Pulse administrator from a pharmacy owner.
  */
-export async function resolvePortalAccess(user: User): Promise<PortalAccess> {
+/**
+ * Reads the signed-in caller's profile through the server when the browser's
+ * Firestore read fails (offline, a blocked request, or a suspended tab holding
+ * the persistent-cache lease). The callable authenticates with the same ID
+ * token and reads with the Admin SDK, so it does not depend on the local cache.
+ */
+async function readPortalProfileFromServer(): Promise<{
+  profile: PortalProfile;
+  verified: boolean;
+}> {
+  const functions = getFirebaseFunctions();
+  if (!functions) return { profile: null, verified: false };
+  try {
+    const callable = httpsCallable<
+      Record<string, never>,
+      { exists: boolean; accountType: string | null; accessRevoked: boolean }
+    >(functions, "resolveMyPortalAccess");
+    const { data } = await callable({});
+    if (!data || data.exists !== true) return { profile: null, verified: true };
+    return {
+      profile: {
+        account_type: data.accountType ?? undefined,
+        access_revoked: data.accessRevoked === true,
+      },
+      verified: true,
+    };
+  } catch {
+    return { profile: null, verified: false };
+  }
+}
+
+/**
+ * Reads the caller's profile, answering from the local cache when it can and
+ * asking the server when it cannot. A single failed read must not strand a
+ * signed-in user on the "couldn't verify" screen.
+ */
+async function readPortalProfile(user: User): Promise<{
+  profile: PortalProfile;
+  verified: boolean;
+}> {
   const store = getFirebaseDb();
   if (store) {
     try {
       const snap = await getDoc(doc(store, "User", user.uid));
-      const profile = snap.data() as
-        | { account_type?: unknown; access_revoked?: unknown }
-        | undefined;
-      return evaluatePortalAccess({ profile, verified: true });
-    } catch {
-      /* offline or denied — a trusted claim may still identify the account */
+      return { profile: (snap.data() as PortalProfile) ?? null, verified: true };
+    } catch (error) {
+      // Keep the reason in the console so a recurring failure is diagnosable.
+      console.warn("Portal profile read failed; asking the server instead.", error);
     }
   }
+  return readPortalProfileFromServer();
+}
+
+export async function resolvePortalAccess(user: User): Promise<PortalAccess> {
+  const { profile, verified } = await readPortalProfile(user);
+  if (verified) return evaluatePortalAccess({ profile, verified: true });
 
   try {
     const token = await user.getIdTokenResult();
