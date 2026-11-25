@@ -17,13 +17,35 @@ function functionsOrThrow() {
   return functions;
 }
 
-export async function listMedicalProducts(query = ""): Promise<MedicalProduct[]> {
-  const callable = httpsCallable<{ query: string }, { products: MedicalProduct[] }>(
+export async function listMedicalProducts(
+  query = "",
+  cursor?: string | null
+): Promise<{ products: MedicalProduct[]; nextCursor: string | null }> {
+  const callable = httpsCallable<
+    { query: string; cursor?: string },
+    { products: MedicalProduct[]; nextCursor: string | null }
+  >(
     functionsOrThrow(),
     "listMedicalProducts"
   );
-  const result = await callable({ query });
-  return Array.isArray(result.data.products) ? result.data.products : [];
+  const result = await callable({ query, ...(cursor ? { cursor } : {}) });
+  return {
+    products: Array.isArray(result.data.products) ? result.data.products : [],
+    nextCursor: result.data.nextCursor ?? null,
+  };
+}
+
+export async function ensureMedicalProductSearchIndex(): Promise<void> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    { done: boolean; busy?: boolean; indexed?: number }
+  >(functionsOrThrow(), "backfillMedicalProductSearchIndex");
+  let done = false;
+  while (!done) {
+    const result = await callable({});
+    done = result.data.done;
+    if (result.data.busy) await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
 }
 
 export async function registerMedicalProduct(input: {

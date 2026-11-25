@@ -27,7 +27,7 @@ const SURFACE = "#fafaf8";
 const CANVAS = "#f3f1ee";
 
 /** Hosted 4× mark (public/brand/pulse-mark.png) — never a data URI. */
-const LOGO_URL = "https://chama18.github.io/pulse/brand/pulse-mark.png";
+const LOGO_URL = "https://pulse.duniyahealthcare.com/brand/pulse-mark.png";
 const FONT =
   "'Satoshi',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 

@@ -394,6 +394,57 @@ export function pharmacyWelcomeEmail(params: {
   };
 }
 
+export type PendingPharmacyRegistrationEmailParams = {
+  pharmacyName: string;
+  ownerName: string;
+  ownerEmail: string;
+  teamEmails: number;
+  registeredAt: string;
+  consoleUrl: string;
+};
+
+/** Pulse network review notice — one per pending pharmacy registration. */
+export function pendingPharmacyRegistrationEmail(
+  params: PendingPharmacyRegistrationEmailParams
+): EmailContent {
+  return {
+    subject: `Pending review: ${params.pharmacyName} registered on Pulse`,
+    html: layout({
+      preheader: `${params.pharmacyName} (${params.ownerEmail}) is waiting for network approval.`,
+      eyebrow: "Registration review",
+      heading: "A pharmacy is pending review",
+      intro: `<strong style="color:${INK};">${esc(params.pharmacyName)}</strong> has registered on the Pulse network and is waiting for approval before its listing goes live.`,
+      bodyHtml: detailsCard("Registration details", [
+        { label: "Pharmacy", value: params.pharmacyName },
+        { label: "Owner", value: params.ownerName },
+        { label: "Owner email", value: params.ownerEmail },
+        {
+          label: "Team invitations",
+          value: params.teamEmails ? `${params.teamEmails} sent` : "None listed",
+        },
+        { label: "Registered", value: params.registeredAt },
+      ], "Pending review"),
+      ctaLabel: "Review in Pulse",
+      ctaHref: params.consoleUrl,
+      ctaNote: "Approve, reject or remove the listing from Pulse Pharmacies. The pharmacy can keep stocking and requesting while it waits.",
+      footerNote: "You are receiving this because you are an Owner or Admin on the Pulse console.",
+      reason: `a pharmacy registration is awaiting network review.`,
+    }),
+    text: [
+      `Pending review — ${params.pharmacyName}`,
+      "",
+      `${params.pharmacyName} registered on Pulse and is awaiting approval.`,
+      `Owner: ${params.ownerName} · ${params.ownerEmail}`,
+      `Team invitations: ${params.teamEmails ? `${params.teamEmails} sent` : "None listed"}`,
+      `Registered: ${params.registeredAt}`,
+      "",
+      `Review in Pulse: ${params.consoleUrl}`,
+      "",
+      "— Pulse · Pharmacy intelligence, delivered",
+    ].join("\n"),
+  };
+}
+
 export function pulseAdminInviteEmail(params: {
   inviterName: string;
   inviteeName: string;

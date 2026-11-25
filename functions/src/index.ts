@@ -30,6 +30,7 @@ import { createHash, randomBytes, randomUUID } from "crypto";
 import * as admin from "firebase-admin";
 import {
   lowStockAlertEmail,
+  pendingPharmacyRegistrationEmail,
   pharmacyWelcomeEmail,
   pulseAdminInviteEmail,
   receiptEmail,
@@ -50,7 +51,53 @@ setGlobalOptions({ region: "europe-west1", maxInstances: 10 });
 /** Resend API key — provided by Secret Manager at runtime. */
 const resendApiKey = defineSecret("RESEND_API_KEY");
 
-const APP_URL = process.env.APP_URL ?? "https://chama18.github.io/pulse/";
+/** Public app origin for links in email. GitHub Pages was the previous host;
+ * links must always point at the deployed custom domain instead. */
+const DEFAULT_APP_URL = "https://pulse.duniyahealthcare.com/";
+const LEGACY_APP_HOSTS = new Set(["chama18.github.io"]);
+/** Hosts whose Origin header may be reflected back into an email link. */
+const TRUSTED_APP_HOSTS = new Set(["pulse.duniyahealthcare.com", "duniya-web.onrender.com"]);
+
+function normalizeAppUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+}
+
+function configuredAppUrl(): string {
+  const configured = normalizeAppUrl(process.env.APP_URL ?? "");
+  if (!configured) return DEFAULT_APP_URL;
+  try {
+    // A stale GitHub Pages setting must never pull email links off the domain.
+    if (LEGACY_APP_HOSTS.has(new URL(configured).hostname.toLowerCase())) return DEFAULT_APP_URL;
+  } catch {
+    return DEFAULT_APP_URL;
+  }
+  return configured;
+}
+
+function trustedAppOrigin(value: unknown): string | null {
+  try {
+    const parsed = new URL(String(value ?? ""));
+    const host = parsed.hostname.toLowerCase();
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    if (isLocal ? !/^https?:$/.test(parsed.protocol) : !TRUSTED_APP_HOSTS.has(host)) return null;
+    if (!isLocal && parsed.protocol !== "https:") return null;
+    return `${parsed.origin}/`;
+  } catch {
+    return null;
+  }
+}
+
+/** Email links follow the origin the caller is using, then the configured URL. */
+function appUrlFor(request: {
+  rawRequest?: { headers?: { [key: string]: unknown } };
+}): string {
+  return trustedAppOrigin(request.rawRequest?.headers?.origin) ?? configuredAppUrl();
+}
+
+/** Fallback for triggers with no caller (Firestore events). */
+const APP_URL = configuredAppUrl();
 // Send from the domain verified in Resend for this project.
 const FROM = process.env.EMAIL_FROM ?? "Pulse <noreply@thestackone.com>";
 const REPLY_TO = process.env.EMAIL_REPLY_TO ?? "noreply@thestackone.com";
@@ -309,8 +356,8 @@ async function deliver(
   return id;
 }
 
-function acceptUrl(ref: string): string {
-  return `${APP_URL}login/?invite=${encodeURIComponent(ref)}`;
+function acceptUrl(ref: string, appUrl: string): string {
+  return `${appUrl}login/?invite=${encodeURIComponent(ref)}`;
 }
 
 const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -464,7 +511,7 @@ export const sendTeamInvite = onCall({ secrets: [resendApiKey] }, async (request
     storeNames,
     personalMessage,
     inviteId,
-    acceptUrl: acceptUrl(inviteId),
+    acceptUrl: acceptUrl(inviteId, appUrlFor(request)),
     expiresAt: expiryLabel(expiresAt),
   });
 
@@ -531,7 +578,7 @@ export const sendPulseAdminInvite = onCall(
     inviteeEmail,
     role,
     inviteId,
-    acceptUrl: acceptUrl(inviteId),
+    acceptUrl: acceptUrl(inviteId, appUrlFor(request)),
     expiresAt: expiryLabel(expiresAt),
   });
 
@@ -2168,6 +2215,31 @@ type MedicalProductRecord = {
   createdAt?: number;
 };
 
+function medicalProductSearchPrefixes(name: string): string[] {
+  const words = name.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase("en-US").match(/[\p{L}\p{N}]+/gu) ?? [];
+  const prefixes = new Set<string>();
+  const indexedParts = [...words];
+  for (const word of words) {
+    const parts = [word, ...(word.match(/[\p{L}]+|[\p{N}]+/gu) ?? [])];
+    indexedParts.push(...parts.slice(1));
+  }
+  for (let index = 0; index < words.length - 1; index += 1) {
+    const left = words[index];
+    const right = words[index + 1];
+    if ((/^\p{N}+$/u.test(left) && /^\p{L}+$/u.test(right)) || (/^\p{L}+$/u.test(left) && /^\p{N}+$/u.test(right))) {
+      indexedParts.push(`${left}${right}`);
+    }
+  }
+  for (const part of indexedParts) for (let length = 2; length <= part.length; length += 1) prefixes.add(part.slice(0, length));
+  return [...prefixes];
+}
+
+function normalizedMedicalProductSearchTerms(query: string): string[] {
+  return [...new Set(
+    query.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase("en-US").match(/[\p{L}\p{N}]+/gu) ?? []
+  )].filter((term) => term.length >= 2);
+}
+
 /** The shared medical register is independent of warehouse batch quantities. */
 export const listMedicalProducts = onCall(async (request) => {
   await requirePulseActor(request);
@@ -2177,13 +2249,95 @@ export const listMedicalProducts = onCall(async (request) => {
     .replace(/\s+/g, " ")
     .normalize("NFKC")
     .toLocaleLowerCase("en-US");
-  const base = collection.orderBy("normalizedName");
-  const snap = query
-    ? await base.startAt(query).endAt(`${query}\uf8ff`).limit(100).get()
-    : await base.limit(250).get();
+  const cursor = String(request.data?.cursor ?? "").trim();
+  const terms = normalizedMedicalProductSearchTerms(query);
+  const pageSize = 100;
+  let pageQuery: admin.firestore.Query;
+  if (terms.length) {
+    const primaryTerm = [...terms].sort((left, right) => right.length - left.length)[0];
+    pageQuery = collection.where("searchPrefixes", "array-contains", primaryTerm);
+  } else {
+    pageQuery = collection.orderBy("normalizedName");
+  }
+  if (cursor) {
+    const cursorSnap = await collection.doc(cursor).get();
+    if (cursorSnap.exists) pageQuery = pageQuery.startAfter(cursorSnap);
+  }
+  const snap = await pageQuery.limit(pageSize).get();
+  const docs = snap.docs.filter((doc) => {
+    if (!terms.length) return true;
+    const prefixes = new Set(Array.isArray(doc.get("searchPrefixes")) ? doc.get("searchPrefixes") as string[] : []);
+    return terms.every((term) => prefixes.has(term));
+  });
   return {
-    products: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as MedicalProductRecord[],
+    products: docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: String(data.name ?? ""),
+        category: String(data.category ?? "General"),
+        normalizedName: String(data.normalizedName ?? ""),
+        ...(typeof data.createdAt === "number" ? { createdAt: data.createdAt } : {}),
+      } satisfies MedicalProductRecord;
+    }),
+    nextCursor: snap.size === pageSize ? snap.docs[snap.docs.length - 1].id : null,
   };
+});
+
+/** Reindex existing register documents in resumable batches without creating products. */
+export const backfillMedicalProductSearchIndex = onCall(async (request) => {
+  await requirePulseActor(request);
+  const products = db.collection("MedicalProductCatalogue");
+  const progressRef = db.collection("MedicalProductCatalogueMeta").doc("search-prefixes-v1");
+  const claim = await db.runTransaction(async (transaction) => {
+    const progressSnap = await transaction.get(progressRef);
+    const progress = progressSnap.data() ?? {};
+    if (progress.done === true) return { done: true as const };
+    const now = Date.now();
+    if (String(progress.lockId ?? "") && Number(progress.lockedUntil ?? 0) > now) {
+      return { done: false as const, busy: true as const };
+    }
+    const lockId = randomUUID();
+    transaction.set(progressRef, { lockId, lockedUntil: now + 120_000 }, { merge: true });
+    return {
+      done: false as const,
+      busy: false as const,
+      lockId,
+      cursor: String(progress.cursor ?? ""),
+    };
+  });
+  if (claim.done || claim.busy) return claim;
+
+  let pageQuery: admin.firestore.Query = products.orderBy(admin.firestore.FieldPath.documentId());
+  if (claim.cursor) {
+    const cursorSnap = await products.doc(claim.cursor).get();
+    if (cursorSnap.exists) pageQuery = pageQuery.startAfter(cursorSnap);
+  }
+  const page = await pageQuery.limit(400).get();
+  const nextCursor = page.size === 400 ? page.docs[page.docs.length - 1].id : null;
+  const updates = page.docs.flatMap((doc) => {
+    const name = String(doc.get("name") ?? "");
+    const searchPrefixes = medicalProductSearchPrefixes(name);
+    const current = doc.get("searchPrefixes");
+    const alreadyIndexed = Array.isArray(current) && current.length === searchPrefixes.length &&
+      searchPrefixes.every((prefix) => current.includes(prefix));
+    return alreadyIndexed ? [] : [{ ref: doc.ref, searchPrefixes }];
+  });
+
+  return db.runTransaction(async (transaction) => {
+    const progressSnap = await transaction.get(progressRef);
+    if (progressSnap.get("lockId") !== claim.lockId) return { done: false, busy: true };
+    for (const update of updates) transaction.update(update.ref, { searchPrefixes: update.searchPrefixes });
+    transaction.set(progressRef, {
+      cursor: nextCursor,
+      done: nextCursor === null,
+      lockId: admin.firestore.FieldValue.delete(),
+      lockedUntil: admin.firestore.FieldValue.delete(),
+      processed: admin.firestore.FieldValue.increment(page.size),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return { done: nextCursor === null, busy: false, processed: page.size, indexed: updates.length };
+  });
 });
 
 /** Mirror each pharmacy's existing local catalogue into the shared register. */
@@ -2213,9 +2367,15 @@ export const syncPharmacyMedicalProducts = onCall(async (request) => {
   const batch = db.batch();
   let synced = 0;
   for (const [index, snapshot] of existing.entries()) {
-    if (snapshot.exists) continue;
-    batch.set(entries[index].ref, { ...entries[index].product, createdAt: Date.now() });
-    synced += 1;
+    const entry = entries[index];
+    const searchPrefixes = medicalProductSearchPrefixes(entry.product.name);
+    if (!snapshot.exists) {
+      batch.set(entry.ref, { ...entry.product, searchPrefixes, createdAt: Date.now() });
+      synced += 1;
+    } else if (!Array.isArray(snapshot.get("searchPrefixes"))) {
+      batch.set(entry.ref, { searchPrefixes }, { merge: true });
+      synced += 1;
+    }
   }
   if (synced) await batch.commit();
   return { synced };
@@ -2231,11 +2391,13 @@ export const registerMedicalProduct = onCall(async (request) => {
   }
   const normalizedName = name.normalize("NFKC").toLocaleLowerCase("en-US");
   const id = `med_${createHash("sha256").update(normalizedName).digest("hex").slice(0, 40)}`;
+  const searchPrefixes = medicalProductSearchPrefixes(name);
   const ref = db.collection("MedicalProductCatalogue").doc(id);
   return db.runTransaction(async (transaction) => {
     const existing = await transaction.get(ref);
     if (existing.exists) {
       const data = existing.data() ?? {};
+      if (!Array.isArray(data.searchPrefixes)) transaction.update(ref, { searchPrefixes });
       return {
         product: {
           id: existing.id,
@@ -2248,7 +2410,7 @@ export const registerMedicalProduct = onCall(async (request) => {
       };
     }
     const product: MedicalProductRecord = { id, name, category, normalizedName, createdAt: Date.now() };
-    transaction.create(ref, product);
+    transaction.create(ref, { ...product, searchPrefixes });
     return { product, created: true };
   });
 });
@@ -2521,7 +2683,7 @@ export const createPharmacyStockRequests = onCall(
               priority: entry.priority,
               ...(entry.notes ? { note: entry.notes } : {}),
             })),
-            consoleUrl: `${APP_URL}dashboard/?page=requests`,
+            consoleUrl: `${appUrlFor(request)}dashboard/?page=requests`,
           });
           const results = await Promise.allSettled(
             recipients.map((email) =>
@@ -2793,7 +2955,7 @@ export const updateReceivedStockRequest = onCall({ secrets: [resendApiKey] }, as
           batch: String(updated.batch ?? ""),
           expiry: String(updated.expiry ?? ""),
           dispatchedAt: lusakaTimestamp(updated.dispatchedAt),
-          pharmacyUrl: `${APP_URL}pharmacy/`,
+          pharmacyUrl: `${appUrlFor(request)}pharmacy/`,
         });
         const result = await notifyEmailRecipients(
           "updateReceivedStockRequest",
@@ -2912,7 +3074,7 @@ export const receivePharmacyStockRequest = onCall({ secrets: [resendApiKey] }, a
           batch: String(outcome.request.batch ?? ""),
           receivedBy: actor.name,
           deliveredAt: lusakaTimestamp(outcome.request.deliveredAt),
-          consoleUrl: `${APP_URL}dashboard/?page=requests`,
+          consoleUrl: `${appUrlFor(request)}dashboard/?page=requests`,
         });
         const result = await notifyEmailRecipients(
           "receivePharmacyStockRequest",
@@ -3204,7 +3366,7 @@ export const sendLowStockAlert = onCall({ secrets: [resendApiKey] }, async (requ
   const content = lowStockAlertEmail({
     pharmacyName,
     items,
-    consoleUrl: APP_URL,
+    consoleUrl: appUrlFor(request),
     triggeredAt: new Date(now).toLocaleString("en-US", {
       weekday: "long",
       month: "long",
@@ -3566,7 +3728,7 @@ export const onPharmacyCreated = onCall(
     ownerName,
     ownerEmail,
     teamEmails,
-    consoleUrl: `${APP_URL}pharmacy/`,
+    consoleUrl: `${appUrlFor(request)}pharmacy/`,
   });
   sent.push(await deliver("onPharmacyCreated", [ownerEmail], welcome, "Pharmacy welcome"));
 
@@ -3599,7 +3761,7 @@ export const onPharmacyCreated = onCall(
       storeNames,
       personalMessage,
       inviteId,
-      acceptUrl: acceptUrl(inviteId),
+      acceptUrl: acceptUrl(inviteId, appUrlFor(request)),
       expiresAt: expiryLabel(expiresAt),
     });
     try {
@@ -3610,7 +3772,52 @@ export const onPharmacyCreated = onCall(
     }
   }
 
-  return { messageIds: sent, invited: sent.length - 1 };
+  // Alert the Pulse team once per pharmacy that is still pending review.
+  // Best-effort by design: a mail failure must never undo a registration,
+  // and the marker document stops client retries from re-notifying the team.
+  let notifiedAdmins = { sent: 0, failed: 0 };
+  const pharmacyId = request.auth.uid;
+  try {
+    const profile = await db.collection("User").doc(pharmacyId).get();
+    if (profile.get("approved_by_duniya") !== true) {
+      const alertRef = db.collection("PharmacyRegistrationAlert").doc(pharmacyId);
+      const claimed = await db.runTransaction(async (transaction) => {
+        const existing = await transaction.get(alertRef);
+        if (existing.exists) return false;
+        transaction.set(alertRef, {
+          pharmacyId,
+          pharmacyName,
+          ownerName,
+          ownerEmail,
+          teamInvites: seen.size - 1,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return true;
+      });
+      if (claimed) {
+        const admins = await pulseAdminRecipients();
+        if (admins.length) {
+          notifiedAdmins = await notifyEmailRecipients(
+            "onPharmacyCreated",
+            admins,
+            pendingPharmacyRegistrationEmail({
+              pharmacyName,
+              ownerName,
+              ownerEmail,
+              teamEmails: seen.size - 1,
+              registeredAt: lusakaTimestamp(Date.now()),
+              consoleUrl: `${appUrlFor(request)}dashboard/?page=pharmacies`,
+            }),
+            "Pending pharmacy registration"
+          );
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[onPharmacyCreated] Pending-registration alert failed", error);
+  }
+
+  return { messageIds: sent, invited: sent.length - 1, notifiedAdmins };
 });
 
 /* ------------------------------------------------------------------ */
@@ -3671,7 +3878,7 @@ export const onPharmacyDocCreated = onDocumentCreated(
       role: "Team member",
       storeNames,
       inviteId,
-      acceptUrl: acceptUrl(inviteId),
+      acceptUrl: acceptUrl(inviteId, APP_URL),
       expiresAt: expiryLabel(expiresAt),
     });
     try {

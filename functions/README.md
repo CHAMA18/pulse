@@ -32,9 +32,9 @@ npm install
 # no SMTP host or password needed.
 firebase functions:secrets:set RESEND_API_KEY
 
-# Optional overrides (the defaults target the GH Pages deployment and the
-# verified sender):
-# APP_URL=https://chama18.github.io/pulse/
+# Optional overrides (links default to the deployed custom domain; a stale
+# GitHub Pages APP_URL is ignored so email links never leave the domain):
+# APP_URL=https://pulse.duniyahealthcare.com/
 # EMAIL_FROM="Pulse <noreply@thestackone.com>"
 # EMAIL_REPLY_TO=noreply@thestackone.com
 ```

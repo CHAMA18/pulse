@@ -24,7 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 import { DUNIYA_MARKUP_PERCENT, duniyaUnitPrice, formatZmw } from "@/lib/pricing";
-import { listMedicalProducts, registerMedicalProduct, type MedicalProduct } from "@/lib/cloud/medical-products";
+import { ensureMedicalProductSearchIndex, listMedicalProducts, registerMedicalProduct, type MedicalProduct } from "@/lib/cloud/medical-products";
 import {
   Command,
   CommandEmpty,
@@ -56,7 +56,10 @@ export function WarehouseCatalogue() {
   const [stockFilter, setStockFilter] = useState<"all" | "available" | "low" | "out">("all");
   const [medicalProducts, setMedicalProducts] = useState<MedicalProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
+  const [productsCursor, setProductsCursor] = useState<string | null>(null);
   const [productsError, setProductsError] = useState("");
+  const [searchIndexReady, setSearchIndexReady] = useState(false);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [productQuery, setProductQuery] = useState("");
   const [registeringProduct, setRegisteringProduct] = useState(false);
@@ -73,12 +76,32 @@ export function WarehouseCatalogue() {
   useEffect(() => {
     if (!receiveOpen) return;
     let active = true;
+    setProductsLoading(true);
+    setProductsError("");
+    void ensureMedicalProductSearchIndex()
+      .then(() => {
+        if (active) setSearchIndexReady(true);
+      })
+      .catch((error: unknown) => {
+        if (active) setProductsError(error instanceof Error ? error.message : "The searchable product register could not be prepared.");
+      })
+      .finally(() => {
+        if (active) setProductsLoading(false);
+      });
+    return () => { active = false; };
+  }, [receiveOpen]);
+
+  useEffect(() => {
+    if (!receiveOpen || !searchIndexReady) return;
+    let active = true;
     const timer = window.setTimeout(() => {
       setProductsLoading(true);
       setProductsError("");
       void listMedicalProducts(productQuery)
-        .then((products) => {
-          if (active) setMedicalProducts(products.sort((a, b) => a.name.localeCompare(b.name)));
+        .then((page) => {
+          if (!active) return;
+          setMedicalProducts(page.products.sort((a, b) => a.name.localeCompare(b.name)));
+          setProductsCursor(page.nextCursor);
         })
         .catch((error: unknown) => {
           if (active) setProductsError(error instanceof Error ? error.message : "The medical product register could not be loaded.");
@@ -91,7 +114,25 @@ export function WarehouseCatalogue() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [receiveOpen, productQuery]);
+  }, [receiveOpen, productQuery, searchIndexReady]);
+
+  const loadMoreMedicalProducts = async () => {
+    if (!productsCursor || loadingMoreProducts) return;
+    setLoadingMoreProducts(true);
+    try {
+      const page = await listMedicalProducts(productQuery, productsCursor);
+      setMedicalProducts((current) => {
+        const byId = new Map(current.map((product) => [product.id, product]));
+        for (const product of page.products) byId.set(product.id, product);
+        return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      setProductsCursor(page.nextCursor);
+    } catch (error) {
+      toast({ title: "More products could not be loaded", description: error instanceof Error ? error.message : "Try again in a moment.", variant: "destructive" });
+    } finally {
+      setLoadingMoreProducts(false);
+    }
+  };
 
   const persist = (next: WarehouseItem[]) => {
     setItems(next);
@@ -365,13 +406,14 @@ export function WarehouseCatalogue() {
                     <CommandInput
                       value={productQuery}
                       onValueChange={setProductQuery}
-                      placeholder="Search registered products by name…"
-                      disabled={productsLoading || registeringProduct}
+                      placeholder="Search by medicine, word, or strength…"
+                      disabled={productsLoading || loadingMoreProducts || registeringProduct}
                     />
                     <CommandList>
                       {productsLoading ? (
                         <div className="flex items-center justify-center gap-2 px-4 py-6 text-[13px] text-slate-500">
-                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading product register…
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          {searchIndexReady ? "Loading product register…" : "Preparing searchable product register…"}
                         </div>
                       ) : productsError ? (
                         <div className="px-4 py-5 text-center text-[12.5px] text-rose-600 dark:text-rose-300">
@@ -396,6 +438,19 @@ export function WarehouseCatalogue() {
                         </>
                       )}
                     </CommandList>
+                    {productsCursor && !productsLoading && !productsError && (
+                      <div className="border-t border-slate-100 p-2 dark:border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => void loadMoreMedicalProducts()}
+                          disabled={loadingMoreProducts}
+                          className="flex h-9 w-full items-center justify-center gap-2 rounded-md px-2 text-[12.5px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-white/5"
+                        >
+                          {loadingMoreProducts && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                          {loadingMoreProducts ? "Loading more products…" : "Load more products"}
+                        </button>
+                      </div>
+                    )}
                     {!productsLoading && !productsError && productQuery.trim().length >= 2 && !exactProductMatch && (
                       <div className="border-t border-slate-100 p-2 dark:border-white/10">
                         <p className="px-2 pb-1 text-[11.5px] text-slate-500 dark:text-slate-400">Not registered? Add it to the shared product register first.</p>
