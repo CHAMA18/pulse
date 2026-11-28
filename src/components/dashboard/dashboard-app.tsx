@@ -1047,7 +1047,7 @@ export function DashboardApp() {
             className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
           >
             {page === "pharmacies" ? (
-              <PulsePharmacies />
+              <PulsePharmacies role={user.role} />
             ) : page === "requests" ? (
               <StockRequestsReceived />
             ) : page === "reconciliation" ? (

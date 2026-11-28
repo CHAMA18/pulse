@@ -29,6 +29,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/firebase";
+import { CloudFunctionError } from "@/lib/cloud/invitations";
+import {
+  canManageConsoleUsers,
+  PULSE_ROLE_META,
+  type PulseRole,
+} from "@/lib/pulse-rbac";
 import { hardDeletePharmacyAccount } from "@/lib/cloud/pharmacy-admin";
 import {
   listPulsePharmacies,
@@ -642,8 +648,11 @@ function HardDeleteDialog({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export function PulsePharmacies() {
+export function PulsePharmacies({ role }: { role: PulseRole }) {
   const { toast } = useToast();
+  // Approving, rejecting and removing a listing is server-side Owner/Admin
+  // work; Staff can read the registry but must not be offered the actions.
+  const canManage = canManageConsoleUsers(role);
 
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [removed, setRemoved] = useState<Pharmacy[]>([]);
@@ -818,6 +827,14 @@ export function PulsePharmacies() {
   /* ---------------- mutations ---------------- */
 
   const changeStatus = async (pharmacy: Pharmacy, status: PharmacyStatus) => {
+    if (!canManage) {
+      toast({
+        title: "Only Owners and Admins can change a listing",
+        description: `Your console role is ${PULSE_ROLE_META[role].label}. Ask an Owner to upgrade your access.`,
+        variant: "destructive",
+      });
+      return;
+    }
     const key = pharmacy.uid ?? pharmacy.id;
     if (pharmacy.uid) {
       try {
@@ -828,10 +845,15 @@ export function PulsePharmacies() {
         } else {
           await setPharmacyApproval(pharmacy.uid, status);
         }
-      } catch {
+      } catch (error) {
+        // Keep the server's reason: a role or data problem is actionable, while
+        // "check your permissions" hides which permission is actually missing.
         toast({
           title: "Pharmacy status not saved",
-          description: "The registry couldn't be updated. Check your permissions and try again.",
+          description:
+            error instanceof CloudFunctionError && error.message
+              ? error.message
+              : "The registry couldn't be updated. Check your permissions and try again.",
           variant: "destructive",
         });
         return;
@@ -972,6 +994,14 @@ export function PulsePharmacies() {
   };
 
   const restorePharmacy = async (pharmacy: Pharmacy) => {
+    if (!canManage) {
+      toast({
+        title: "Only Owners and Admins can restore a listing",
+        description: `Your console role is ${PULSE_ROLE_META[role].label}.`,
+        variant: "destructive",
+      });
+      return;
+    }
     if (!pharmacy.uid || restoringUid) return;
     setRestoringUid(pharmacy.uid);
 
@@ -1001,11 +1031,14 @@ export function PulsePharmacies() {
         description: `${pharmacy.name} is back on the Pulse roster.`,
       });
       void trackEvent("pharmacy_restored");
-    } catch {
+    } catch (error) {
       toast({
         title: "Restore failed",
         description:
-          "The pharmacy could not be restored. Check the connection and try again.",
+          error instanceof CloudFunctionError && error.message
+            ? error.message
+            : "The pharmacy could not be restored. Check the connection and try again.",
+        variant: "destructive",
       });
     } finally {
       setRestoringUid(null);
@@ -1013,6 +1046,14 @@ export function PulsePharmacies() {
   };
 
   const hardDeletePharmacy = async () => {
+    if (!canManage) {
+      toast({
+        title: "Only Owners and Admins can delete a pharmacy",
+        description: `Your console role is ${PULSE_ROLE_META[role].label}.`,
+        variant: "destructive",
+      });
+      return;
+    }
     const pharmacy = hardDeleteTarget;
     if (!pharmacy?.uid || hardDeleting) return;
     setHardDeleting(true);
@@ -1156,17 +1197,19 @@ export function PulsePharmacies() {
 
       {/* — Registry actions — */}
       <motion.div variants={item} className="mt-6 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => {
-            setCreateOpen(true);
-            void trackEvent("pharmacy_create_open");
-          }}
-          className="inline-flex h-11 items-center gap-2.5 rounded-xl bg-[linear-gradient(100deg,#c026d3,#7c3aed)] px-4 text-[14px] font-semibold text-white shadow-[0_10px_24px_-12px_rgba(147,51,234,0.8)] transition-opacity hover:opacity-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
-        >
-          <Plus className="h-[18px] w-[18px]" aria-hidden="true" />
-          Create pharmacy
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => {
+              setCreateOpen(true);
+              void trackEvent("pharmacy_create_open");
+            }}
+            className="inline-flex h-11 items-center gap-2.5 rounded-xl bg-[linear-gradient(100deg,#c026d3,#7c3aed)] px-4 text-[14px] font-semibold text-white shadow-[0_10px_24px_-12px_rgba(147,51,234,0.8)] transition-opacity hover:opacity-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
+          >
+            <Plus className="h-[18px] w-[18px]" aria-hidden="true" />
+            Create pharmacy
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -1197,21 +1240,23 @@ export function PulsePharmacies() {
           <RefreshCw className="h-[18px] w-[18px] text-emerald-500" aria-hidden="true" />
           Refresh
         </button>
-        <button
-          type="button"
-          onClick={() => setBulkDeleteOpen(true)}
-          disabled={duplicateTargets.length === 0}
-          title="Delete extra pending registrations that share a pharmacy name"
-          className="inline-flex h-11 items-center gap-2.5 rounded-xl border border-rose-200 bg-white px-4 text-[14px] font-semibold text-rose-600 shadow-sm transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-500/30 dark:bg-white/5 dark:text-rose-400 dark:hover:bg-rose-500/10"
-        >
-          <Trash2 className="h-[18px] w-[18px]" aria-hidden="true" />
-          Remove duplicates
-          {duplicateTargets.length > 0 && (
-            <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10.5px] font-bold tabular-nums text-rose-700 dark:bg-rose-500/20 dark:text-rose-200">
-              {duplicateTargets.length}
-            </span>
-          )}
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setBulkDeleteOpen(true)}
+            disabled={duplicateTargets.length === 0}
+            title="Delete extra pending registrations that share a pharmacy name"
+            className="inline-flex h-11 items-center gap-2.5 rounded-xl border border-rose-200 bg-white px-4 text-[14px] font-semibold text-rose-600 shadow-sm transition-colors hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-500/30 dark:bg-white/5 dark:text-rose-400 dark:hover:bg-rose-500/10"
+          >
+            <Trash2 className="h-[18px] w-[18px]" aria-hidden="true" />
+            Remove duplicates
+            {duplicateTargets.length > 0 && (
+              <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10.5px] font-bold tabular-nums text-rose-700 dark:bg-rose-500/20 dark:text-rose-200">
+                {duplicateTargets.length}
+              </span>
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setRemovedOpen(true)}
@@ -1587,6 +1632,15 @@ export function PulsePharmacies() {
 
           {details && (
             <DialogFooter className="flex-wrap gap-2">
+              {!canManage && (
+                <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
+                  Your role is {PULSE_ROLE_META[role].label}. Only Owners and Admins can
+                  approve, reject or remove a listing — ask an Owner to upgrade your
+                  console access.
+                </p>
+              )}
+              {canManage && (
+                <>
               <button
                 type="button"
                 onClick={() => setDeleteTarget(details)}
@@ -1633,6 +1687,8 @@ export function PulsePharmacies() {
                   </button>
                 )}
               </div>
+                </>
+              )}
             </DialogFooter>
           )}
         </DialogContent>
