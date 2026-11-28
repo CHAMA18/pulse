@@ -9,6 +9,7 @@ import {
   Loader2,
   Lock,
   Mail,
+  MailCheck,
   MailPlus,
   ShieldCheck,
   Store,
@@ -417,6 +418,21 @@ export function RegisterDialog({
                   )}
                 </DialogDescription>
               </DialogHeader>
+
+              {/* The confirmation email is the one that verifies the address. */}
+              {!invited && (
+                <p className="mt-4 flex items-start gap-2.5 rounded-xl border border-purple-100 bg-purple-50/60 px-4 py-3 text-left text-[12.5px] leading-relaxed text-slate-600 dark:border-purple-500/20 dark:bg-purple-500/10 dark:text-slate-300">
+                  <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-purple-600 dark:text-purple-300" aria-hidden="true" />
+                  <span>
+                    Confirm your email &mdash; we sent a one-tap link to{" "}
+                    <span className="font-semibold text-slate-800 dark:text-white">
+                      {email.trim()}
+                    </span>
+                    . Confirming keeps your account secure and makes sure receipts and alerts reach
+                    you.
+                  </span>
+                </p>
+              )}
 
               {/* Invitations fired by the onPharmacyCreated cloud function */}
               {invitesPending ? (

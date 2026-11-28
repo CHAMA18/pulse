@@ -97,6 +97,30 @@ function appUrlFor(request: {
   return trustedAppOrigin(request.rawRequest?.headers?.origin) ?? configuredAppUrl();
 }
 
+/**
+ * Mints a Firebase email-verification link so the branded confirmation we send
+ * is the message that actually verifies the address (Firebase's own template is
+ * generic). Returns "" when the project can't issue one — the welcome email is
+ * still delivered, just without the confirmation step.
+ */
+async function emailVerificationLink(email: string, continueUrl: string): Promise<string> {
+  const base = continueUrl.replace(/\/$/, "");
+  try {
+    return await admin.auth().generateEmailVerificationLink(email, {
+      url: `${base}/login/?verified=1`,
+      handleCodeInApp: false,
+    });
+  } catch (error) {
+    console.warn("[email-verification] Continuing to a default link", error);
+    try {
+      return await admin.auth().generateEmailVerificationLink(email);
+    } catch (fallbackError) {
+      console.error("[email-verification] Could not mint a verification link", fallbackError);
+      return "";
+    }
+  }
+}
+
 /** Fallback for triggers with no caller (Firestore events). */
 const APP_URL = configuredAppUrl();
 // Send from the domain verified in Resend for this project.
@@ -338,13 +362,15 @@ export const ensurePulseAdminProfile = onCall(
   // Confirmation email for the new console account. Best-effort: a mail
   // failure must never leave a provisioned account without its profile.
   try {
+    const origin = appUrlFor(request);
     await deliver(
       "ensurePulseAdminProfile",
       [email],
       pulseAdminWelcomeEmail({
         name,
         email,
-        consoleUrl: `${appUrlFor(request)}dashboard/`,
+        consoleUrl: `${origin}dashboard/`,
+        verifyUrl: await emailVerificationLink(email, origin),
       }),
       "Pulse admin welcome"
     );
@@ -3814,6 +3840,7 @@ export const onPharmacyCreated = onCall(
     ownerEmail,
     teamEmails,
     consoleUrl: `${appUrlFor(request)}pharmacy/`,
+    verifyUrl: await emailVerificationLink(ownerEmail, appUrlFor(request)),
   });
   sent.push(await deliver("onPharmacyCreated", [ownerEmail], welcome, "Pharmacy welcome"));
 
@@ -3933,6 +3960,7 @@ export const onPharmacyDocCreated = onDocumentCreated(
     ownerEmail,
     teamEmails,
     consoleUrl: `${APP_URL}pharmacy/`,
+    verifyUrl: await emailVerificationLink(ownerEmail, APP_URL),
   });
   await deliver("onPharmacyDocCreated", [ownerEmail], welcome, "Pharmacy welcome");
 

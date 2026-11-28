@@ -334,32 +334,57 @@ export function teamInviteEmail(params: {
   };
 }
 
+/**
+ * The one-tap email confirmation, rendered above the rest of a welcome email.
+ * The link is a Firebase verification link minted on the server, so tapping it
+ * both confirms the address and marks it verified on the account.
+ */
+function verifyPanel(verifyUrl: string, email: string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 0;background-color:#f6f3ff;border:1px solid #ddd3fb;border-radius:16px;">
+  <tr><td class="card-pad" style="padding:20px;">
+    <p style="margin:0;font-family:${FONT};font-size:9.5px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase;color:${BRAND_PURPLE};">Step 1 &middot; Confirm your email</p>
+    <p style="margin:9px 0 0;font-family:${FONT};font-size:14px;line-height:1.65;color:${MUTED};">Tap once so we can mark <strong style="color:${INK};">${esc(email)}</strong> as confirmed. It takes a second, needs no password, and means receipts, alerts and password resets always reach the right inbox.</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;"><tr><td>${cta(verifyUrl, "Confirm my email")}</td></tr></table>
+    <p style="margin:14px 0 0;font-family:${FONT};font-size:11.5px;line-height:1.6;color:${FAINT};">Button not showing? Paste this link into your browser:<br /><span style="color:${BRAND_PURPLE};word-break:break-all;">${esc(verifyUrl)}</span></p>
+  </td></tr>
+</table>`;
+}
+
 /** Confirmation for a Pulse console account created at sign-up. */
 export function pulseAdminWelcomeEmail(params: {
   name: string;
   email: string;
   consoleUrl: string;
+  /** Firebase verification link; omitted when the project can't mint one. */
+  verifyUrl?: string;
 }): EmailContent {
   const name = params.name.trim() || params.email.split("@")[0];
+  const verifyHtml = params.verifyUrl ? verifyPanel(params.verifyUrl, params.email) : "";
 
   return {
-    subject: "Your Pulse console account is confirmed",
+    subject: params.verifyUrl
+      ? `Confirm your email to finish setting up Pulse, ${name}`
+      : "Your Pulse console account is ready",
     html: layout({
-      preheader: `Welcome to Pulse, ${name} — your console account is confirmed and ready.`,
-      eyebrow: "Account confirmed",
-      heading: "Your Pulse console is ready",
-      intro: `Hi <strong style="color:${INK};">${esc(name)}</strong> &mdash; this confirms your Pulse console account. Everything on the network side &mdash; pharmacies, stock visibility and the audit trail &mdash; is waiting for you.`,
-      bodyHtml: detailsCard(
+      preheader: params.verifyUrl
+        ? `One tap confirms ${params.email} and unlocks your Pulse console.`
+        : `Welcome to Pulse, ${name} — your console account is ready.`,
+      eyebrow: params.verifyUrl ? "Account created" : "Account confirmed",
+      heading: params.verifyUrl ? "One tap to confirm it's you" : "Your Pulse console is ready",
+      intro: `Hi <strong style="color:${INK};">${esc(name)}</strong> &mdash; your Pulse console account exists and everything on the network side &mdash; pharmacies, stock visibility and the audit trail &mdash; is waiting for you. ${params.verifyUrl ? "Confirm your email below, then step into the console." : ""}`,
+      bodyHtml: `${verifyHtml}${detailsCard(
         "Account details",
         [
           { label: "Email", value: params.email },
           { label: "Access", value: "Pulse console", accent: true },
         ],
-        "Confirmed"
-      ),
-      ctaLabel: "Open the console",
+        params.verifyUrl ? "Confirm to activate" : "Ready"
+      )}`,
+      ctaLabel: params.verifyUrl ? "Open the console" : "Sign in to Pulse",
       ctaHref: params.consoleUrl,
-      ctaNote: "Sign in any time with this email address and the password you chose.",
+      ctaNote: params.verifyUrl
+        ? "Step 2 &mdash; your console opens straight away. You can sign in any time with this email and the password you chose."
+        : "Sign in any time with this email address and the password you chose.",
       footerNote:
         "Keep this email for your records. Pulse will never ask for your password by email.",
       reason: "you registered a Pulse console account.",
@@ -367,13 +392,16 @@ export function pulseAdminWelcomeEmail(params: {
     text: [
       `Hi ${name},`,
       "",
-      "Your Pulse console account is confirmed and ready.",
+      "Your Pulse console account is ready.",
+      params.verifyUrl ? "\nSTEP 1 — CONFIRM YOUR EMAIL\nOpen this link (no password needed):" : "",
+      params.verifyUrl ? params.verifyUrl : "",
       "",
       "ACCOUNT DETAILS",
       `Email: ${params.email}`,
       "Access: Pulse console",
       "",
-      `Open the console: ${params.consoleUrl}`,
+      `STEP ${params.verifyUrl ? "2" : "1"} — OPEN THE CONSOLE`,
+      params.consoleUrl,
       "",
       "Sign in any time with this email address and the password you chose.",
       "",
@@ -388,15 +416,24 @@ export function pharmacyWelcomeEmail(params: {
   ownerEmail: string;
   teamEmails: string[];
   consoleUrl: string;
+  /** Firebase verification link; omitted when the project can't mint one. */
+  verifyUrl?: string;
 }): EmailContent {
+  const verifyHtml = params.verifyUrl ? verifyPanel(params.verifyUrl, params.ownerEmail) : "";
   return {
-    subject: `Welcome to Pulse, ${params.pharmacyName} — your console is ready`,
+    subject: params.verifyUrl
+      ? `Confirm your email — ${params.pharmacyName} is live on Pulse`
+      : `Welcome to Pulse, ${params.pharmacyName} — your console is ready`,
     html: layout({
-      preheader: `${params.pharmacyName} is live on Pulse — here's your first week, mapped.`,
-      eyebrow: "Welcome to Pulse",
-      heading: `${params.pharmacyName} is on the network`,
-      intro: `Congratulations, <strong style="color:${INK};">${esc(params.ownerName)}</strong> &mdash; <strong style="color:${INK};">${esc(params.pharmacyName)}</strong> now has a Pulse account. Your console is ready: shelves, counter and team in one place.`,
-      bodyHtml: `${detailsCard("Account details", [
+      preheader: params.verifyUrl
+        ? `One tap confirms ${params.ownerEmail} and finishes setting up ${params.pharmacyName}.`
+        : `${params.pharmacyName} is live on Pulse — here's your first week, mapped.`,
+      eyebrow: params.verifyUrl ? "Registration received" : "Welcome to Pulse",
+      heading: params.verifyUrl
+        ? `${params.pharmacyName}, one tap to confirm`
+        : `${params.pharmacyName} is on the network`,
+      intro: `Congratulations, <strong style="color:${INK};">${esc(params.ownerName)}</strong> &mdash; <strong style="color:${INK};">${esc(params.pharmacyName)}</strong> now has a Pulse account: shelves, counter and team in one place.${params.verifyUrl ? " Confirm your email below and your workspace is fully set up." : ""}`,
+      bodyHtml: `${verifyHtml}${detailsCard("Account details", [
         { label: "Pharmacy", value: params.pharmacyName },
         { label: "Owner", value: `${params.ownerName} · ${params.ownerEmail}` },
         { label: "Main store", value: "Declared in Stores — the account's home" },
@@ -427,6 +464,9 @@ export function pharmacyWelcomeEmail(params: {
       `Pharmacy: ${params.pharmacyName}`,
       `Owner: ${params.ownerName} · ${params.ownerEmail}`,
       `Team invitations: ${params.teamEmails.length ? `${params.teamEmails.length} sent` : "None yet"}`,
+      "",
+      params.verifyUrl ? "STEP 1 — CONFIRM YOUR EMAIL\nOpen this link (no password needed):" : "",
+      params.verifyUrl ? params.verifyUrl : "",
       "",
       "Your first week, mapped:",
       "1. Declare your main store under Stores.",
