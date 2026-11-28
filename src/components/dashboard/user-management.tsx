@@ -517,13 +517,19 @@ export function UserManagement({
   }, []);
 
   // Hydrate pending invitations locally, then load the authoritative
-  // console directory from Firestore through the callable.
+  // console directory from Firestore through the callable. The local read is
+  // deferred by a microtask rather than an animation frame so the directory
+  // still hydrates in a background tab, which never paints.
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
       setUsers(loadUsers());
       setHydrated(true);
     });
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      active = false;
+    };
   }, []);
 
   const refreshDirectory = useCallback(async () => {

@@ -65,6 +65,32 @@ const ACTION_META: Record<
 
 const PAGE_SIZE = 60;
 
+/** How long the feed waits for the callable before falling back to local history. */
+const FEED_TIMEOUT_MS = 10_000;
+
+/**
+ * Bounds a read so a stuck request can never leave the feed on its skeleton.
+ * The promise still settles upstream; this only decides when we stop waiting.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("Timed out loading the audit trail.")),
+      ms
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 /** Merge Firestore events with recent local events that are still queued. */
 function mergeWithLocal(events: AuditEvent[]): AuditEvent[] {
   const eventKey = (event: AuditEvent) => `${event.email.trim().toLowerCase()}:${event.id}`;
@@ -111,8 +137,10 @@ export function AuditLogs() {
   const [, forceTick] = useState(0);
 
   const loadFeed = useCallback(async (backfill = false) => {
-    await flushAuditQueue();
-    const feed = await listAuditLogs();
+    // Sending the queued batch must never gate the read: a write that stalls
+    // would otherwise hold the whole feed on its loading skeleton.
+    void flushAuditQueue();
+    const feed = await withTimeout(listAuditLogs(), FEED_TIMEOUT_MS);
 
     // Move any pre-Firestore history from this device into the shared trail.
     // The server only accepts events attributed to the signed-in email.
@@ -124,11 +152,9 @@ export function AuditLogs() {
         (event) => event.email.trim().toLowerCase() === accountEmail && !remoteIds.has(`${event.email.trim().toLowerCase()}:${event.id}`)
       );
       if (missing.length > 0) {
-        try {
-          await recordAuditEvents(missing);
-        } catch {
-          /* keep the local copy; retry on the next page load */
-        }
+        // Best-effort backfill: never await it, so a slow or stuck write cannot
+        // hold the feed's first paint. The local copy retries on the next load.
+        void recordAuditEvents(missing).catch(() => undefined);
       }
     }
 
@@ -136,21 +162,22 @@ export function AuditLogs() {
   }, []);
 
   // Hydrate from Firestore, then fall back to the recent local cache when the
-  // console is offline or the callable is unavailable.
+  // console is offline or the callable is unavailable. This must not wait for
+  // an animation frame: a background tab never paints, and gating hydration on
+  // `requestAnimationFrame` left the feed stuck on its skeleton indefinitely.
   useEffect(() => {
     let active = true;
-    const raf = requestAnimationFrame(() => {
-      void loadFeed(true)
-        .catch(() => mergeWithLocal([]))
-        .then((next) => {
-          if (!active) return;
-          setEvents(next);
-          setHydrated(true);
-        });
-    });
+    void loadFeed(true)
+      .catch(() => mergeWithLocal([]))
+      .then((next) => {
+        if (active) setEvents(next);
+      })
+      .finally(() => {
+        // Always leave the loading state, even if the read failed or timed out.
+        if (active) setHydrated(true);
+      });
     return () => {
       active = false;
-      cancelAnimationFrame(raf);
     };
   }, [loadFeed]);
 
