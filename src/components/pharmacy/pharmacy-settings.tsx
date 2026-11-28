@@ -6,10 +6,12 @@ import {
   LogOut,
   Settings as SettingsIcon,
   ShieldCheck,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
+  clearPharmacyDeviceData,
   loadPharmacySettings,
   savePharmacySettings,
   type PharmacySettings as Settings,
@@ -95,12 +97,25 @@ export function PharmacySettings({
     weeklyDigest: false,
   });
 
+  // Clearing is a two-step action: the first click arms it, so one stray tap
+  // can never wipe the counter's records.
+  const [clearArmed, setClearArmed] = useState(false);
+
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       setPrefs(loadPharmacySettings());
     });
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  const onClearDeviceData = () => {
+    if (!clearArmed) {
+      setClearArmed(true);
+      return;
+    }
+    clearPharmacyDeviceData();
+    window.location.reload();
+  };
 
   const update = (patch: Partial<Settings>) => {
     const next = { ...prefs, ...patch };
@@ -234,6 +249,43 @@ export function PharmacySettings({
           <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
             Preferences and adjustments stay on this device until you sign out.
           </p>
+        </SettingsSection>
+
+        {/* Device data */}
+        <SettingsSection
+          icon={Trash2}
+          title="Device data"
+          description="The workspace records cached in this browser"
+        >
+          <p className="text-[12.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+            Inventory, sales, stock movement and catalogue rows for this pharmacy live in this
+            browser. Clearing removes them from this device only — anything already synced to Pulse
+            is unaffected — and cannot be undone.
+          </p>
+          <div className="mt-3.5 flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onClearDeviceData}
+              className={cn(
+                "inline-flex h-10 items-center gap-2 rounded-md border px-4 text-[13.5px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2",
+                clearArmed
+                  ? "border-rose-300 bg-rose-600 text-white hover:bg-rose-700 focus-visible:outline-rose-500"
+                  : "border-rose-200 bg-white text-rose-600 hover:bg-rose-50 focus-visible:outline-rose-500 dark:border-rose-500/25 dark:bg-transparent dark:text-rose-400 dark:hover:bg-rose-500/10"
+              )}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              {clearArmed ? "Yes, clear this device" : "Clear workspace data"}
+            </button>
+            {clearArmed && (
+              <button
+                type="button"
+                onClick={() => setClearArmed(false)}
+                className="inline-flex h-10 items-center rounded-md px-3 text-[13.5px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
         </SettingsSection>
 
       </motion.div>

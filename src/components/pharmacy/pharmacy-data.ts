@@ -338,22 +338,46 @@ export function setPharmacyScope(pharmacyId: string | null | undefined): void {
   }
 }
 
+/** Workspace record lists a device reset clears (preferences and stores stay). */
+const PHARMACY_RECORD_KEYS = [
+  PHARMACY_INVENTORY_KEY,
+  PHARMACY_REQUESTS_KEY,
+  PHARMACY_DELIVERIES_KEY,
+  PHARMACY_CATALOGUE_KEY,
+  PHARMACY_SALES_KEY,
+  PHARMACY_PURCHASE_ORDERS_KEY,
+  PHARMACY_SUPPLIERS_KEY,
+  PHARMACY_OUTBOUND_KEY,
+  PHARMACY_MOVEMENTS_KEY,
+] as const;
+
+/**
+ * Deletes this device's copies of the workspace records — the signed-in
+ * pharmacy's lists plus any pre-scoping leftovers on this browser. Records
+ * that already reached the Pulse network are untouched.
+ */
+export function clearPharmacyDeviceData(): void {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of PHARMACY_RECORD_KEYS) {
+      window.localStorage.removeItem(scopedPharmacyKey(key));
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+  notifyPharmacyChange("inventory");
+}
+
 /** Reads only records that were actually saved — no demo fallback. */
 function loadStoredList<T>(key: string, seedIds?: ReadonlySet<string>): T[] {
   if (typeof window === "undefined") return [];
   try {
-    const scoped = scopedPharmacyKey(key);
-    let raw = window.localStorage.getItem(scoped);
-    if (!raw && scoped !== key) {
-      // Upgrade path: claim the pre-scoping legacy list for this pharmacy once,
-      // then remove it so the next account on this browser starts empty.
-      const legacy = window.localStorage.getItem(key);
-      if (legacy) {
-        window.localStorage.setItem(scoped, legacy);
-        window.localStorage.removeItem(key);
-        raw = legacy;
-      }
-    }
+    // Only this pharmacy's own list is read. Rows saved before keys carried a
+    // pharmacy suffix belong to whichever account used this browser first, so
+    // adopting them handed a brand-new pharmacy another account's shelves and
+    // sales. Those unscoped lists are deliberately ignored.
+    const raw = window.localStorage.getItem(scopedPharmacyKey(key));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];

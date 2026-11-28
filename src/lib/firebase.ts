@@ -19,6 +19,7 @@ import {
   doc,
   connectFirestoreEmulator,
   getDoc,
+  getDocFromServer,
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
@@ -308,7 +309,11 @@ async function readPortalProfile(user: User): Promise<{
   const store = getFirebaseDb();
   if (store) {
     try {
-      const snap = await getDoc(doc(store, "User", user.uid));
+      // Ask the server first: the cache can still say "no profile" for a moment
+      // after the server has just created one (a returning account that had
+      // to be provisioned), and a stale miss signs that user straight back out.
+      const profileRef = doc(store, "User", user.uid);
+      const snap = await getDocFromServer(profileRef).catch(() => getDoc(profileRef));
       return { profile: (snap.data() as PortalProfile) ?? null, verified: true };
     } catch (error) {
       // Keep the reason in the console so a recurring failure is diagnosable.

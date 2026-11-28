@@ -1133,7 +1133,9 @@ export function PharmacyApp() {
           setPharmacyScope(data?.pharmacy_id ?? current.uid);
           if (isStockSandboxEnabled()) ensureStockRequestSandboxFixture();
         } catch {
-          /* rules or offline — fall back to the invitation/session */
+          /* rules or offline — scope to this account so a previous account's
+             shelves can never show through on a shared browser */
+          if (current) setPharmacyScope(current.uid);
         }
       }
       if (current && !db) setPharmacyScope(current.uid);
@@ -1328,6 +1330,9 @@ export function PharmacyApp() {
         /* signing out locally regardless */
       }
     }
+    // Drop the tenant scope so the next account on this browser starts on its
+    // own shelves instead of inheriting this pharmacy's.
+    setPharmacyScope(null);
     clearStoredPortal();
     void trackEvent("logout", { portal: "pharmacy" });
     toast({ title: "Signed out", description: "See you soon!" });

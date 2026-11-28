@@ -334,6 +334,54 @@ export function teamInviteEmail(params: {
   };
 }
 
+/** Confirmation for a Pulse console account created at sign-up. */
+export function pulseAdminWelcomeEmail(params: {
+  name: string;
+  email: string;
+  consoleUrl: string;
+}): EmailContent {
+  const name = params.name.trim() || params.email.split("@")[0];
+
+  return {
+    subject: "Your Pulse console account is confirmed",
+    html: layout({
+      preheader: `Welcome to Pulse, ${name} — your console account is confirmed and ready.`,
+      eyebrow: "Account confirmed",
+      heading: "Your Pulse console is ready",
+      intro: `Hi <strong style="color:${INK};">${esc(name)}</strong> &mdash; this confirms your Pulse console account. Everything on the network side &mdash; pharmacies, stock visibility and the audit trail &mdash; is waiting for you.`,
+      bodyHtml: detailsCard(
+        "Account details",
+        [
+          { label: "Email", value: params.email },
+          { label: "Access", value: "Pulse console", accent: true },
+        ],
+        "Confirmed"
+      ),
+      ctaLabel: "Open the console",
+      ctaHref: params.consoleUrl,
+      ctaNote: "Sign in any time with this email address and the password you chose.",
+      footerNote:
+        "Keep this email for your records. Pulse will never ask for your password by email.",
+      reason: "you registered a Pulse console account.",
+    }),
+    text: [
+      `Hi ${name},`,
+      "",
+      "Your Pulse console account is confirmed and ready.",
+      "",
+      "ACCOUNT DETAILS",
+      `Email: ${params.email}`,
+      "Access: Pulse console",
+      "",
+      `Open the console: ${params.consoleUrl}`,
+      "",
+      "Sign in any time with this email address and the password you chose.",
+      "",
+      "— Pulse · Pharmacy intelligence, delivered",
+    ].join("\n"),
+  };
+}
+
 export function pharmacyWelcomeEmail(params: {
   pharmacyName: string;
   ownerName: string;

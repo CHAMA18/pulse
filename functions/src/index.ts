@@ -33,6 +33,7 @@ import {
   pendingPharmacyRegistrationEmail,
   pharmacyWelcomeEmail,
   pulseAdminInviteEmail,
+  pulseAdminWelcomeEmail,
   receiptEmail,
   stockDeliveryCompletedEmail,
   stockRequestEmail,
@@ -270,8 +271,41 @@ async function requireConsoleManager(request: { auth?: { uid: string } }): Promi
   return actor;
 }
 
+/**
+ * Releases a `User` profile that outlived its Auth account.
+ *
+ * Profiles are keyed by uid, and Firebase lets a deleted address sign up
+ * again under a new uid. The old profile still carries the email, so an
+ * email-uniqueness check would refuse the returning user forever — which is
+ * exactly how a re-registered account could see "registered" and then never
+ * get past sign-in. Only a profile whose Auth account is gone is released; a
+ * live duplicate still blocks the second account.
+ */
+async function releaseOrphanedProfiles(
+  email: string,
+  uid: string,
+  conflictMessage: string
+): Promise<void> {
+  const linked = await db.collection("User").where("email", "==", email).get();
+  for (const profile of linked.docs) {
+    if (profile.id === uid) continue;
+    try {
+      await admin.auth().getUser(profile.id);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "auth/user-not-found") {
+        throw new HttpsError("failed-precondition", conflictMessage);
+      }
+      await profile.ref.delete();
+      continue;
+    }
+    throw new HttpsError("failed-precondition", conflictMessage);
+  }
+}
+
 /** Ensures an eligible Pulse email has a server-owned profile without changing an existing role. */
-export const ensurePulseAdminProfile = onCall(async (request) => {
+export const ensurePulseAdminProfile = onCall(
+  { secrets: [resendApiKey] },
+  async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to create a Pulse profile.");
   const email = assertEmail(request.auth.token.email, "email");
   const allowed = email === "chungu424@gmail.com" || email.endsWith("@duniyahealthcare.com");
@@ -283,10 +317,11 @@ export const ensurePulseAdminProfile = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "This account is already assigned to another portal.");
   }
   if (existing.exists) return { ok: true };
-  const emailProfile = await db.collection("User").where("email", "==", email).get();
-  if (emailProfile.docs.some((profile) => profile.id !== request.auth!.uid)) {
-    throw new HttpsError("failed-precondition", "This email is already linked to another portal account.");
-  }
+  await releaseOrphanedProfiles(
+    email,
+    request.auth.uid,
+    "This email is already linked to another portal account."
+  );
   const name = String(request.data?.name ?? request.auth.token.name ?? "").trim().slice(0, 120) || email.split("@")[0];
   await ref.create({
     uid: request.auth.uid,
@@ -299,6 +334,24 @@ export const ensurePulseAdminProfile = onCall(async (request) => {
     access_revoked: false,
     created_time: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  // Confirmation email for the new console account. Best-effort: a mail
+  // failure must never leave a provisioned account without its profile.
+  try {
+    await deliver(
+      "ensurePulseAdminProfile",
+      [email],
+      pulseAdminWelcomeEmail({
+        name,
+        email,
+        consoleUrl: `${appUrlFor(request)}dashboard/`,
+      }),
+      "Pulse admin welcome"
+    );
+  } catch (error) {
+    console.error("[ensurePulseAdminProfile] Confirmation email failed", error);
+  }
+
   return { ok: true };
 });
 
@@ -3623,10 +3676,11 @@ export const acceptInvitation = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "Your account has no email address.");
   }
 
-  const linkedProfiles = await db.collection("User").where("email", "==", email).get();
-  if (linkedProfiles.docs.some((profile) => profile.id !== request.auth!.uid)) {
-    throw new HttpsError("failed-precondition", "This email is already linked to another account.");
-  }
+  await releaseOrphanedProfiles(
+    email,
+    request.auth!.uid,
+    "This email is already linked to another account."
+  );
 
   const ref = db.collection("Invitation").doc(inviteId);
   await db.runTransaction(async (transaction) => {
