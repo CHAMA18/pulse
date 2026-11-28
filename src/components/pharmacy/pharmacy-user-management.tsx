@@ -649,7 +649,7 @@ function InviteDialog({
                 {email || "name@pharmacy.zm"}
               </p>
               <p className="mt-1 border-t border-slate-100 pt-2 font-semibold text-slate-900 dark:border-white/10 dark:text-white">
-                You're invited to join {pharmacyName} on Pulse
+                You're invited to join {pharmacyName} on Duniya
               </p>
               <div className="mt-2 flex flex-col gap-1.5 text-slate-600 dark:text-slate-300">
                 <p>

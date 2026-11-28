@@ -195,12 +195,12 @@ const QUICK_ACTION_PAGES: Record<(typeof QUICK_ACTIONS)[number], DashboardPage> 
 
 type NavItem = { label: string; icon: LucideIcon; page: DashboardPage };
 
-/** Human page titles used in the audit trail ("Viewed Pulse Pharmacies"). */
+/** Human page titles used in the audit trail ("Viewed Duniya Pharmacies"). */
 const PAGE_AUDIT_TITLES: Record<DashboardPage, string> = {
   home: "Dashboard",
   audit: "Audit Logs",
   users: "User Management",
-  pharmacies: "Pulse Pharmacies",
+  pharmacies: "Duniya Pharmacies",
   requests: "Stock Requests",
   reconciliation: "Stock Reconciliation",
   sales: "Sales Report",
@@ -217,7 +217,7 @@ const NAV_SECTIONS: { section: string; items: NavItem[] }[] = [
   {
     section: "Pulse",
     items: [
-      { label: "Pulse Pharmacies", page: "pharmacies", icon: LayoutGrid },
+      { label: "Duniya Pharmacies", page: "pharmacies", icon: LayoutGrid },
       { label: "Stock Requests", page: "requests", icon: Inbox },
       { label: "Stock Reconciliation", page: "reconciliation", icon: ClipboardCheck },
       { label: "Sales Report", page: "sales", icon: TrendingUp },

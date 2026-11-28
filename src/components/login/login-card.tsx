@@ -378,7 +378,7 @@ export function LoginCard({
               Welcome to Pulse
             </h2>
             <p className="mt-1.5 text-[13.5px] text-slate-500">
-              One account for your pharmacy, your team and the Pulse network.
+              One account for your pharmacy, your team and the Duniya network.
             </p>
           </motion.div>
 

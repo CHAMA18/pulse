@@ -1451,7 +1451,7 @@ export const setPharmacyApproval = onCall(async (request) => {
   const profiles = await db.collection("User").where("account_type", "==", "Pharmacy").get();
   const owners = await ownerIdsByPharmacyName(profiles);
   const target = profiles.docs.find((doc) => doc.id === uid);
-  if (!target) throw new HttpsError("not-found", "That pharmacy is not on the Pulse network.");
+  if (!target) throw new HttpsError("not-found", "That pharmacy is not on the Duniya network.");
   const pharmacyId = resolvePharmacyId(target.data(), target.id, owners);
   const batch = db.batch();
   let updated = 0;
@@ -1667,7 +1667,7 @@ export const createPharmacyProvisioning = onCall(async (request) => {
   if (duplicate) {
     throw new HttpsError(
       "already-exists",
-      "A pharmacy with this name is already on the Pulse network."
+      "A pharmacy with this name is already on the Duniya network."
     );
   }
 

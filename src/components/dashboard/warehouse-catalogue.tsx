@@ -268,7 +268,7 @@ export function WarehouseCatalogue() {
       <div>
         <h2 className="text-[26px] font-bold tracking-tight text-slate-900 dark:text-white">Warehouse Catalogue</h2>
         <p className="mt-1 text-[14px] text-slate-500 dark:text-slate-400">
-          Stock held at {WAREHOUSE_NAME} — the hub Pulse issues to the network from.
+          Stock held at {WAREHOUSE_NAME} — the hub Duniya issues to the network from.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button

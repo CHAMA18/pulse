@@ -286,7 +286,7 @@ export type TeamInviteEmailParams = {
 
 export function renderTeamInviteEmail(params: TeamInviteEmailParams): EmailContent {
   const name = params.inviteeName.trim() || "there";
-  const preheader = `${params.inviterName} invited you to join ${params.pharmacyName} on Pulse. Accept by ${params.expiresAt}.`;
+  const preheader = `${params.inviterName} invited you to join ${params.pharmacyName} on Duniya. Accept by ${params.expiresAt}.`;
   const messageBlock = params.personalMessage
     ? quoteBlock(params.personalMessage, params.inviterName)
     : "";
@@ -314,13 +314,13 @@ export function renderTeamInviteEmail(params: TeamInviteEmailParams): EmailConte
     ],
     security: true,
     footerNote: `Questions? Reach out to <strong style="color:${INK};">${esc(params.inviterName)}</strong> &mdash; they&rsquo;ll be expecting you.`,
-    reason: `${params.inviterName} invited you to join ${params.pharmacyName} on Pulse.`,
+    reason: `${params.inviterName} invited you to join ${params.pharmacyName} on Duniya.`,
   });
 
   const text = [
     `Hi ${name},`,
     "",
-    `${params.inviterName} invited you to join ${params.pharmacyName} on Pulse as ${params.role}.`,
+    `${params.inviterName} invited you to join ${params.pharmacyName} on Duniya as ${params.role}.`,
     "",
     "INVITATION DETAILS",
     `Organisation: ${params.pharmacyName}`,
@@ -347,7 +347,7 @@ export function renderTeamInviteEmail(params: TeamInviteEmailParams): EmailConte
     .join("\n");
 
   return {
-    subject: `${params.inviterName} invited you to ${params.pharmacyName} on Pulse`,
+    subject: `${params.inviterName} invited you to ${params.pharmacyName} on Duniya`,
     preheader,
     html,
     text,
@@ -368,7 +368,7 @@ export type PharmacyWelcomeEmailParams = {
 };
 
 export function renderPharmacyWelcomeEmail(params: PharmacyWelcomeEmailParams): EmailContent {
-  const preheader = `${params.pharmacyName} is live on Pulse — here's your first week, mapped.`;
+  const preheader = `${params.pharmacyName} is live on Duniya — here's your first week, mapped.`;
   const html = layout({
     preheader,
     eyebrow: "Welcome to Pulse",
@@ -400,7 +400,7 @@ export function renderPharmacyWelcomeEmail(params: PharmacyWelcomeEmailParams): 
     ctaHref: params.consoleUrl,
     ctaNote: `New here? The <strong style="color:${INK};">Walkthrough</strong> in the sidebar gives you a guided lap of the whole console in about three minutes.`,
     footerNote: `Your account is pending a quick network review &mdash; every tool is already unlocked on your side. We&rsquo;re glad you&rsquo;re here.`,
-    reason: `you registered ${params.pharmacyName} on Pulse.`,
+    reason: `you registered ${params.pharmacyName} on Duniya.`,
   });
 
   const text = [
@@ -605,7 +605,7 @@ export type PulseAdminInviteEmailParams = {
 
 export function renderPulseAdminInviteEmail(params: PulseAdminInviteEmailParams): EmailContent {
   const name = params.inviteeName.trim() || params.inviteeEmail.split("@")[0];
-  const preheader = `${params.inviterName} invited you to the ${params.role} team on Pulse. Accept by ${params.expiresAt}.`;
+  const preheader = `${params.inviterName} invited you to the ${params.role} team on Duniya. Accept by ${params.expiresAt}.`;
 
   const html = layout({
     preheader,
@@ -630,7 +630,7 @@ export function renderPulseAdminInviteEmail(params: PulseAdminInviteEmailParams)
       { title: "Enter the console", body: "Your network view is ready when you are." },
     ],
     security: true,
-    footerNote: `The Pulse console is the network side of Pulse &mdash; pharmacies, stock visibility and the audit trail, in one live view.`,
+    footerNote: `The Pulse console is where the Duniya network runs &mdash; pharmacies, stock visibility and the audit trail, in one live view.`,
     reason: `${params.inviterName} invited you to the Pulse console.`,
   });
 

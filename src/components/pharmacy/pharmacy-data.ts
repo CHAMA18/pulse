@@ -354,7 +354,7 @@ const PHARMACY_RECORD_KEYS = [
 /**
  * Deletes this device's copies of the workspace records — the signed-in
  * pharmacy's lists plus any pre-scoping leftovers on this browser. Records
- * that already reached the Pulse network are untouched.
+ * that already reached the Duniya network are untouched.
  */
 export function clearPharmacyDeviceData(): void {
   if (typeof window === "undefined") return;

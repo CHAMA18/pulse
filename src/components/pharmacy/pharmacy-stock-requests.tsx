@@ -857,7 +857,7 @@ function ReceiveRequestDialog({
       return;
     }
     if (retailValue < duniya) {
-      setError(`Retail is below the Duniya price of ${formatZmw(duniya)}. Raise it or confirm with Pulse.`);
+      setError(`Retail is below the Duniya price of ${formatZmw(duniya)}. Raise it or confirm with Duniya.`);
       return;
     }
     setBusy(true);

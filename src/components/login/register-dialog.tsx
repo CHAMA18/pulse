@@ -198,7 +198,7 @@ export function RegisterDialog({
     : isPulseAdminSignup
       ? "This email is reserved for the Pulse admin console. Set your name and password — no pharmacy workspace is created."
       : isPharmacySignup
-        ? "Join the Pulse network — stock, staff and sales in one console."
+        ? "Join the Duniya network — stock, staff and sales in one console."
         : "Enter your email and Pulse will set up the right account for you.";
 
   const validate = (): Errors => {
@@ -854,7 +854,7 @@ export function RegisterDialog({
                     ? "By accepting you agree to the Pulse terms of service. Your role and access are set by your inviter."
                     : isPulseAdminSignup
                       ? "Your Pulse admin access is tied to this email. By registering you agree to the Pulse terms of service."
-                      : "Your pharmacy goes live on the Pulse network right away. By registering you agree to the Pulse terms of service."}
+                      : "Your pharmacy goes live on the Duniya network right away. By registering you agree to the Pulse terms of service."}
                 </p>
               </form>
             </motion.div>

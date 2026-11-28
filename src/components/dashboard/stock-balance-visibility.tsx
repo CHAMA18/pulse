@@ -56,7 +56,7 @@ function Breadcrumb() {
     <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12.5px]">
       <Home className="h-3.5 w-3.5 text-white/70" aria-hidden="true" />
       <ChevronRight className="h-3 w-3 text-white/50" aria-hidden="true" />
-      <span className="font-medium text-white/75">Pulse Network</span>
+      <span className="font-medium text-white/75">Duniya Network</span>
       <ChevronRight className="h-3 w-3 text-white/50" aria-hidden="true" />
       <span className="font-bold text-white" aria-current="page">Stock Balance Visibility</span>
     </nav>
@@ -299,7 +299,7 @@ export function StockBalanceVisibility() {
       {state === "failed" ? (
         <div className={cn(cardCls, "p-8 text-center")}>
           <p className="text-[15px] font-semibold text-slate-900 dark:text-white">Network stock balances are unavailable</p>
-          <p className="mx-auto mt-1.5 max-w-md text-[13.5px] text-slate-500 dark:text-slate-400">Connect to the Pulse network and refresh to load registered pharmacies and their current stock.</p>
+          <p className="mx-auto mt-1.5 max-w-md text-[13.5px] text-slate-500 dark:text-slate-400">Connect to the Duniya network and refresh to load registered pharmacies and their current stock.</p>
           <button type="button" onClick={() => void load()} className="mt-4 inline-flex h-9 items-center gap-2 rounded-md bg-purple-600 px-4 text-[13px] font-semibold text-white"><RefreshCw className="h-4 w-4" /> Retry</button>
         </div>
       ) : state === "loading" && pharmacies.length === 0 ? (

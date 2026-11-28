@@ -271,13 +271,13 @@ export function teamInviteEmail(params: {
   expiresAt: string;
 }): EmailContent {
   const name = params.inviteeName.trim() || "there";
-  const preheader = `${params.inviterName} invited you to join ${params.pharmacyName} on Pulse. Accept by ${params.expiresAt}.`;
+  const preheader = `${params.inviterName} invited you to join ${params.pharmacyName} on Duniya. Accept by ${params.expiresAt}.`;
   const messageBlock = params.personalMessage
     ? quoteBlock(params.personalMessage, params.inviterName)
     : "";
 
   return {
-    subject: `${params.inviterName} invited you to ${params.pharmacyName} on Pulse`,
+    subject: `${params.inviterName} invited you to ${params.pharmacyName} on Duniya`,
     html: layout({
       preheader,
       eyebrow: "Team invitation",
@@ -301,12 +301,12 @@ export function teamInviteEmail(params: {
       ],
       security: true,
       footerNote: `Questions? Reach out to <strong style="color:${INK};">${esc(params.inviterName)}</strong> &mdash; they&rsquo;ll be expecting you.`,
-      reason: `${params.inviterName} invited you to join ${params.pharmacyName} on Pulse.`,
+      reason: `${params.inviterName} invited you to join ${params.pharmacyName} on Duniya.`,
     }),
     text: [
       `Hi ${name},`,
       "",
-      `${params.inviterName} invited you to join ${params.pharmacyName} on Pulse as ${params.role}.`,
+      `${params.inviterName} invited you to join ${params.pharmacyName} on Duniya as ${params.role}.`,
       "",
       "INVITATION DETAILS",
       `Organisation: ${params.pharmacyName}`,
@@ -422,12 +422,12 @@ export function pharmacyWelcomeEmail(params: {
   const verifyHtml = params.verifyUrl ? verifyPanel(params.verifyUrl, params.ownerEmail) : "";
   return {
     subject: params.verifyUrl
-      ? `Confirm your email — ${params.pharmacyName} is live on Pulse`
+      ? `Confirm your email — ${params.pharmacyName} is live on Duniya`
       : `Welcome to Pulse, ${params.pharmacyName} — your console is ready`,
     html: layout({
       preheader: params.verifyUrl
         ? `One tap confirms ${params.ownerEmail} and finishes setting up ${params.pharmacyName}.`
-        : `${params.pharmacyName} is live on Pulse — here's your first week, mapped.`,
+        : `${params.pharmacyName} is live on Duniya — here's your first week, mapped.`,
       eyebrow: params.verifyUrl ? "Registration received" : "Welcome to Pulse",
       heading: params.verifyUrl
         ? `${params.pharmacyName}, one tap to confirm`
@@ -455,7 +455,7 @@ export function pharmacyWelcomeEmail(params: {
       ctaHref: params.consoleUrl,
       ctaNote: `New here? The <strong style="color:${INK};">Walkthrough</strong> in the sidebar gives you a guided lap of the whole console in about three minutes.`,
       footerNote: `Your account is pending a quick network review &mdash; every tool is already unlocked on your side. We&rsquo;re glad you&rsquo;re here.`,
-      reason: `you registered ${params.pharmacyName} on Pulse.`,
+      reason: `you registered ${params.pharmacyName} on Duniya.`,
     }),
     text: [
       `Congratulations, ${params.ownerName} — ${params.pharmacyName} now has a Pulse account.`,
@@ -491,17 +491,17 @@ export type PendingPharmacyRegistrationEmailParams = {
   consoleUrl: string;
 };
 
-/** Pulse network review notice — one per pending pharmacy registration. */
+/** Duniya network review notice — one per pending pharmacy registration. */
 export function pendingPharmacyRegistrationEmail(
   params: PendingPharmacyRegistrationEmailParams
 ): EmailContent {
   return {
-    subject: `Pending review: ${params.pharmacyName} registered on Pulse`,
+    subject: `Pending review: ${params.pharmacyName} registered on Duniya`,
     html: layout({
       preheader: `${params.pharmacyName} (${params.ownerEmail}) is waiting for network approval.`,
       eyebrow: "Registration review",
       heading: "A pharmacy is pending review",
-      intro: `<strong style="color:${INK};">${esc(params.pharmacyName)}</strong> has registered on the Pulse network and is waiting for approval before its listing goes live.`,
+      intro: `<strong style="color:${INK};">${esc(params.pharmacyName)}</strong> has registered on the Duniya network and is waiting for approval before its listing goes live.`,
       bodyHtml: detailsCard("Registration details", [
         { label: "Pharmacy", value: params.pharmacyName },
         { label: "Owner", value: params.ownerName },
@@ -514,14 +514,14 @@ export function pendingPharmacyRegistrationEmail(
       ], "Pending review"),
       ctaLabel: "Review in Pulse",
       ctaHref: params.consoleUrl,
-      ctaNote: "Approve, reject or remove the listing from Pulse Pharmacies. The pharmacy can keep stocking and requesting while it waits.",
+      ctaNote: "Approve, reject or remove the listing from Duniya Pharmacies. The pharmacy can keep stocking and requesting while it waits.",
       footerNote: "You are receiving this because you are an Owner or Admin on the Pulse console.",
       reason: `a pharmacy registration is awaiting network review.`,
     }),
     text: [
       `Pending review — ${params.pharmacyName}`,
       "",
-      `${params.pharmacyName} registered on Pulse and is awaiting approval.`,
+      `${params.pharmacyName} registered on Duniya and is awaiting approval.`,
       `Owner: ${params.ownerName} · ${params.ownerEmail}`,
       `Team invitations: ${params.teamEmails ? `${params.teamEmails} sent` : "None listed"}`,
       `Registered: ${params.registeredAt}`,
@@ -543,7 +543,7 @@ export function pulseAdminInviteEmail(params: {
   expiresAt: string;
 }): EmailContent {
   const name = params.inviteeName.trim() || params.inviteeEmail.split("@")[0];
-  const preheader = `${params.inviterName} invited you to the ${params.role} team on Pulse. Accept by ${params.expiresAt}.`;
+  const preheader = `${params.inviterName} invited you to the ${params.role} team on Duniya. Accept by ${params.expiresAt}.`;
 
   return {
     subject: `${params.inviterName} invited you to the Pulse console`,
@@ -570,7 +570,7 @@ export function pulseAdminInviteEmail(params: {
         { title: "Enter the console", body: "Your network view is ready when you are." },
       ],
       security: true,
-      footerNote: `The Pulse console is the network side of Pulse &mdash; pharmacies, stock visibility and the audit trail, in one live view.`,
+      footerNote: `The Pulse console is where the Duniya network runs &mdash; pharmacies, stock visibility and the audit trail, in one live view.`,
       reason: `${params.inviterName} invited you to the Pulse console.`,
     }),
     text: [
@@ -687,7 +687,7 @@ export function stockRequestEmail(params: StockRequestEmailParams): EmailContent
       ctaHref: params.consoleUrl,
       ctaNote: `Approve, dispatch and price the request from <strong style="color:${INK};">Stock Requests Received</strong>. The pharmacy sets its retail price when the delivery arrives.`,
       footerNote: `You are receiving this because you are an Owner or Admin on the Pulse console. Stock requests notify the receiving desk immediately.`,
-      reason: `${params.pharmacyName} raised a stock request on Pulse.`,
+      reason: `${params.pharmacyName} raised a stock request on Duniya.`,
     }),
     text: [
       `Stock request received — ${params.pharmacyName}`,

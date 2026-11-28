@@ -487,7 +487,7 @@ export function UserManagement({
   const [addOpen, setAddOpen] = useState(false);
   // The delivered console invitation, rendered in the inbox-style preview.
   const [preview, setPreview] = useState<InvitationMessage | null>(null);
-  const [inviter, setInviter] = useState("Pulse Network");
+  const [inviter, setInviter] = useState("Duniya Network");
 
   const canManage = canManageConsoleUsers(role);
   const allowedRoles = assignablePulseRoles(role);
@@ -507,7 +507,7 @@ export function UserManagement({
         setInviter(
           auth?.currentUser?.displayName ??
             auth?.currentUser?.email?.split("@")[0] ??
-            "Pulse Network"
+            "Duniya Network"
         );
       }
     })();

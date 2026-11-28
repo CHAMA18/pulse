@@ -441,7 +441,7 @@ export function PharmacySalesReport() {
         <PageTitle
           icon={Receipt}
           title="Sales Report"
-          subtitle="All POS sales across the Pulse network, by pharmacy, store, payment method and product."
+          subtitle="All POS sales across the Duniya network, by pharmacy, store, payment method and product."
         />
         <div className="flex flex-wrap items-center gap-2">
           <button

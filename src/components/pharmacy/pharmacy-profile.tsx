@@ -43,10 +43,10 @@ type PharmacyProfileData = {
 type StepState = "done" | "pending";
 
 const STEPS: { title: string; desc: string }[] = [
-  { title: "Account created", desc: "Your pharmacy account is live on Pulse." },
+  { title: "Account created", desc: "Your pharmacy account is live on Duniya." },
   { title: "Profile submitted", desc: "Pharmacy name and ownership are on file." },
-  { title: "Network review", desc: "The Pulse network team verifies your pharmacy." },
-  { title: "Shelf go-live", desc: "Your storefront joins the Pulse network." },
+  { title: "Network review", desc: "The Duniya network team verifies your pharmacy." },
+  { title: "Shelf go-live", desc: "Your storefront joins the Duniya network." },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -196,7 +196,7 @@ export function PharmacyProfile({
                   {profile.source === "registration"
                     ? "Registered on this device through the Pharmacy portal."
                     : profile.source === "firestore"
-                      ? "Provisioned by the Pulse network."
+                      ? "Provisioned by the Duniya network."
                       : "Session profile — no pharmacy registration found yet."}
                 </p>
               </div>
@@ -318,7 +318,7 @@ export function PharmacyProfile({
 
             {profile.approved !== true && (
               <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-[13px] leading-relaxed text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-                <span className="font-semibold">What happens next?</span> The Pulse network team
+                <span className="font-semibold">What happens next?</span> The Duniya network team
                 reviews new pharmacies within two business days. You can keep managing inventory and
                 requesting stock in the meantime — approved shelves go live automatically.
               </div>

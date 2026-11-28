@@ -876,7 +876,7 @@ export function PulsePharmacies({ role }: { role: PulseRole }) {
             : "Moved back to pending",
       description:
         status === "active"
-          ? `${pharmacy.name} is now live on the Pulse network.`
+          ? `${pharmacy.name} is now live on the Duniya network.`
           : status === "rejected"
             ? `${pharmacy.name} was removed from the active roster.`
             : `${pharmacy.name} is awaiting approval again.`,
@@ -1156,10 +1156,10 @@ export function PulsePharmacies({ role }: { role: PulseRole }) {
                 id="pulse-pharmacies-title"
                 className="text-[24px] font-bold tracking-tight text-white sm:text-[26px]"
               >
-                Pulse Pharmacies
+                Duniya Pharmacies
               </h1>
               <p className="mt-0.5 text-[13.5px] text-white/80">
-                Every pharmacy on the Pulse network — onboarding, approvals and
+                Every pharmacy on the Duniya network — onboarding, approvals and
                 visibility in one console.
               </p>
             </div>

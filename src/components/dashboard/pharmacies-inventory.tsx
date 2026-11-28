@@ -147,7 +147,7 @@ export function PharmaciesInventory() {
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-4">
         {[
-          { label: "Registered pharmacies", value: state === "ready" ? String(totals.pharmacies) : "—", desc: "On the Pulse network" },
+          { label: "Registered pharmacies", value: state === "ready" ? String(totals.pharmacies) : "—", desc: "On the Duniya network" },
           { label: "Outlets", value: state === "ready" ? String(totals.outlets) : "—", desc: "Stores reporting stock" },
           { label: "Products listed", value: state === "ready" ? totals.skus.toLocaleString() : "—", desc: "Shelf lines across the network" },
           { label: "Network Duniya value", value: state === "ready" ? formatZmw(totals.value) : "—", desc: `${totals.units.toLocaleString()} units · ${formatZmw(totals.retail)} retail` },

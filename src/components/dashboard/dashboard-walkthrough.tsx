@@ -27,12 +27,12 @@ export const PULSE_TOUR_STEPS: WalkthroughStep[] = [
   {
     id: "pulse-welcome",
     title: "Welcome to the Pulse console",
-    body: "A short lap of the network side of Pulse — every pharmacy, every shelf, every action on record. Click anywhere or press Next to walk it.",
+    body: "A short lap of the Duniya network inside Pulse — every pharmacy, every shelf, every action on record. Click anywhere or press Next to walk it.",
   },
   {
     id: "pulse-nav",
     title: "One sidebar, three neighbourhoods",
-    body: "Main is the network overview. Admin keeps the record straight. Pulse Network brings together pharmacy sales, pharmacies, the product catalogue, stock movements and stock visibility.",
+    body: "Main is the network overview. Admin keeps the record straight. Duniya Network brings together pharmacy sales, pharmacies, the product catalogue, stock movements and stock visibility.",
     target: "pulse-nav",
   },
   {
@@ -58,7 +58,7 @@ export const PULSE_TOUR_STEPS: WalkthroughStep[] = [
   },
   {
     id: "pulse-pharmacies",
-    title: "Pulse Pharmacies — the network roster",
+    title: "Duniya Pharmacies — the network roster",
     page: "pharmacies",
     target: "pulse-pharmacies",
     body: "Every pharmacy on the network with its stores and onboarding state. Review new registrations and welcome them in.",

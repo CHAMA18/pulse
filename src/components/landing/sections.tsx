@@ -466,7 +466,7 @@ const PORTALS = [
     desc: "Every pharmacy on the map — onboarding requests, stock-balance visibility, network analytics and a tamper-evident audit log.",
     href: "/login",
     cta: "Sign in to the console",
-    items: ["Pulse Pharmacies", "Network Analytics", "Audit Logs", "Warehouse Catalogue"],
+    items: ["Duniya Pharmacies", "Network Analytics", "Audit Logs", "Warehouse Catalogue"],
   },
 ];
 

@@ -873,7 +873,7 @@ function PharmacyHome({
         >
           <TriangleAlert className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
           <p className="min-w-0 flex-1 text-[13.5px] leading-snug text-amber-900 dark:text-amber-200">
-            Your registration is with the Pulse network team for review — usually done within two
+            Your registration is with the Duniya network team for review — usually done within two
             business days. You can keep stocking and requesting in the meantime.
           </p>
           <button
@@ -1102,7 +1102,7 @@ export function PharmacyApp() {
               }
             | undefined;
           if (data?.access_revoked === true) {
-            // Suspended/removed by the pharmacy owner or the Pulse network — enforced at sign-in.
+            // Suspended/removed by the pharmacy owner or the Duniya network — enforced at sign-in.
             try {
               const auth = getFirebaseAuth();
               if (auth) await signOut(auth);
